@@ -38,15 +38,18 @@
     .fuzai-time { font-size: 10px; color: #333; display: block; margin-top: 2px; }
     .furyo-mark { font-size: 10px; color: red; display: block; }
     .yoyaku-time { font-size: 10px; color: #333; display: block; }
-    .sign-img { width: 76px; height: 40px; object-fit: contain; display: block; margin: 0 auto; }
+    .sign-img { width: 76px; height: 40px; object-fit: contain; display: block; margin: 0 auto; pointer-events: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
     #propertyArea { margin-top: 20px; padding: 12px 20px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; display: none; }
-    #propertyArea p { margin: 6px 0; font-size: 14px; }
-    #propertyArea input { width: 250px; margin-left: 8px; }
+    #propertyArea p { margin: 4px 0; }
+    #propertyInputArea { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #ddd; }
+    #propertyInputArea p { margin: 6px 0; font-size: 14px; }
+    #propertyInputArea input { width: 250px; margin-left: 8px; }
+    #propertyInputArea input[type="date"] { width: auto; }
 
     #setup { padding: 0 20px; }
+    #backToSetupBtn { display: none; margin-bottom: 10px; background: #eee; }
 
-    /* 設備設定エリア */
     #setsubiSetupArea { margin-top: 12px; padding: 10px; border: 1px solid #aad; background: #f0f4ff; border-radius: 6px; display: none; }
     #setsubiSetupArea h3 { font-size: 14px; margin: 0 0 8px; }
     .setsubi-row { margin: 8px 0; font-size: 14px; }
@@ -61,8 +64,8 @@
     #yoyakuTable th { border: 1px solid #333; background: #ddd; padding: 4px 2px; font-size: 12px; text-align: center; }
     #yoyakuTable td { border: 1px solid #333; padding: 4px 2px; font-size: 12px; text-align: center; vertical-align: middle; overflow: hidden; }
     #yoyakuTable tr.done td { background-color: #ccc; color: #666; text-decoration: line-through; }
-    #yoyakuTable th:nth-child(1) { width: 16%; }
-    #yoyakuTable th:nth-child(2) { width: 14%; }
+    #yoyakuTable th:nth-child(1) { width: 14%; }
+    #yoyakuTable th:nth-child(2) { width: 16%; }
     #yoyakuTable th:nth-child(3) { width: auto; }
     #yoyakuTable th:nth-child(4) { width: 10%; }
     #yoyakuTable th:nth-child(5) { width: 12%; }
@@ -75,6 +78,8 @@
     .yoyaku-add input.note-input { width: 150px; }
     .yoyaku-add button { font-size: 14px; padding: 6px 14px; margin-top: 0; }
     .yoyaku-delete { font-size: 12px; padding: 2px 8px; background: #ffcccc; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; }
+    #notePatternManage { margin-top: 8px; font-size: 13px; }
+    #notePatternManage a { cursor: pointer; color: #336699; text-decoration: underline; }
 
     #outputArea { margin-top: 20px; padding: 0 20px 20px; display: none; }
     #outputArea button { margin-right: 8px; margin-bottom: 8px; font-size: 14px; padding: 8px 14px; }
@@ -105,7 +110,7 @@
 
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; }
     .modal.active { display: flex; }
-    .modal-box { background: white; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; text-align: center; }
+    .modal-box { background: white; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; text-align: center; max-height: 85vh; overflow-y: auto; }
     .modal-box h2 { font-size: 18px; margin-bottom: 10px; }
     .modal-buttons { display: flex; gap: 10px; margin-top: 12px; justify-content: center; flex-wrap: wrap; }
     .modal-buttons button { font-size: 14px; padding: 8px 16px; }
@@ -132,7 +137,6 @@
     #yoyakuCancel { background: #eee; }
     #yoyakuDelete { background: #ffcccc; }
 
-    /* 設備情報モーダル */
     #setsubiModal .modal-box { text-align: left; }
     #setsubiModal h2 { text-align: center; }
     .setsubi-info-row { font-size: 15px; margin: 8px 0; padding: 6px 10px; background: #f5f5f5; border-radius: 4px; }
@@ -140,6 +144,17 @@
     .setsubi-edit-row input { width: 50px; font-size: 14px; }
     #setsubiOk { background: #90ee90; }
     #setsubiCancel { background: #eee; }
+
+    /* 備考パターン管理モーダル */
+    #patternModal .modal-box { text-align: left; }
+    #patternModal h2 { text-align: center; }
+    #patternList { margin: 10px 0; }
+    .pattern-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+    .pattern-row button { font-size: 12px; padding: 4px 10px; margin: 0; background: #ffcccc; }
+    #patternAddRow { display: flex; gap: 6px; margin-top: 10px; }
+    #patternAddRow input { flex: 1; font-size: 14px; padding: 6px; }
+    #patternAddRow button { margin: 0; font-size: 14px; padding: 6px 12px; background: #ccffcc; }
+    #patternCloseBtn { background: #eee; }
 
     #welcomeScreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; justify-content: center; align-items: center; text-align: center; padding: 40px; }
     #welcomeScreen.active { display: flex; }
@@ -162,6 +177,15 @@
   <h1>消防設備点検アプリ</h1>
 
   <div id="setup">
+    <button id="backToSetupBtn" onclick="backToSetupConfirmed()">← 立面図に戻る（編集を続ける）</button>
+
+    <div id="propertyInputArea">
+      <p><strong>物件・作業情報</strong></p>
+      <p>物件名：<input type="text" id="propName" placeholder="例：〇〇マンション"></p>
+      <p>作業日：<input type="date" id="propDate"></p>
+      <p>担当者：<input type="text" id="propStaff" placeholder="例：山田 太郎"></p>
+    </div>
+
     <p>階数を入力してください</p>
     <input type="number" id="floorCount" min="1" value="3">
     <p>各階の号室数を入力してください</p>
@@ -189,10 +213,8 @@
   </div>
 
   <div id="propertyArea">
-    <p><strong>物件・作業情報</strong></p>
-    <p>物件名：<input type="text" id="propName" placeholder="例：〇〇マンション"></p>
-    <p>作業日：<input type="text" id="propDate"></p>
-    <p>担当者：<input type="text" id="propStaff" placeholder="例：山田 太郎"></p>
+    <p><strong id="propDisplayName">（物件名未入力）</strong></p>
+    <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
   </div>
 
   <div class="table-wrap">
@@ -202,16 +224,17 @@
   <div id="yoyakuArea">
     <h2>予約一覧</h2>
     <div class="yoyaku-add">
-      <select id="addTime"></select>
       <input type="text" id="addRoom" class="room-input" placeholder="号室">
-      <input type="text" id="addNote" class="note-input" placeholder="備考">
+      <select id="addTime"></select>
+      <select id="addNote"></select>
       <button onclick="addYoyaku()">追加</button>
     </div>
+    <div id="notePatternManage"><a onclick="openPatternModal()">備考パターンを編集する</a></div>
     <table id="yoyakuTable">
       <thead>
         <tr>
-          <th>時間</th>
           <th>号室</th>
+          <th>時間</th>
           <th>備考</th>
           <th>↓</th>
           <th>削除</th>
@@ -249,6 +272,7 @@
     <div class="menu-item menu-hasshigo-off" onclick="roomMenuSelect('off')">避難はしごを削除</div>
     <div class="menu-item" style="color:#333;" onclick="roomMenuSelect('edit')">名称を編集</div>
     <div class="menu-item menu-setsubi" id="roomMenuSetsubiItem" onclick="roomMenuSelect('setsubi')" style="display:none;color:#336699;">設備情報を個別編集</div>
+    <div class="menu-item" style="color:#cc0000;" onclick="roomMenuSelect('delete')">この部屋を削除</div>
   </div>
 
   <div id="signModal" class="modal">
@@ -288,7 +312,7 @@
       <p style="font-size:13px;color:#666;">時間を選択してください</p>
       <select id="yoyakuModalTime" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
       <p style="font-size:13px;color:#666;margin-top:8px;">備考</p>
-      <input type="text" id="yoyakuModalNote" placeholder="例：立会い希望" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;">
+      <select id="yoyakuModalNote" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
       <div class="modal-buttons">
         <button id="yoyakuCancel" onclick="cancelYoyaku()">キャンセル</button>
         <button id="yoyakuDelete" onclick="deleteYoyaku()">予約削除</button>
@@ -297,7 +321,6 @@
     </div>
   </div>
 
-  <!-- 設備情報モーダル -->
   <div id="setsubiModal" class="modal">
     <div class="modal-box">
       <h2 id="setsubiTitle">設備情報</h2>
@@ -305,6 +328,21 @@
       <div class="modal-buttons">
         <button id="setsubiCancel" onclick="cancelSetsubi()">閉じる</button>
         <button id="setsubiOk" onclick="confirmSetsubi()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 備考パターン管理モーダル -->
+  <div id="patternModal" class="modal">
+    <div class="modal-box">
+      <h2>備考パターンの編集</h2>
+      <div id="patternList"></div>
+      <div id="patternAddRow">
+        <input type="text" id="patternNewText" placeholder="新しいパターンを入力">
+        <button onclick="addPattern()">追加</button>
+      </div>
+      <div class="modal-buttons">
+        <button id="patternCloseBtn" onclick="closePatternModal()">閉じる</button>
       </div>
     </div>
   </div>
@@ -327,17 +365,24 @@
     let touchStartY = 0;
     let touchMoved = false;
     let useSetsubiFlag = false;
+    let tableGenerated = false;
+    let pendingFloorValues = {}; // 設定画面に戻った時に保持する値
 
-    // 設備情報：系統ごとのデフォルト値 { suffix: {tei, sa, ke} }
     let setsubiDefaults = {};
-    // 部屋ごとの個別設備情報 { roomNum: {tei, sa, ke} }
     let setsubiCustom = {};
+
+    // 備考パターンのデフォルト
+    let notePatterns = ['以降', '5分以内', '立会い希望', '鍵預かり'];
 
     function buildTimeSelects() {
       const ids = ['addTime', 'yoyakuModalTime'];
       ids.forEach(id => {
         const sel = document.getElementById(id);
         sel.innerHTML = '';
+        const passOpt = document.createElement('option');
+        passOpt.value = '';
+        passOpt.textContent = 'パス';
+        sel.appendChild(passOpt);
         for (let h = 8; h <= 18; h++) {
           [0, 15, 30, 45].forEach(m => {
             if (h === 18 && m > 0) return;
@@ -353,6 +398,59 @@
       });
     }
     buildTimeSelects();
+
+    function buildNoteSelects() {
+      const ids = ['addNote', 'yoyakuModalNote'];
+      ids.forEach(id => {
+        const sel = document.getElementById(id);
+        const currentVal = sel.value;
+        sel.innerHTML = '';
+        const passOpt = document.createElement('option');
+        passOpt.value = '';
+        passOpt.textContent = 'パス';
+        sel.appendChild(passOpt);
+        notePatterns.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p;
+          opt.textContent = p;
+          sel.appendChild(opt);
+        });
+        sel.value = currentVal;
+      });
+    }
+    buildNoteSelects();
+
+    // 備考パターン管理
+    function openPatternModal() {
+      renderPatternList();
+      document.getElementById('patternModal').classList.add('active');
+    }
+    function closePatternModal() {
+      document.getElementById('patternModal').classList.remove('active');
+      buildNoteSelects();
+    }
+    function renderPatternList() {
+      const list = document.getElementById('patternList');
+      list.innerHTML = '';
+      notePatterns.forEach((p, idx) => {
+        const row = document.createElement('div');
+        row.className = 'pattern-row';
+        row.innerHTML = '<span>' + p + '</span><button onclick="removePattern(' + idx + ')">削除</button>';
+        list.appendChild(row);
+      });
+    }
+    function addPattern() {
+      const input = document.getElementById('patternNewText');
+      const val = input.value.trim();
+      if (!val) return;
+      notePatterns.push(val);
+      input.value = '';
+      renderPatternList();
+    }
+    function removePattern(idx) {
+      notePatterns.splice(idx, 1);
+      renderPatternList();
+    }
 
     function toHankaku(str) {
       return str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
@@ -386,14 +484,15 @@
       }
 
       suffixes.forEach(r => {
+        const existing = setsubiDefaults[r] || { tei: 0, sa: 0, ke: 0 };
         const div = document.createElement('div');
         div.className = 'setsubi-row';
         div.innerHTML =
           '<label>' + String(r).padStart(2,'0') + '系統（' + r + '号室列）</label>' +
           '<div class="setsubi-inputs">' +
-          '定 × <input type="number" min="0" value="0" id="tei_' + r + '" style="width:45px;">' +
-          '差 × <input type="number" min="0" value="0" id="sa_' + r + '" style="width:45px;">' +
-          '煙 × <input type="number" min="0" value="0" id="ke_' + r + '" style="width:45px;">' +
+          '定 × <input type="number" min="0" value="' + existing.tei + '" id="tei_' + r + '" style="width:45px;">' +
+          '差 × <input type="number" min="0" value="' + existing.sa + '" id="sa_' + r + '" style="width:45px;">' +
+          '煙 × <input type="number" min="0" value="' + existing.ke + '" id="ke_' + r + '" style="width:45px;">' +
           '</div>';
         list.appendChild(div);
       });
@@ -408,31 +507,78 @@
       floorEditList.innerHTML = '';
       for (let f = floors; f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
-        let roomNumbers = [];
-        for (let r = 1; r <= rooms; r++) {
-          if (cut4Room && r === 4) continue;
-          roomNumbers.push(f * 100 + r);
+        let roomNumbers;
+        if (pendingFloorValues[f]) {
+          roomNumbers = pendingFloorValues[f];
+        } else {
+          roomNumbers = [];
+          for (let r = 1; r <= rooms; r++) {
+            if (cut4Room && r === 4) continue;
+            roomNumbers.push(f * 100 + r);
+          }
+          roomNumbers = roomNumbers.join(',');
         }
         const div = document.createElement('div');
         div.className = 'floor-edit';
-        div.innerHTML = f + '階：<input type="text" id="floor_' + f + '" value="' + roomNumbers.join(',') + '">';
+        div.innerHTML = f + '階：<input type="text" id="floor_' + f + '" value="' + roomNumbers + '">';
         floorEditList.appendChild(div);
       }
       document.getElementById('editArea').style.display = 'block';
 
-      // 設備情報設定エリアは既に入力済みの場合は再構築しない
       if (document.getElementById('useSetsubiInfo').checked &&
           document.getElementById('setsubiSetupList').children.length === 0) {
         buildSetsubiSetupList();
       }
     }
 
+    // 戻るボタン処理：表作成済みなら設定画面へ戻す
+    function backToSetupConfirmed() {
+      document.getElementById('tableArea').parentElement.style.display = 'none';
+      document.getElementById('propertyArea').style.display = 'none';
+      document.getElementById('yoyakuArea').style.display = 'none';
+      document.getElementById('outputArea').style.display = 'none';
+      document.getElementById('setup').style.display = 'block';
+      document.getElementById('backToSetupBtn').style.display = 'none';
+      // 現在の入力中フォーム値を保持するため、号室確認画面を開いた状態にする
+      prepareEdit();
+    }
+
     function generateTable() {
+      // 既存データがある状態で再生成する場合、削除される号室のデータ消失チェック
+      if (tableGenerated) {
+        const newRoomSet = new Set();
+        const floors = parseInt(document.getElementById('floorCount').value);
+        const cut4Floor = document.getElementById('cut4Floor').checked;
+        for (let f = floors; f >= 1; f--) {
+          if (cut4Floor && f === 4) continue;
+          const input = document.getElementById('floor_' + f);
+          if (!input) continue;
+          input.value.split(',').map(r => r.trim()).filter(r => r !== '').forEach(r => newRoomSet.add(r));
+        }
+
+        const lostRooms = [];
+        document.querySelectorAll('td.cell').forEach(cell => {
+          const room = cell.dataset.room;
+          const hasData = (cell.dataset.state && cell.dataset.state !== 'mi') ||
+                           (cell.dataset.furyo && cell.dataset.furyo.length > 0);
+          if (hasData && !newRoomSet.has(room)) {
+            lostRooms.push(room);
+          }
+        });
+
+        if (lostRooms.length > 0) {
+          const ok = confirm(
+            lostRooms.join('・') + '号室は状態入力（入室済・不在・不良等）が記録されています。\n' +
+            '今回の変更でこれらの記録が削除されます。よろしいですか？'
+          );
+          if (!ok) return;
+        }
+      }
+
       const floors = parseInt(document.getElementById('floorCount').value);
       const cut4Floor = document.getElementById('cut4Floor').checked;
       useSetsubiFlag = document.getElementById('useSetsubiInfo').checked;
 
-      // 設備デフォルト値を収集
       setsubiDefaults = {};
       if (useSetsubiFlag) {
         const inputs = document.querySelectorAll('#setsubiSetupList .setsubi-row');
@@ -455,6 +601,39 @@
         });
       }
 
+      // 既存のセルデータを保持
+      let preservedCellData = {};
+      if (tableGenerated) {
+        document.querySelectorAll('td.cell').forEach(cell => {
+          preservedCellData[cell.dataset.room] = {
+            state: cell.dataset.state,
+            sign: cell.dataset.sign,
+            furyo: cell.dataset.furyo,
+            photo: cell.dataset.photo,
+            times: cell.dataset.times,
+            yoyakuTime: cell.dataset.yoyakuTime,
+            yoyakuNote: cell.dataset.yoyakuNote
+          };
+        });
+      }
+      let preservedRoomData = {};
+      if (tableGenerated) {
+        document.querySelectorAll('td.room-number').forEach(cell => {
+          preservedRoomData[cell.dataset.room] = {
+            label: cell.dataset.label,
+            hasshigo: cell.dataset.hasshigo
+          };
+        });
+      }
+
+      // 設定画面に戻った時のために号室入力値を保存
+      pendingFloorValues = {};
+      for (let f = floors; f >= 1; f--) {
+        if (cut4Floor && f === 4) continue;
+        const input = document.getElementById('floor_' + f);
+        if (input) pendingFloorValues[f] = input.value;
+      }
+
       tableFloorData = [];
       for (let f = floors; f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
@@ -469,12 +648,7 @@
       }
       tableSuffixes = Array.from(allSuffixes).sort((a, b) => a - b);
 
-      let html = '<table><tr><th>階</th>';
-      tableSuffixes.forEach((suffix, i) => {
-        const colNum = String(i + 1).padStart(2, '0');
-        html += '<th>' + colNum + '</th>';
-      });
-      html += '</tr>';
+      let html = '<table>';
 
       for (const fd of tableFloorData) {
         let roomMap = {};
@@ -483,8 +657,11 @@
         html += '<tr><th class="floor-empty"></th>';
         for (const suffix of tableSuffixes) {
           if (roomMap[suffix]) {
-            const isH = hasshigoSuffixes.has(suffix) && fd.floor !== 1;
-            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + roomMap[suffix] + '" data-hasshigo="' + (isH ? '1' : '0') + '">' + roomMap[suffix] + '</td>';
+            const room = roomMap[suffix];
+            const prevRoom = preservedRoomData[room];
+            const isH = prevRoom ? prevRoom.hasshigo === '1' : (hasshigoSuffixes.has(suffix) && fd.floor !== 1);
+            const label = prevRoom && prevRoom.label ? prevRoom.label : room;
+            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (prevRoom && prevRoom.label ? prevRoom.label : '') + '">' + label + '</td>';
           } else {
             html += '<td class="empty-number"></td>';
           }
@@ -493,28 +670,76 @@
 
         html += '<tr><th class="floor-label">' + fd.floor + '階</th>';
         for (const suffix of tableSuffixes) {
-          html += roomMap[suffix]
-            ? '<td class="cell" data-room="' + roomMap[suffix] + '" data-state="mi">未</td>'
-            : '<td class="empty-state"></td>';
+          if (roomMap[suffix]) {
+            const room = roomMap[suffix];
+            const prev = preservedCellData[room];
+            html += '<td class="cell" data-room="' + room + '" data-state="' + (prev ? prev.state : 'mi') + '"' +
+              (prev && prev.sign ? ' data-sign="' + prev.sign + '"' : '') +
+              (prev && prev.furyo ? ' data-furyo="' + prev.furyo.replace(/"/g, '&quot;') + '"' : '') +
+              (prev && prev.photo ? ' data-photo="' + prev.photo + '"' : '') +
+              (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
+              (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
+              (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
+              '>未</td>';
+          } else {
+            html += '<td class="empty-state"></td>';
+          }
         }
         html += '</tr>';
       }
       html += '</table>';
 
       document.getElementById('tableArea').innerHTML = html;
+
+      // 保持していたセルの表示を再構築
+      document.querySelectorAll('td.cell').forEach(cell => {
+        if (cell.dataset.state && cell.dataset.state !== 'mi') {
+          updateCellDisplay(cell);
+          if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
+          if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
+          if (cell.dataset.state === 'kushitsu') cell.classList.add('kushitsu');
+          if (cell.dataset.state === 'yoyaku') cell.classList.add('yoyaku');
+          if (cell.dataset.furyo) cell.classList.add('furyo');
+        }
+      });
+
+      // 予約リストを再構築
+      yoyakuList = yoyakuList.filter(y => {
+        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+        return cell !== null;
+      });
+      renderYoyakuTable();
+
       document.getElementById('setup').style.display = 'none';
       document.getElementById('propertyArea').style.display = 'block';
       document.getElementById('yoyakuArea').style.display = 'block';
       document.getElementById('outputArea').style.display = 'block';
+      document.querySelector('.table-wrap').style.display = 'block';
+      document.getElementById('backToSetupBtn').style.display = 'block';
 
-      // 設備情報メニュー項目の表示切替
       document.getElementById('menuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
       document.getElementById('roomMenuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
 
-      const today = new Date();
-      document.getElementById('propDate').value =
-        today.getFullYear() + '年' + (today.getMonth() + 1) + '月' + today.getDate() + '日';
+      if (!tableGenerated) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        document.getElementById('propDate').value = yyyy + '-' + mm + '-' + dd;
+      }
 
+      updatePropertyDisplay();
+
+      attachCellEvents();
+
+      canvas = document.getElementById('signCanvas');
+      ctx = canvas.getContext('2d');
+      initCanvas();
+
+      tableGenerated = true;
+    }
+
+    function attachCellEvents() {
       document.querySelectorAll('td.cell').forEach(cell => {
         cell.addEventListener('mousedown', () => startPress(cell, 'state'));
         cell.addEventListener('touchstart', (e) => {
@@ -548,10 +773,6 @@
         cell.addEventListener('mouseleave', cancelPress);
         cell.addEventListener('touchend', cancelPress);
       });
-
-      canvas = document.getElementById('signCanvas');
-      ctx = canvas.getContext('2d');
-      initCanvas();
     }
 
     let pressType = null;
@@ -598,6 +819,43 @@
       if (!activeRoomCell) return;
       const cell = activeRoomCell;
       closeRoomMenu();
+      if (action === 'delete') {
+        const room = cell.dataset.room;
+        const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
+        const hasData = stateCell && (
+          (stateCell.dataset.state && stateCell.dataset.state !== 'mi') ||
+          (stateCell.dataset.furyo && stateCell.dataset.furyo.length > 0)
+        );
+        const msg = hasData
+          ? room + '号室は状態入力（入室済・不在・不良等）が記録されています。本当に削除してよろしいですか？'
+          : room + '号室を削除しますか？';
+        if (!confirm(msg)) return;
+
+        const floor = Math.floor(parseInt(room) / 100);
+
+        // tableFloorData（現在表示中のデータ）から除外
+        const fd = tableFloorData.find(f => f.floor === floor);
+        if (fd) fd.rooms = fd.rooms.filter(r => r !== room);
+        const newRoomsStr = fd ? fd.rooms.join(',') : '';
+
+        // pendingFloorValuesを更新
+        pendingFloorValues[floor] = newRoomsStr;
+
+        // 設定画面（非表示中）のinput要素があれば値を同期、なければ作成
+        let floorInput = document.getElementById('floor_' + floor);
+        if (!floorInput) {
+          // 設定画面の入力欄がまだ生成されていない場合はprepareEditで生成してから書き込む
+          prepareEdit();
+          floorInput = document.getElementById('floor_' + floor);
+        }
+        if (floorInput) {
+          floorInput.value = newRoomsStr;
+        }
+
+        removeYoyakuByRoom(room);
+        generateTable();
+        return;
+      }
       if (action === 'on') {
         cell.dataset.hasshigo = '1';
         cell.classList.add('hasshigo');
@@ -617,7 +875,6 @@
           cell.textContent = trimmed;
         }
       } else if (action === 'setsubi') {
-        // 部屋番号セルから対応するステータスセルを探す
         const room = cell.dataset.room;
         const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
         openSetsubiEdit(stateCell || cell, room);
@@ -672,7 +929,6 @@
       }
     }
 
-    // 設備情報を取得（個別設定があればそれを、なければ系統デフォルト）
     function getSetsubiForRoom(room) {
       if (setsubiCustom[room]) return setsubiCustom[room];
       const suffix = parseInt(room) % 100;
@@ -680,7 +936,6 @@
       return { tei: 0, sa: 0, ke: 0 };
     }
 
-    // 設備情報確認（表示のみ）
     function openSetsubiView(cell) {
       setsubiCell = cell;
       const room = cell.dataset.room;
@@ -694,7 +949,6 @@
       document.getElementById('setsubiModal').classList.add('active');
     }
 
-    // 設備情報個別編集
     function openSetsubiEdit(cell, room) {
       setsubiCell = cell;
       const s = getSetsubiForRoom(room);
@@ -726,11 +980,12 @@
     function updateCellDisplay(cell) {
       const state = cell.dataset.state || 'mi';
       const hasFuryo = cell.dataset.furyo && cell.dataset.furyo.length > 0;
-      const yoyakuTime = cell.dataset.yoyakuTime || '';
+      const yoyakuTime = cell.dataset.yoyakuTime || cell.getAttribute('data-yoyaku-time') || '';
       let html = '';
       if (state === 'nyushitsu') {
-        if (cell.dataset.sign) {
-          html += '<img class="sign-img" src="' + cell.dataset.sign + '">';
+        const sign = cell.dataset.sign || cell.getAttribute('data-sign');
+        if (sign) {
+          html += '<img class="sign-img" src="' + sign + '">';
         } else {
           html += '入室済';
         }
@@ -753,7 +1008,7 @@
       const rows = document.querySelectorAll('#yoyakuBody tr');
       rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells[1] && cells[1].textContent === room) {
+        if (cells[0] && cells[0].textContent === room) {
           if (done) row.classList.add('done');
           else row.classList.remove('done');
         }
@@ -861,15 +1116,13 @@
 
     function openYoyaku(cell) {
       yoyakuCell = cell;
+      buildNoteSelects();
       document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
       const existingTime = cell.dataset.yoyakuTime || '';
       const sel = document.getElementById('yoyakuModalTime');
-      if (existingTime) {
-        for (let i = 0; i < sel.options.length; i++) {
-          if (sel.options[i].value === existingTime) { sel.selectedIndex = i; break; }
-        }
-      }
-      document.getElementById('yoyakuModalNote').value = cell.dataset.yoyakuNote || '';
+      sel.value = existingTime;
+      const noteSel = document.getElementById('yoyakuModalNote');
+      noteSel.value = cell.dataset.yoyakuNote || '';
       document.getElementById('yoyakuDelete').style.display =
         cell.dataset.state === 'yoyaku' ? 'inline-block' : 'none';
       document.getElementById('yoyakuModal').classList.add('active');
@@ -878,7 +1131,7 @@
 
     function confirmYoyaku() {
       const time = document.getElementById('yoyakuModalTime').value;
-      const note = document.getElementById('yoyakuModalNote').value.trim();
+      const note = document.getElementById('yoyakuModalNote').value;
       const room = yoyakuCell.dataset.room;
       yoyakuCell.dataset.state = 'yoyaku';
       yoyakuCell.dataset.yoyakuTime = time;
@@ -912,9 +1165,9 @@
     }
 
     function addYoyaku() {
-      const time = document.getElementById('addTime').value;
       const room = toHankaku(document.getElementById('addRoom').value.trim());
-      const note = document.getElementById('addNote').value.trim();
+      const time = document.getElementById('addTime').value;
+      const note = document.getElementById('addNote').value;
       if (!room) { alert('号室を入力してください'); return; }
       removeYoyakuByRoom(room);
       yoyakuList.push({ time, room, note });
@@ -929,7 +1182,6 @@
         updateCellDisplay(cell);
       }
       document.getElementById('addRoom').value = '';
-      document.getElementById('addNote').value = '';
     }
 
     function renderYoyakuTable() {
@@ -942,8 +1194,8 @@
           tr.classList.add('done');
         }
         tr.innerHTML =
-          '<td>' + y.time + '</td>' +
           '<td>' + y.room + '</td>' +
+          '<td>' + y.time + '</td>' +
           '<td>' + y.note + '</td>' +
           '<td class="sort-btn"><button onclick="moveYoyaku(' + idx + ',1)">↓</button></td>' +
           '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + idx + ')">削除</button></td>';
@@ -974,12 +1226,29 @@
       }
     }
 
+    function formatDateJP(dateStr) {
+      if (!dateStr) return '（日付未入力）';
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const y = parseInt(parts[0]);
+      const m = parseInt(parts[1]);
+      const d = parseInt(parts[2]);
+      return y + '年' + m + '月' + d + '日';
+    }
+
     function getProperty() {
       return {
         name: document.getElementById('propName').value || '（物件名未入力）',
-        date: document.getElementById('propDate').value || '（日付未入力）',
+        date: formatDateJP(document.getElementById('propDate').value),
         staff: document.getElementById('propStaff').value || '（担当者未入力）'
       };
+    }
+
+    function updatePropertyDisplay() {
+      const prop = getProperty();
+      document.getElementById('propDisplayName').textContent = prop.name;
+      document.getElementById('propDisplayDate').textContent = prop.date;
+      document.getElementById('propDisplayStaff').textContent = prop.staff;
     }
 
     function getCounts() {
@@ -1030,12 +1299,7 @@
         };
       });
 
-      let tableHtml = '<table><tr><th>階</th>';
-      tableSuffixes.forEach((suffix, i) => {
-        const colNum = String(i + 1).padStart(2, '0');
-        tableHtml += '<th>' + colNum + '</th>';
-      });
-      tableHtml += '</tr>';
+      let tableHtml = '<table>';
 
       for (const fd of tableFloorData) {
         let roomMap = {};
@@ -1157,6 +1421,29 @@ ${bodyHtml}
       win.focus();
       setTimeout(() => win.print(), 500);
     }
+
+    // 戻るボタン対策：履歴を一段追加
+    history.pushState(null, null, location.href);
+    window.addEventListener('popstate', function () {
+      if (tableGenerated) {
+        backToSetupConfirmed();
+        history.pushState(null, null, location.href);
+      } else if (document.getElementById('tableArea').innerHTML !== '') {
+        const yes = confirm('入力内容が消える可能性があります。本当に戻りますか？');
+        if (!yes) {
+          history.pushState(null, null, location.href);
+        }
+      } else {
+        history.pushState(null, null, location.href);
+      }
+    });
+
+    window.addEventListener('beforeunload', function (e) {
+      if (tableGenerated) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
   </script>
 </body>
 </html>
