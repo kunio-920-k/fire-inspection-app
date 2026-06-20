@@ -313,10 +313,11 @@
         }
       });
 
-    // ログイン状態の変化を監視
+    // 認証状態の変化を監視
     // 初回発火時に authReady を true にし、画面の出し分けを確定させる
     onAuthStateChanged(auth, (user) => {
       window.currentUser = user || null;
+      console.log('[DEBUG] onAuthStateChanged発火 / user=', user ? (user.displayName + ' / ' + user.email) : 'null', '/ authReady=', window.authReady);
 
       if (user) {
         console.log('ログイン中:', user.displayName, user.email);
@@ -342,6 +343,7 @@
 
     // 認証状態の初回確認が終わった後に呼ばれる、最初の画面出し分け
     function showInitialScreen() {
+      console.log('[DEBUG] showInitialScreen実行 / currentUser=', window.currentUser ? window.currentUser.email : 'null');
       if (window.currentUser) {
         // 既にログイン済みなら、welcome/loginは出さずそのままアプリへ
         return;
@@ -1684,6 +1686,7 @@ ${bodyHtml}
     // 戻るボタン対策：履歴を一段追加
     history.pushState(null, null, location.href);
     window.addEventListener('popstate', function () {
+      console.log('[DEBUG] popstateイベント発火 / tableGenerated=', typeof tableGenerated !== 'undefined' ? tableGenerated : 'undefined');
       if (tableGenerated) {
         backToSetupConfirmed();
         history.pushState(null, null, location.href);
