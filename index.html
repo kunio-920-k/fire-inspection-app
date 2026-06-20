@@ -360,7 +360,7 @@
   </div>
   <!-- ==================================================== -->
 
-  <!-- あなたの元のHTML（変更なし） -->
+  <!-- ここからあなたの元の全HTML（変更なし） -->
   <div id="welcomeScreen">
     <div class="welcome-box">
       <div class="mc-logo-v">
@@ -805,14 +805,876 @@
       prepareEdit();
     }
 
-    /* ここからあなたの元のJavaScriptの残り全部（generateTable 以降） */
     function generateTable() {
-      // ... (あなたの提供してくれたgenerateTable関数全部) ...
+      if (tableGenerated) {
+        const newRoomSet = new Set();
+        const floors = parseInt(document.getElementById('floorCount').value);
+        const cut4Floor = document.getElementById('cut4Floor').checked;
+        for (let f = floors; f >= 1; f--) {
+          if (cut4Floor && f === 4) continue;
+          const input = document.getElementById('floor_' + f);
+          if (!input) continue;
+          input.value.split(',').map(r => r.trim()).filter(r => r !== '').forEach(r => newRoomSet.add(r));
+        }
+
+        const lostRooms = [];
+        document.querySelectorAll('td.cell').forEach(cell => {
+          const room = cell.dataset.room;
+          const hasData = (cell.dataset.state && cell.dataset.state !== 'mi') ||
+                           (cell.dataset.furyo && cell.dataset.furyo.length > 0);
+          if (hasData && !newRoomSet.has(room)) {
+            lostRooms.push(room);
+          }
+        });
+
+        if (lostRooms.length > 0) {
+          const ok = confirm(
+            lostRooms.join('・') + '号室は状態入力（入室済・不在・不良等）が記録されています。\n' +
+            '今回の変更でこれらの記録が削除されます。よろしいですか？'
+          );
+          if (!ok) return;
+        }
+      }
+
+      const floors = parseInt(document.getElementById('floorCount').value);
+      const cut4Floor = document.getElementById('cut4Floor').checked;
+      useSetsubiFlag = document.getElementById('useSetsubiInfo').checked;
+
+      setsubiDefaults = {};
+      if (useSetsubiFlag) {
+        const inputs = document.querySelectorAll('#setsubiSetupList .setsubi-row');
+        inputs.forEach(row => {
+          const label = row.querySelector('label').textContent;
+          const r = parseInt(label);
+          const tei = parseInt(document.getElementById('tei_' + r)?.value) || 0;
+          const sa = parseInt(document.getElementById('sa_' + r)?.value) || 0;
+          const ke = parseInt(document.getElementById('ke_' + r)?.value) || 0;
+          setsubiDefaults[r] = { tei, sa, ke };
+        });
+      }
+
+      hasshigoSuffixes = new Set();
+      const hasshigoVal = document.getElementById('hasshigoInput').value;
+      if (hasshigoVal.trim() !== '') {
+        hasshigoVal.split(',').forEach(v => {
+          const n = parseInt(v.trim());
+          if (!isNaN(n)) hasshigoSuffixes.add(n);
+        });
+      }
+
+      let preservedCellData = {};
+      if (tableGenerated) {
+        document.querySelectorAll('td.cell').forEach(cell => {
+          preservedCellData[cell.dataset.room] = {
+            state: cell.dataset.state,
+            sign: cell.dataset.sign,
+            furyo: cell.dataset.furyo,
+            photo: cell.dataset.photo,
+            times: cell.dataset.times,
+            yoyakuTime: cell.dataset.yoyakuTime,
+            yoyakuNote: cell.dataset.yoyakuNote
+          };
+        });
+      }
+      let preservedRoomData = {};
+      if (tableGenerated) {
+        document.querySelectorAll('td.room-number').forEach(cell => {
+          preservedRoomData[cell.dataset.room] = {
+            label: cell.dataset.label,
+            hasshigo: cell.dataset.hasshigo
+          };
+        });
+      }
+
+      pendingFloorValues = {};
+      for (let f = floors; f >= 1; f--) {
+        if (cut4Floor && f === 4) continue;
+        const input = document.getElementById('floor_' + f);
+        if (input) pendingFloorValues[f] = input.value;
+      }
+
+      tableFloorData = [];
+      for (let f = floors; f >= 1; f--) {
+        if (cut4Floor && f === 4) continue;
+        const input = document.getElementById('floor_' + f);
+        if (!input) continue;
+        const rooms = input.value.split(',').map(r => r.trim()).filter(r => r !== '');
+        tableFloorData.push({ floor: f, rooms: rooms });
+      }
+      let allSuffixes = new Set();
+      for (const fd of tableFloorData) {
+        for (const room of fd.rooms) allSuffixes.add(parseInt(room) % 100);
+      }
+      tableSuffixes = Array.from(allSuffixes).sort((a, b) => a - b);
+
+      let html = '<table>';
+
+      for (const fd of tableFloorData) {
+        let roomMap = {};
+        for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
+
+        html += '<tr><th class="floor-empty"></th>';
+        for (const suffix of tableSuffixes) {
+          if (roomMap[suffix]) {
+            const room = roomMap[suffix];
+            const prevRoom = preservedRoomData[room];
+            const isH = prevRoom ? prevRoom.hasshigo === '1' : (hasshigoSuffixes.has(suffix) && fd.floor !== 1);
+            const label = prevRoom && prevRoom.label ? prevRoom.label : room;
+            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (prevRoom && prevRoom.label ? prevRoom.label : '') + '">' + label + '</td>';
+          } else {
+            html += '<td class="empty-number"></td>';
+          }
+        }
+        html += '</tr>';
+
+        html += '<tr><th class="floor-label">' + fd.floor + '階</th>';
+        for (const suffix of tableSuffixes) {
+          if (roomMap[suffix]) {
+            const room = roomMap[suffix];
+            const prev = preservedCellData[room];
+            html += '<td class="cell" data-room="' + room + '" data-state="' + (prev ? prev.state : 'mi') + '"' +
+              (prev && prev.sign ? ' data-sign="' + prev.sign + '"' : '') +
+              (prev && prev.furyo ? ' data-furyo="' + prev.furyo.replace(/"/g, '&quot;') + '"' : '') +
+              (prev && prev.photo ? ' data-photo="' + prev.photo + '"' : '') +
+              (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
+              (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
+              (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
+              '>未</td>';
+          } else {
+            html += '<td class="empty-state"></td>';
+          }
+        }
+        html += '</tr>';
+      }
+      html += '</table>';
+
+      document.getElementById('tableArea').innerHTML = html;
+
+      document.querySelectorAll('td.cell').forEach(cell => {
+        if (cell.dataset.state && cell.dataset.state !== 'mi') {
+          updateCellDisplay(cell);
+          if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
+          if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
+          if (cell.dataset.state === 'kushitsu') cell.classList.add('kushitsu');
+          if (cell.dataset.state === 'yoyaku') cell.classList.add('yoyaku');
+          if (cell.dataset.furyo) cell.classList.add('furyo');
+        }
+      });
+
+      yoyakuList = yoyakuList.filter(y => {
+        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+        return cell !== null;
+      });
+      renderYoyakuTable();
+
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('propertyArea').style.display = 'block';
+      document.getElementById('yoyakuArea').style.display = 'block';
+      document.getElementById('outputArea').style.display = 'block';
+      document.querySelector('.table-wrap').style.display = 'block';
+      document.getElementById('backToSetupBtn').style.display = 'block';
+
+      document.getElementById('menuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
+      document.getElementById('roomMenuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
+
+      if (!tableGenerated) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        document.getElementById('propDate').value = yyyy + '-' + mm + '-' + dd;
+      }
+
+      updatePropertyDisplay();
+
+      attachCellEvents();
+
+      canvas = document.getElementById('signCanvas');
+      ctx = canvas.getContext('2d');
+      initCanvas();
+
+      tableGenerated = true;
     }
 
-    // ... (あなたの提供してくれたすべての関数をここにそのまま) ...
+    function attachCellEvents() {
+      document.querySelectorAll('td.cell').forEach(cell => {
+        cell.addEventListener('mousedown', () => startPress(cell, 'state'));
+        cell.addEventListener('touchstart', (e) => {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          startPress(cell, 'state');
+        });
+        cell.addEventListener('touchmove', (e) => {
+          const dx = Math.abs(e.touches[0].clientX - touchStartX);
+          const dy = Math.abs(e.touches[0].clientY - touchStartY);
+          if (dx > 8 || dy > 8) { touchMoved = true; cancelPress(); }
+        });
+        cell.addEventListener('mouseup', cancelPress);
+        cell.addEventListener('mouseleave', cancelPress);
+        cell.addEventListener('touchend', cancelPress);
+      });
 
-    // 最後の部分（popstate対策）
+      document.querySelectorAll('td.room-number').forEach(cell => {
+        cell.addEventListener('mousedown', () => startPress(cell, 'room'));
+        cell.addEventListener('touchstart', (e) => {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          startPress(cell, 'room');
+        });
+        cell.addEventListener('touchmove', (e) => {
+          const dx = Math.abs(e.touches[0].clientX - touchStartX);
+          const dy = Math.abs(e.touches[0].clientY - touchStartY);
+          if (dx > 8 || dy > 8) { touchMoved = true; cancelPress(); }
+        });
+        cell.addEventListener('mouseup', cancelPress);
+        cell.addEventListener('mouseleave', cancelPress);
+        cell.addEventListener('touchend', cancelPress);
+      });
+    }
+
+    let pressType = null;
+    function startPress(cell, type) {
+      pressType = type;
+      touchMoved = false;
+      pressTimer = setTimeout(() => {
+        if (!touchMoved) {
+          if (type === 'state') openMenu(cell);
+          else openRoomMenu(cell);
+        }
+      }, 500);
+    }
+    function cancelPress() { clearTimeout(pressTimer); }
+
+    function openMenu(cell) {
+      activeCell = cell;
+      document.getElementById('menuRoomTitle').textContent = cell.dataset.room + '号室';
+      document.getElementById('contextMenu').style.display = 'block';
+      document.getElementById('menuOverlay').style.display = 'block';
+    }
+    function closeMenu() {
+      document.getElementById('contextMenu').style.display = 'none';
+      document.getElementById('menuOverlay').style.display = 'none';
+      activeCell = null;
+    }
+
+    function openRoomMenu(cell) {
+      activeRoomCell = cell;
+      document.getElementById('roomMenuTitle').textContent = cell.dataset.room + '号室';
+      const isH = cell.dataset.hasshigo === '1';
+      document.querySelector('#roomContextMenu .menu-hasshigo-on').style.display = isH ? 'none' : 'block';
+      document.querySelector('#roomContextMenu .menu-hasshigo-off').style.display = isH ? 'block' : 'none';
+      document.getElementById('roomContextMenu').style.display = 'block';
+      document.getElementById('roomMenuOverlay').style.display = 'block';
+    }
+    function closeRoomMenu() {
+      document.getElementById('roomContextMenu').style.display = 'none';
+      document.getElementById('roomMenuOverlay').style.display = 'none';
+      activeRoomCell = null;
+    }
+
+    function roomMenuSelect(action) {
+      if (!activeRoomCell) return;
+      const cell = activeRoomCell;
+      closeRoomMenu();
+      if (action === 'delete') {
+        const room = cell.dataset.room;
+        const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
+        const hasData = stateCell && (
+          (stateCell.dataset.state && stateCell.dataset.state !== 'mi') ||
+          (stateCell.dataset.furyo && stateCell.dataset.furyo.length > 0)
+        );
+        const msg = hasData
+          ? room + '号室は状態入力（入室済・不在・不良等）が記録されています。本当に削除してよろしいですか？'
+          : room + '号室を削除しますか？';
+        if (!confirm(msg)) return;
+
+        const floor = Math.floor(parseInt(room) / 100);
+
+        const fd = tableFloorData.find(f => f.floor === floor);
+        if (fd) fd.rooms = fd.rooms.filter(r => r !== room);
+        const newRoomsStr = fd ? fd.rooms.join(',') : '';
+
+        pendingFloorValues[floor] = newRoomsStr;
+
+        let floorInput = document.getElementById('floor_' + floor);
+        if (!floorInput) {
+          prepareEdit();
+          floorInput = document.getElementById('floor_' + floor);
+        }
+        if (floorInput) {
+          floorInput.value = newRoomsStr;
+        }
+
+        removeYoyakuByRoom(room);
+        generateTable();
+        return;
+      }
+      if (action === 'on') {
+        cell.dataset.hasshigo = '1';
+        cell.classList.add('hasshigo');
+      } else if (action === 'off') {
+        cell.dataset.hasshigo = '0';
+        cell.classList.remove('hasshigo');
+      } else if (action === 'edit') {
+        const current = cell.dataset.label || cell.dataset.room;
+        const newLabel = prompt('名称を入力してください', current);
+        if (newLabel === null) return;
+        const trimmed = newLabel.trim();
+        if (trimmed === '') {
+          cell.dataset.label = '';
+          cell.textContent = cell.dataset.room;
+        } else {
+          cell.dataset.label = trimmed;
+          cell.textContent = trimmed;
+        }
+      } else if (action === 'setsubi') {
+        const room = cell.dataset.room;
+        const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
+        openSetsubiEdit(stateCell || cell, room);
+      }
+    }
+
+    function getTime() {
+      const now = new Date();
+      return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    }
+
+    function menuSelect(action) {
+      if (!activeCell) return;
+      const cell = activeCell;
+      closeMenu();
+      if (action === 'nyushitsu') {
+        openSign(cell);
+      } else if (action === 'fuzai') {
+        cell.dataset.state = 'fuzai';
+        cell.classList.remove('nyushitsu', 'kushitsu', 'yoyaku');
+        cell.classList.add('fuzai');
+        let times = cell.dataset.times ? JSON.parse(cell.dataset.times) : [];
+        times.push(getTime());
+        cell.dataset.times = JSON.stringify(times);
+        updateCellDisplay(cell);
+      } else if (action === 'furyo') {
+        openFuryo(cell);
+      } else if (action === 'yoyaku') {
+        openYoyaku(cell);
+      } else if (action === 'setsubi') {
+        openSetsubiView(cell);
+      } else if (action === 'kushitsu') {
+        cell.dataset.state = 'kushitsu';
+        cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'yoyaku');
+        cell.classList.add('kushitsu');
+        cell.dataset.furyo = '';
+        cell.dataset.sign = '';
+        cell.dataset.times = '[]';
+        updateCellDisplay(cell);
+      } else if (action === 'reset') {
+        cell.dataset.state = 'mi';
+        cell.dataset.times = '[]';
+        cell.dataset.sign = '';
+        cell.dataset.furyo = '';
+        cell.dataset.photo = '';
+        cell.dataset.yoyakuTime = '';
+        cell.dataset.yoyakuNote = '';
+        cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku');
+        updateCellDisplay(cell);
+        removeYoyakuByRoom(cell.dataset.room);
+        updateYoyakuRowState(cell.dataset.room, false);
+      }
+    }
+
+    function getSetsubiForRoom(room) {
+      if (setsubiCustom[room]) return setsubiCustom[room];
+      const suffix = parseInt(room) % 100;
+      if (setsubiDefaults[suffix]) return setsubiDefaults[suffix];
+      return { tei: 0, sa: 0, ke: 0 };
+    }
+
+    function openSetsubiView(cell) {
+      setsubiCell = cell;
+      const room = cell.dataset.room;
+      const s = getSetsubiForRoom(room);
+      document.getElementById('setsubiTitle').textContent = room + '号室　設備情報';
+      document.getElementById('setsubiContent').innerHTML =
+        '<div class="setsubi-info-row">定温スポット型：定 × ' + s.tei + '</div>' +
+        '<div class="setsubi-info-row">差動式スポット型：差 × ' + s.sa + '</div>' +
+        '<div class="setsubi-info-row">煙感知器：煙 × ' + s.ke + '</div>';
+      document.getElementById('setsubiOk').style.display = 'none';
+      document.getElementById('setsubiModal').classList.add('active');
+    }
+
+    function openSetsubiEdit(cell, room) {
+      setsubiCell = cell;
+      const s = getSetsubiForRoom(room);
+      document.getElementById('setsubiTitle').textContent = room + '号室　設備情報を編集';
+      document.getElementById('setsubiContent').innerHTML =
+        '<div class="setsubi-edit-row">定温スポット型：定 × <input type="number" min="0" id="editTei" value="' + s.tei + '"></div>' +
+        '<div class="setsubi-edit-row">差動式スポット型：差 × <input type="number" min="0" id="editSa" value="' + s.sa + '"></div>' +
+        '<div class="setsubi-edit-row">煙感知器：煙 × <input type="number" min="0" id="editKe" value="' + s.ke + '"></div>';
+      document.getElementById('setsubiOk').style.display = 'inline-block';
+      document.getElementById('setsubiModal').classList.add('active');
+    }
+
+    function cancelSetsubi() {
+      document.getElementById('setsubiModal').classList.remove('active');
+      setsubiCell = null;
+    }
+
+    function confirmSetsubi() {
+      if (!setsubiCell) return;
+      const room = setsubiCell.dataset.room;
+      const tei = parseInt(document.getElementById('editTei')?.value) || 0;
+      const sa = parseInt(document.getElementById('editSa')?.value) || 0;
+      const ke = parseInt(document.getElementById('editKe')?.value) || 0;
+      setsubiCustom[room] = { tei, sa, ke };
+      document.getElementById('setsubiModal').classList.remove('active');
+      setsubiCell = null;
+    }
+
+    function updateCellDisplay(cell) {
+      const state = cell.dataset.state || 'mi';
+      const hasFuryo = cell.dataset.furyo && cell.dataset.furyo.length > 0;
+      const yoyakuTime = cell.dataset.yoyakuTime || cell.getAttribute('data-yoyaku-time') || '';
+      let html = '';
+      if (state === 'nyushitsu') {
+        const sign = cell.dataset.sign || cell.getAttribute('data-sign');
+        if (sign) {
+          html += '<img class="sign-img" src="' + sign + '">';
+        } else {
+          html += '入室済';
+        }
+      } else if (state === 'fuzai') {
+        html += '不在';
+        let times = cell.dataset.times ? JSON.parse(cell.dataset.times) : [];
+        times.forEach(t => { html += '<span class="fuzai-time">' + t + '</span>'; });
+      } else if (state === 'kushitsu') {
+        html += '空室';
+      } else if (state === 'yoyaku') {
+        html += '<span class="yoyaku-time">' + yoyakuTime + '</span>予約';
+      } else {
+        html += '未';
+      }
+      if (hasFuryo) html += '<span class="furyo-mark">⚠不良</span>';
+      cell.innerHTML = html;
+    }
+
+    function updateYoyakuRowState(room, done) {
+      const rows = document.querySelectorAll('#yoyakuBody tr');
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells[0] && cells[0].textContent === room) {
+          if (done) row.classList.add('done');
+          else row.classList.remove('done');
+        }
+      });
+    }
+
+    function openSign(cell) {
+      signCell = cell;
+      document.getElementById('signTitle').textContent = cell.dataset.room + ' のサインをお願いします';
+      clearSign();
+      document.getElementById('signModal').classList.add('active');
+    }
+    function cancelSign() { document.getElementById('signModal').classList.remove('active'); signCell = null; }
+    function clearSign() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
+    function confirmSign() {
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      if (!Array.from(data).some(v => v !== 0)) { alert('サインが入力されていません'); return; }
+      const signData = canvas.toDataURL('image/png');
+      signCell.dataset.state = 'nyushitsu';
+      signCell.dataset.sign = signData;
+      signCell.classList.add('nyushitsu');
+      signCell.classList.remove('fuzai', 'kushitsu', 'yoyaku');
+      updateCellDisplay(signCell);
+      if (signCell.dataset.yoyakuTime) {
+        updateYoyakuRowState(signCell.dataset.room, true);
+      }
+      document.getElementById('signModal').classList.remove('active');
+      signCell = null;
+    }
+
+    function initCanvas() {
+      canvas.addEventListener('mousedown', (e) => { isDrawing = true; draw(e); });
+      canvas.addEventListener('mousemove', (e) => { if (isDrawing) draw(e); });
+      canvas.addEventListener('mouseup', () => { isDrawing = false; ctx.beginPath(); });
+      canvas.addEventListener('mouseleave', () => { isDrawing = false; ctx.beginPath(); });
+      canvas.addEventListener('touchstart', (e) => { e.preventDefault(); isDrawing = true; drawTouch(e); });
+      canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if (isDrawing) drawTouch(e); });
+      canvas.addEventListener('touchend', () => { isDrawing = false; ctx.beginPath(); });
+
+      const tableWrap = document.querySelector('.table-wrap');
+      tableWrap.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      }, { passive: true });
+      tableWrap.addEventListener('touchmove', (e) => {
+        const dx = Math.abs(e.touches[0].clientX - touchStartX);
+        const dy = Math.abs(e.touches[0].clientY - touchStartY);
+        if (dx > dy) { e.stopPropagation(); }
+      }, { passive: true });
+
+      window.addEventListener('orientationchange', () => { closeMenu(); closeRoomMenu(); });
+      window.addEventListener('resize', () => { closeMenu(); closeRoomMenu(); });
+    }
+
+    function draw(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
+      if (e.buttons === 1) { ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y); }
+      else { ctx.beginPath(); ctx.moveTo(x, y); }
+    }
+
+    function drawTouch(e) {
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const x = (touch.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (touch.clientY - rect.top) * (canvas.height / rect.height);
+      ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.strokeStyle = '#000';
+      ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y);
+    }
+
+    function openFuryo(cell) {
+      furyoCell = cell;
+      document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
+      document.getElementById('furyoText').value = cell.dataset.furyo || '';
+      document.getElementById('furyoPreview').style.display = 'none';
+      document.getElementById('furyoPreview').src = '';
+      document.getElementById('furyoPhoto').value = '';
+      document.getElementById('furyoModal').classList.add('active');
+    }
+    function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; }
+    function previewPhoto(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const preview = document.getElementById('furyoPreview');
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    }
+    function confirmFuryo() {
+      const text = document.getElementById('furyoText').value.trim();
+      if (!text) { alert('不良内容を入力してください'); return; }
+      furyoCell.dataset.furyo = text;
+      const preview = document.getElementById('furyoPreview');
+      if (preview.src && preview.style.display !== 'none') furyoCell.dataset.photo = preview.src;
+      furyoCell.classList.add('furyo');
+      updateCellDisplay(furyoCell);
+      document.getElementById('furyoModal').classList.remove('active');
+      furyoCell = null;
+    }
+
+    function openYoyaku(cell) {
+      yoyakuCell = cell;
+      buildNoteSelects();
+      document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
+      const existingTime = cell.dataset.yoyakuTime || '';
+      const sel = document.getElementById('yoyakuModalTime');
+      sel.value = existingTime;
+      const noteSel = document.getElementById('yoyakuModalNote');
+      noteSel.value = cell.dataset.yoyakuNote || '';
+      document.getElementById('yoyakuDelete').style.display =
+        cell.dataset.state === 'yoyaku' ? 'inline-block' : 'none';
+      document.getElementById('yoyakuModal').classList.add('active');
+    }
+    function cancelYoyaku() { document.getElementById('yoyakuModal').classList.remove('active'); yoyakuCell = null; }
+
+    function confirmYoyaku() {
+      const time = document.getElementById('yoyakuModalTime').value;
+      const note = document.getElementById('yoyakuModalNote').value;
+      const room = yoyakuCell.dataset.room;
+      yoyakuCell.dataset.state = 'yoyaku';
+      yoyakuCell.dataset.yoyakuTime = time;
+      yoyakuCell.dataset.yoyakuNote = note;
+      yoyakuCell.classList.add('yoyaku');
+      yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu');
+      updateCellDisplay(yoyakuCell);
+      removeYoyakuByRoom(room);
+      yoyakuList.push({ time, room, note });
+      renderYoyakuTable();
+      document.getElementById('yoyakuModal').classList.remove('active');
+      yoyakuCell = null;
+    }
+
+    function deleteYoyaku() {
+      const room = yoyakuCell.dataset.room;
+      yoyakuCell.dataset.state = 'mi';
+      yoyakuCell.dataset.yoyakuTime = '';
+      yoyakuCell.dataset.yoyakuNote = '';
+      yoyakuCell.classList.remove('yoyaku');
+      updateCellDisplay(yoyakuCell);
+      removeYoyakuByRoom(room);
+      updateYoyakuRowState(room, false);
+      renderYoyakuTable();
+      document.getElementById('yoyakuModal').classList.remove('active');
+      yoyakuCell = null;
+    }
+
+    function removeYoyakuByRoom(room) {
+      yoyakuList = yoyakuList.filter(y => y.room !== room);
+    }
+
+    function addYoyaku() {
+      const room = toHankaku(document.getElementById('addRoom').value.trim());
+      const time = document.getElementById('addTime').value;
+      const note = document.getElementById('addNote').value;
+      if (!room) { alert('号室を入力してください'); return; }
+      removeYoyakuByRoom(room);
+      yoyakuList.push({ time, room, note });
+      renderYoyakuTable();
+      const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+      if (cell) {
+        cell.dataset.state = 'yoyaku';
+        cell.dataset.yoyakuTime = time;
+        cell.dataset.yoyakuNote = note;
+        cell.classList.add('yoyaku');
+        cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu');
+        updateCellDisplay(cell);
+      }
+      document.getElementById('addRoom').value = '';
+    }
+
+    function renderYoyakuTable() {
+      const tbody = document.getElementById('yoyakuBody');
+      tbody.innerHTML = '';
+      yoyakuList.forEach((y, idx) => {
+        const tr = document.createElement('tr');
+        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+        if (cell && cell.dataset.state === 'nyushitsu') {
+          tr.classList.add('done');
+        }
+        tr.innerHTML =
+          '<td>' + y.room + '</td>' +
+          '<td>' + y.time + '</td>' +
+          '<td>' + y.note + '</td>' +
+          '<td class="sort-btn"><button onclick="moveYoyaku(' + idx + ',1)">↓</button></td>' +
+          '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + idx + ')">削除</button></td>';
+        tbody.appendChild(tr);
+      });
+    }
+
+    function moveYoyaku(idx, dir) {
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= yoyakuList.length) return;
+      const tmp = yoyakuList[idx];
+      yoyakuList[idx] = yoyakuList[newIdx];
+      yoyakuList[newIdx] = tmp;
+      renderYoyakuTable();
+    }
+
+    function removeYoyaku(idx) {
+      const room = yoyakuList[idx].room;
+      yoyakuList.splice(idx, 1);
+      renderYoyakuTable();
+      const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+      if (cell && cell.dataset.state === 'yoyaku') {
+        cell.dataset.state = 'mi';
+        cell.dataset.yoyakuTime = '';
+        cell.dataset.yoyakuNote = '';
+        cell.classList.remove('yoyaku');
+        updateCellDisplay(cell);
+      }
+    }
+
+    function formatDateJP(dateStr) {
+      if (!dateStr) return '（日付未入力）';
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const y = parseInt(parts[0]);
+      const m = parseInt(parts[1]);
+      const d = parseInt(parts[2]);
+      return y + '年' + m + '月' + d + '日';
+    }
+
+    function getProperty() {
+      return {
+        name: document.getElementById('propName').value || '（物件名未入力）',
+        date: formatDateJP(document.getElementById('propDate').value),
+        staff: document.getElementById('propStaff').value || '（担当者未入力）'
+      };
+    }
+
+    function updatePropertyDisplay() {
+      const prop = getProperty();
+      document.getElementById('propDisplayName').textContent = prop.name;
+      document.getElementById('propDisplayDate').textContent = prop.date;
+      document.getElementById('propDisplayStaff').textContent = prop.staff;
+    }
+
+    function getCounts() {
+      let nyushitsu = 0, total = 0;
+      document.querySelectorAll('td.cell').forEach(cell => {
+        if (cell.dataset.state === 'kushitsu') return;
+        total++;
+        if (cell.dataset.state === 'nyushitsu') nyushitsu++;
+      });
+      return { nyushitsu, total };
+    }
+
+    function getFuryoList() {
+      const list = [];
+      document.querySelectorAll('td.cell').forEach(cell => {
+        if (cell.dataset.furyo && cell.dataset.furyo.length > 0) {
+          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photo: cell.dataset.photo || '' });
+        }
+      });
+      return list;
+    }
+
+    function exportFuryoText() {
+      const list = getFuryoList();
+      const ta = document.getElementById('textOutput');
+      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
+      ta.style.display = 'block';
+    }
+
+    function printRyomenzu() {
+      const prop = getProperty();
+      const counts = getCounts();
+
+      let cellData = {};
+      document.querySelectorAll('td.cell').forEach(cell => {
+        cellData[cell.dataset.room] = {
+          state: cell.dataset.state || 'mi',
+          sign: cell.dataset.sign || '',
+          furyo: cell.dataset.furyo || '',
+          yoyakuTime: cell.dataset.yoyakuTime || ''
+        };
+      });
+
+      let roomNumberData = {};
+      document.querySelectorAll('td.room-number').forEach(cell => {
+        roomNumberData[cell.dataset.room] = {
+          label: cell.dataset.label || cell.dataset.room
+        };
+      });
+
+      let tableHtml = '<table>';
+
+      for (const fd of tableFloorData) {
+        let roomMap = {};
+        for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
+
+        tableHtml += '<tr><th class="floor-empty"></th>';
+        for (const suffix of tableSuffixes) {
+          if (roomMap[suffix]) {
+            const rn = roomNumberData[roomMap[suffix]] || { label: roomMap[suffix] };
+            tableHtml += '<td class="room-number">' + rn.label + '</td>';
+          } else {
+            tableHtml += '<td class="empty-number"></td>';
+          }
+        }
+        tableHtml += '</tr>';
+
+        tableHtml += '<tr><th class="floor-label">' + fd.floor + '階</th>';
+        for (const suffix of tableSuffixes) {
+          if (!roomMap[suffix]) { tableHtml += '<td class="empty-state"></td>'; continue; }
+          const d = cellData[roomMap[suffix]] || { state: 'mi', sign: '', furyo: '', yoyakuTime: '' };
+          let cls = 'cell';
+          if (d.state === 'kushitsu') cls += ' kushitsu';
+          if (d.state === 'yoyaku') cls += ' yoyaku';
+          let inner = '';
+          if (d.state === 'nyushitsu' && d.sign) {
+            inner = '<img class="sign-img" src="' + d.sign + '">';
+          } else if (d.state === 'kushitsu') {
+            inner = '空室';
+          } else if (d.state === 'yoyaku') {
+            inner = '<span class="yoyaku-time">' + d.yoyakuTime + '</span>予約';
+          }
+          tableHtml += '<td class="' + cls + '">' + inner + '</td>';
+        }
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</table>';
+
+      const colCount = tableSuffixes.length + 1;
+      const colW = Math.floor(257 / colCount);
+
+      const win = window.open('', '_blank');
+      win.document.write(`<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8">
+<title>立面図</title>
+<style>
+  body { font-family: sans-serif; padding: 10mm; font-size: 11px; }
+  h2 { font-size: 13px; margin: 0 0 3px; }
+  .info { font-size: 10px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .count { font-size: 11px; font-weight: bold; }
+  table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+  th { border: 1px solid #333; width: ${colW}mm; text-align: center; background: #ddd; padding: 2px 1px; font-size: 9px; overflow: hidden; }
+  td { border: 1px solid #333; width: ${colW}mm; text-align: center; font-size: 9px; overflow: hidden; }
+  td.room-number { background: #f5f5f5; font-weight: bold; height: 16px; vertical-align: middle; }
+  td.empty-number { background: #eee; height: 16px; }
+  td.empty-state { background: #eee; height: 26px; }
+  td.cell { background: white; height: 26px; vertical-align: middle; }
+  td.cell.kushitsu { background: white; color: #333; }
+  td.cell.yoyaku { background: #ffb347; }
+  .sign-img { width: 70%; height: 18px; object-fit: contain; display: block; margin: 0 auto; }
+  .furyo-mark { display: none; }
+  .yoyaku-time { font-size: 8px; display: block; }
+  th.floor-empty { background: #ddd; }
+  th.floor-label { background: #ddd; }
+  @media print { body { padding: 5mm; } }
+</style>
+</head><body>
+<h2>${prop.name}　消防設備点検立面図</h2>
+<div class="info">
+  <span>作業日：${prop.date}　担当：${prop.staff}</span>
+  <span class="count">入室数：${counts.nyushitsu}／${counts.total}</span>
+</div>
+${tableHtml}
+</body></html>`);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+
+    function printFuryo(withPhoto) {
+      const prop = getProperty();
+      const list = getFuryoList();
+      let bodyHtml = '';
+      if (list.length === 0) {
+        bodyHtml = '<p>不良記録はありません</p>';
+      } else {
+        list.forEach((item, idx) => {
+          bodyHtml += '<div class="item">';
+          bodyHtml += '<p class="room-title">' + (idx + 1) + '. 【' + item.room + '】</p>';
+          bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
+          if (withPhoto && item.photo) {
+            bodyHtml += '<img class="photo" src="' + item.photo + '">';
+          }
+          bodyHtml += '</div>';
+        });
+      }
+      const title = withPhoto ? '不良一覧（写真付き）' : '不良一覧';
+      const win = window.open('', '_blank');
+      win.document.write(`<!DOCTYPE html>
+<html lang="ja"><head>
+<meta charset="UTF-8">
+<title>${title}</title>
+<style>
+  body { font-family: sans-serif; padding: 15mm; font-size: 12px; }
+  h2 { font-size: 14px; margin: 0 0 4px; }
+  .info { font-size: 11px; margin-bottom: 16px; }
+  .item { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
+  .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
+  .furyo-text { margin: 0 0 8px; padding-left: 12px; }
+  .photo { max-width: 200px; max-height: 150px; display: block; margin-top: 6px; border: 1px solid #ccc; }
+  @media print { body { padding: 8mm; } }
+</style>
+</head><body>
+<h2>${prop.name}　${title}</h2>
+<div class="info">作業日：${prop.date}　担当：${prop.staff}</div>
+${bodyHtml}
+</body></html>`);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+
     history.pushState(null, null, location.href);
     window.addEventListener('popstate', function () {
       if (tableGenerated) {
