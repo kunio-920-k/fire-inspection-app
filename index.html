@@ -250,7 +250,8 @@
     import {
       getAuth,
       GoogleAuthProvider,
-      signInWithPopup,
+      signInWithRedirect,
+      getRedirectResult,
       onAuthStateChanged,
       signOut
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
@@ -274,18 +275,15 @@
       const loadingEl = document.getElementById('loginLoading');
       const errorEl = document.getElementById('loginError');
       errorEl.textContent = '';
-      loadingEl.textContent = 'ログイン中...';
+      loadingEl.textContent = 'Googleのログイン画面に移動します...';
 
-      signInWithPopup(auth, provider)
-        .then((result) => {
-          loadingEl.textContent = '';
-          // ログイン成功時の処理はonAuthStateChangedで行う
-        })
-        .catch((error) => {
-          loadingEl.textContent = '';
-          console.error('ログインエラー:', error);
-          errorEl.textContent = 'ログインに失敗しました。もう一度お試しください。';
-        });
+      // スマホブラウザではポップアップ方式が不安定なため
+      // 画面遷移を伴うリダイレクト方式を使用する
+      signInWithRedirect(auth, provider).catch((error) => {
+        loadingEl.textContent = '';
+        console.error('ログインエラー:', error);
+        errorEl.textContent = 'ログインに失敗しました。もう一度お試しください。';
+      });
     };
 
     window.logoutUser = function() {
@@ -293,6 +291,21 @@
         console.error('ログアウトエラー:', error);
       });
     };
+
+    // Googleのログイン画面から戻ってきた直後の結果を受け取る
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result && result.user) {
+          console.log('リダイレクトログイン成功:', result.user.displayName);
+        }
+      })
+      .catch((error) => {
+        console.error('リダイレクトログインエラー:', error);
+        const errorEl = document.getElementById('loginError');
+        if (errorEl) {
+          errorEl.textContent = 'ログインに失敗しました。もう一度お試しください。';
+        }
+      });
 
     // ログイン状態の変化を監視
     onAuthStateChanged(auth, (user) => {
