@@ -7,18 +7,13 @@
   <title>消防設備点検アプリ</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; margin: 0; padding: 0; overflow-x: hidden; -webkit-user-select: none; user-select: none; }
-    input, textarea, select { -webkit-user-select: auto; user-select: auto; }
-    /* ==================== あなたの元の全スタイルをここに貼り付けてください ==================== */
-    /* （前のバージョンから全部コピーして貼ってください） */
+    body { font-family: sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
+    /* ==================== ここにあなたの元の全スタイルを貼り付けてください ==================== */
   </style>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-    import { 
-      getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult,
-      onAuthStateChanged, signOut 
-    } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
@@ -33,89 +28,66 @@
     const auth = getAuth(app);
     const provider = new GoogleAuthProvider();
 
-    // ==================== デバッグログ ====================
-    let debugLogs = JSON.parse(localStorage.getItem('debugLogs') || '[]');
-
-    function addDebugLog(message, data = null) {
-      const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
-      let logText = `[${now}] ${message}`;
-      if (data) logText += ` → ${typeof data === 'object' ? JSON.stringify(data) : String(data)}`;
-      debugLogs.unshift(logText);
-      if (debugLogs.length > 200) debugLogs.pop();
-      localStorage.setItem('debugLogs', JSON.stringify(debugLogs));
-      renderDebugPanel();
+    // デバッグログ
+    let debugLogs = [];
+    function addDebugLog(msg, data) {
+      const time = new Date().toLocaleTimeString('ja-JP');
+      let text = `[${time}] ${msg}`;
+      if (data) text += ` → ${JSON.stringify(data)}`;
+      debugLogs.unshift(text);
+      if (debugLogs.length > 100) debugLogs.pop();
+      renderDebug();
+    }
+    function renderDebug() {
+      const el = document.getElementById('debugLog');
+      if (el) el.innerHTML = debugLogs.map(l => `<div>${l}</div>`).join('');
     }
 
-    function renderDebugPanel() {
-      const panel = document.getElementById('debugPanel');
-      const logDiv = document.getElementById('debugLog');
-      if (panel && logDiv) {
-        logDiv.innerHTML = debugLogs.map(log => `<div>${log.replace(/</g, '&lt;')}</div>`).join('');
-        panel.style.display = 'block';
-      }
-    }
-    // ========================================================
-
-    window.loginWithGoogle = async function() {
-      addDebugLog("🔄 signInWithRedirect 呼び出し");
-      const loadingEl = document.getElementById('loginLoading');
-      if (loadingEl) loadingEl.textContent = 'Googleへ移動中...';
-      try {
-        await signInWithRedirect(auth, provider);
-      } catch (error) {
-        addDebugLog("❌ signInWithRedirect エラー", error.message);
-      }
+    window.loginWithGoogle = () => {
+      addDebugLog("Googleログイン開始");
+      signInWithRedirect(auth, provider);
     };
 
-    function showLoginScreen() {
-      document.getElementById('welcomeScreen').classList.remove('active');
-      document.getElementById('loginScreen').classList.add('active');
-    }
-
-    function hideLoginScreens() {
-      document.getElementById('welcomeScreen').classList.remove('active');
-      document.getElementById('loginScreen').classList.remove('active');
-    }
-
     onAuthStateChanged(auth, (user) => {
-      addDebugLog("🔄 onAuthStateChanged", { loggedIn: !!user });
+      addDebugLog("認証状態変更", { loggedIn: !!user });
       if (user) {
-        hideLoginScreens();
-      } else {
-        showLoginScreen();
+        document.getElementById('loginScreen').style.display = 'none';
       }
     });
 
     window.addEventListener('load', () => {
-      renderDebugPanel();
-      addDebugLog("🚀 ページ読み込み完了");
-      setTimeout(showLoginScreen, 300);   // 強制的にログイン画面を表示
+      addDebugLog("ページ読み込み完了");
+      document.getElementById('debugPanel').style.display = 'block';
+      
+      // 強制的にログイン画面を表示
+      document.getElementById('welcomeScreen').style.display = 'none';
+      document.getElementById('loginScreen').style.display = 'flex';
     });
   </script>
 </head>
 <body>
 
   <!-- デバッグパネル -->
-  <div id="debugPanel" style="display:none; position:fixed; top:0; left:0; right:0; background:#111; color:#0f0; font-family:monospace; font-size:13px; padding:8px; z-index:99999; max-height:50vh; overflow-y:auto; border-bottom:3px solid #0f0;">
-    <div style="color:#ff0; font-weight:bold;">【ManCHEStar デバッグログ】</div>
+  <div id="debugPanel" style="display:none; position:fixed; top:0; left:0; right:0; background:#111; color:#0f0; font-family:monospace; font-size:13px; padding:10px; z-index:99999; max-height:40vh; overflow:auto;">
+    <strong>【ManCHEStar デバッグログ】</strong><br>
     <div id="debugLog"></div>
   </div>
 
   <!-- welcomeScreen -->
-  <div id="welcomeScreen">
-    <!-- あなたの元のwelcomeScreenの内容をここにそのまま貼り付けてください -->
+  <div id="welcomeScreen" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:10000; align-items:center; justify-content:center;">
+    <!-- あなたのwelcomeScreenの内容 -->
   </div>
 
   <!-- loginScreen -->
-  <div id="loginScreen">
-    <!-- あなたの元のloginScreenの内容（Googleボタン付き）をここにそのまま貼り付けてください -->
+  <div id="loginScreen" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:10000; align-items:center; justify-content:center; flex-direction:column;">
+    <h2>ログイン</h2>
+    <button onclick="loginWithGoogle()" style="padding:15px 30px; font-size:18px;">Googleでログイン</button>
   </div>
 
-  <!-- ここからあなたの残りの全HTML（ロゴ、setupエリア、tableなど）を貼り付けてください -->
+  <!-- ここにあなたの残りのアプリ本体HTMLを全部貼り付けてください -->
 
   <script>
-    // ==================== あなたの元の全JavaScriptをここに貼り付けてください ====================
-    // popstate対策は現在コメントアウトしています
+    // あなたの元のJavaScript全部をここに貼り付けてください
   </script>
 </body>
 </html>
