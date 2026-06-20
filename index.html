@@ -13,96 +13,75 @@
   </style>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import { 
+    getAuth, 
+    GoogleAuthProvider, 
+    signInWithRedirect, 
+    getRedirectResult,
+    onAuthStateChanged, 
+    signOut 
+  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
-      authDomain: "manchestar-test.firebaseapp.com",
-      projectId: "manchestar-test",
-      storageBucket: "manchestar-test.firebasestorage.app",
-      messagingSenderId: "863412425540",
-      appId: "1:863412425540:web:9f7f5af93b89417132bd11"
-    };
+  const firebaseConfig = { /* あなたのfirebaseConfigはそのまま */ };
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const provider = new GoogleAuthProvider();
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const provider = new GoogleAuthProvider();
 
-    // ==================== デバッグログ関数 ====================
-    let debugLogs = JSON.parse(localStorage.getItem('debugLogs') || '[]');
+  // デバッグ関数はそのまま（前回追加したもの）
 
-    function addDebugLog(message, data = null) {
-      const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
-      let logText = `[${now}] ${message}`;
-      if (data !== null) {
-        try {
-          logText += ` → ${typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data)}`;
-        } catch(e) {
-          logText += ` → ${String(data)}`;
-        }
-      }
-      debugLogs.unshift(logText);
-      if (debugLogs.length > 150) debugLogs.pop();
-      localStorage.setItem('debugLogs', JSON.stringify(debugLogs));
-      renderDebugPanel();
+  window.loginWithGoogle = async function() {
+    const loadingEl = document.getElementById('loginLoading');
+    const errorEl = document.getElementById('loginError');
+    errorEl.textContent = '';
+    loadingEl.textContent = 'Googleへ移動中...';
+
+    addDebugLog("🔄 signInWithRedirect 呼び出し", { url: window.location.href });
+
+    try {
+      await signInWithRedirect(auth, provider);
+    } catch (error) {
+      addDebugLog("❌ signInWithRedirect エラー", { code: error.code, message: error.message });
+      loadingEl.textContent = '';
+      errorEl.textContent = 'エラー: ' + error.message;
     }
+  };
 
-    function renderDebugPanel() {
-      const panel = document.getElementById('debugPanel');
-      const logDiv = document.getElementById('debugLog');
-      if (!panel || !logDiv) return;
-      logDiv.innerHTML = debugLogs.map(log => `<div>${log.replace(/</g, '&lt;')}</div>`).join('');
-      panel.style.display = 'block';
-    }
-    // ========================================================
+  // リダイレクト結果を確実に取得
+  window.addEventListener('load', async () => {
+    renderDebugPanel();
+    addDebugLog("🚀 ページ読み込み完了");
 
-    window.loginWithGoogle = function() {
-      const loadingEl = document.getElementById('loginLoading');
-      const errorEl = document.getElementById('loginError');
-      errorEl.textContent = '';
-      loadingEl.textContent = 'Google認証を開始...';
-
-      addDebugLog("🔄 loginWithGoogle 呼び出し開始", { url: window.location.href });
-
-      signInWithPopup(auth, provider)
-        .then((result) => {
-          addDebugLog("✅ signInWithPopup 成功", { 
-            uid: result.user?.uid, 
-            email: result.user?.email,
-            displayName: result.user?.displayName 
-          });
-          loadingEl.textContent = 'ログイン成功！';
-        })
-        .catch((error) => {
-          addDebugLog("❌ signInWithPopup エラー", { code: error.code, message: error.message });
-          console.error('ログインエラー:', error);
-          loadingEl.textContent = '';
-          errorEl.textContent = 'ログイン失敗: ' + (error.message || error);
+    try {
+      const result = await getRedirectResult(auth);
+      if (result) {
+        addDebugLog("✅ getRedirectResult 成功", { 
+          uid: result.user?.uid, 
+          email: result.user?.email 
         });
-    };
-
-    window.logoutUser = function() {
-      signOut(auth).catch((error) => {
-        console.error('ログアウトエラー:', error);
-      });
-    };
-
-    onAuthStateChanged(auth, (user) => {
-      addDebugLog("onAuthStateChanged 発火", { loggedIn: !!user, email: user?.email });
-      if (user) {
-        document.getElementById('loginScreen').classList.remove('active');
-        window.currentUser = user;
-        console.log('ログイン中:', user.displayName, user.email);
       } else {
-        window.currentUser = null;
-        const welcomeActive = document.getElementById('welcomeScreen').classList.contains('active');
-        if (!welcomeActive) {
-          document.getElementById('loginScreen').classList.add('active');
-        }
+        addDebugLog("ℹ️ getRedirectResult は null（初回or未リダイレクト）");
       }
-    });
-  </script>
+    } catch (error) {
+      addDebugLog("❌ getRedirectResult エラー", { message: error.message });
+    }
+  });
+
+  onAuthStateChanged(auth, (user) => {
+    addDebugLog("onAuthStateChanged 発火", { loggedIn: !!user, email: user?.email || null });
+    if (user) {
+      document.getElementById('loginScreen').classList.remove('active');
+      window.currentUser = user;
+    } else {
+      window.currentUser = null;
+      const welcomeActive = document.getElementById('welcomeScreen').classList.contains('active');
+      if (!welcomeActive) {
+        document.getElementById('loginScreen').classList.add('active');
+      }
+    }
+  });
+</script>
 </head>
 <body>
 
