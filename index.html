@@ -292,7 +292,13 @@
       });
     };
 
+    // 認証状態の初回確認が完了するまで、画面側の表示判定を待機させるためのフラグ
+    window.authReady = false;
+    window.currentUser = null;
+
     // Googleのログイン画面から戻ってきた直後の結果を受け取る
+    // （onAuthStateChangedより先に解決される場合があるが、
+    //   ここでは特別な処理は不要。失敗時のみエラー表示する）
     getRedirectResult(auth)
       .then((result) => {
         if (result && result.user) {
@@ -308,21 +314,45 @@
       });
 
     // ログイン状態の変化を監視
+    // 初回発火時に authReady を true にし、画面の出し分けを確定させる
     onAuthStateChanged(auth, (user) => {
+      window.currentUser = user || null;
+
       if (user) {
-        // ログイン成功：loginScreenを閉じてアプリ本体へ
-        document.getElementById('loginScreen').classList.remove('active');
-        window.currentUser = user;
         console.log('ログイン中:', user.displayName, user.email);
+        // ログイン済みなら、welcomeScreen/loginScreenとも閉じてアプリ本体へ
+        document.getElementById('welcomeScreen').classList.remove('active');
+        document.getElementById('loginScreen').classList.remove('active');
       } else {
-        // 未ログイン：welcomeScreenが閉じている（確認済みの）場合のみloginScreenを表示
-        window.currentUser = null;
-        const welcomeActive = document.getElementById('welcomeScreen').classList.contains('active');
-        if (!welcomeActive) {
-          document.getElementById('loginScreen').classList.add('active');
+        // 未ログインの場合の画面出し分けは showInitialScreen() に任せる
+        if (window.authReady) {
+          // 2回目以降（ログアウト操作などによる変化）はここで直接出す
+          const isMobile = window.innerWidth <= 1024;
+          if (!isMobile) {
+            document.getElementById('loginScreen').classList.add('active');
+          }
         }
       }
+
+      if (!window.authReady) {
+        window.authReady = true;
+        showInitialScreen();
+      }
     });
+
+    // 認証状態の初回確認が終わった後に呼ばれる、最初の画面出し分け
+    function showInitialScreen() {
+      if (window.currentUser) {
+        // 既にログイン済みなら、welcome/loginは出さずそのままアプリへ
+        return;
+      }
+      const isMobile = window.innerWidth <= 1024;
+      if (isMobile) {
+        document.getElementById('welcomeScreen').classList.add('active');
+      } else {
+        document.getElementById('loginScreen').classList.add('active');
+      }
+    }
   </script>
 </head>
 <body>
@@ -682,14 +712,10 @@
       return str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
     }
 
-    function checkMobile() {
-      const isMobile = window.innerWidth <= 1024;
-      if (isMobile) {
-        document.getElementById('welcomeScreen').classList.add('active');
-      } else if (!window.currentUser) {
-        document.getElementById('loginScreen').classList.add('active');
-      }
-    }
+    // 画面の初期表示（welcomeScreen / loginScreen の出し分け）は
+    // showInitialScreen()（認証状態の確認後に実行）が担当する。
+    // checkMobile() はここでは何もしない（過去の呼び出し箇所との互換のため関数だけ残す）
+    function checkMobile() {}
     function closeWelcome() {
       document.getElementById('welcomeScreen').classList.remove('active');
       if (!window.currentUser) {
