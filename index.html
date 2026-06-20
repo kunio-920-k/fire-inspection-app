@@ -6,111 +6,159 @@
   <meta name="screen-orientation" content="portrait">
   <title>消防設備点検アプリ</title>
   <style>
-    /* （スタイル部分は変更なし・省略して記載していますが、実際はあなたの元のスタイル全部をここに入れてください） */
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; margin: 0; padding: 0; overflow-x: hidden; -webkit-user-select: none; user-select: none; }
-    /* ... あなたの元の全style ... */
+    body {
+      font-family: sans-serif; margin: 0; padding: 0; overflow-x: hidden;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    input, textarea, select {
+      -webkit-user-select: auto; user-select: auto;
+      -webkit-touch-callout: default;
+    }
+    /* ここにあなたの元の全スタイルをそのまま貼り付けています（長いので省略表記ですが実際は全部入れてください） */
+    h1 { font-size: 20px; padding: 20px 20px 0; }
+    button { font-size: 16px; padding: 8px 20px; margin-top: 10px; cursor: pointer; }
+    /* ... あなたの元のstyle全部 ... */
   </style>
 
   <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-  import { 
-    getAuth, 
-    GoogleAuthProvider, 
-    signInWithRedirect, 
-    getRedirectResult,
-    onAuthStateChanged, 
-    signOut 
-  } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+    import { 
+      getAuth, 
+      GoogleAuthProvider, 
+      signInWithRedirect, 
+      getRedirectResult,
+      onAuthStateChanged, 
+      signOut 
+    } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
-  const firebaseConfig = { /* あなたのfirebaseConfigはそのまま */ };
+    const firebaseConfig = {
+      apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
+      authDomain: "manchestar-test.firebaseapp.com",
+      projectId: "manchestar-test",
+      storageBucket: "manchestar-test.firebasestorage.app",
+      messagingSenderId: "863412425540",
+      appId: "1:863412425540:web:9f7f5af93b89417132bd11"
+    };
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const provider = new GoogleAuthProvider();
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
 
-  // デバッグ関数はそのまま（前回追加したもの）
+    // ==================== デバッグログ ====================
+    let debugLogs = JSON.parse(localStorage.getItem('debugLogs') || '[]');
 
-  window.loginWithGoogle = async function() {
-    const loadingEl = document.getElementById('loginLoading');
-    const errorEl = document.getElementById('loginError');
-    errorEl.textContent = '';
-    loadingEl.textContent = 'Googleへ移動中...';
-
-    addDebugLog("🔄 signInWithRedirect 呼び出し", { url: window.location.href });
-
-    try {
-      await signInWithRedirect(auth, provider);
-    } catch (error) {
-      addDebugLog("❌ signInWithRedirect エラー", { code: error.code, message: error.message });
-      loadingEl.textContent = '';
-      errorEl.textContent = 'エラー: ' + error.message;
+    function addDebugLog(message, data = null) {
+      const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+      let logText = `[${now}] ${message}`;
+      if (data !== null) {
+        try {
+          logText += ` → ${typeof data === 'object' ? JSON.stringify(data) : String(data)}`;
+        } catch(e) {
+          logText += ` → ${String(data)}`;
+        }
+      }
+      debugLogs.unshift(logText);
+      if (debugLogs.length > 200) debugLogs.pop();
+      localStorage.setItem('debugLogs', JSON.stringify(debugLogs));
+      renderDebugPanel();
     }
-  };
 
-  // リダイレクト結果を確実に取得
-  window.addEventListener('load', async () => {
-    renderDebugPanel();
-    addDebugLog("🚀 ページ読み込み完了");
+    function renderDebugPanel() {
+      const panel = document.getElementById('debugPanel');
+      const logDiv = document.getElementById('debugLog');
+      if (!panel || !logDiv) return;
+      logDiv.innerHTML = debugLogs.map(log => `<div>${log.replace(/</g, '&lt;')}</div>`).join('');
+      panel.style.display = 'block';
+    }
+    // ========================================================
 
-    try {
-      const result = await getRedirectResult(auth);
-      if (result) {
-        addDebugLog("✅ getRedirectResult 成功", { 
-          uid: result.user?.uid, 
-          email: result.user?.email 
-        });
+    window.loginWithGoogle = async function() {
+      const loadingEl = document.getElementById('loginLoading');
+      const errorEl = document.getElementById('loginError');
+      errorEl.textContent = '';
+      loadingEl.textContent = 'Googleへ移動中...';
+
+      addDebugLog("🔄 signInWithRedirect 呼び出し", window.location.href);
+
+      try {
+        await signInWithRedirect(auth, provider);
+      } catch (error) {
+        addDebugLog("❌ signInWithRedirect エラー", error.message);
+        loadingEl.textContent = '';
+        errorEl.textContent = 'エラー: ' + error.message;
+      }
+    };
+
+    window.logoutUser = function() {
+      signOut(auth).catch(console.error);
+    };
+
+    // リダイレクト戻り処理
+    async function handleRedirectResult() {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result && result.user) {
+          addDebugLog("✅ getRedirectResult 成功！", { email: result.user.email, uid: result.user.uid });
+        } else {
+          addDebugLog("ℹ️ getRedirectResult は null");
+        }
+      } catch (error) {
+        addDebugLog("❌ getRedirectResult エラー", error.message);
+      }
+    }
+
+    // 認証状態監視
+    onAuthStateChanged(auth, (user) => {
+      addDebugLog("🔄 onAuthStateChanged 発火", { loggedIn: !!user, email: user?.email || null });
+      if (user) {
+        document.getElementById('loginScreen').classList.remove('active');
+        window.currentUser = user;
       } else {
-        addDebugLog("ℹ️ getRedirectResult は null（初回or未リダイレクト）");
+        window.currentUser = null;
+        const welcomeActive = document.getElementById('welcomeScreen').classList.contains('active');
+        if (!welcomeActive) {
+          document.getElementById('loginScreen').classList.add('active');
+        }
       }
-    } catch (error) {
-      addDebugLog("❌ getRedirectResult エラー", { message: error.message });
-    }
-  });
+    });
 
-  onAuthStateChanged(auth, (user) => {
-    addDebugLog("onAuthStateChanged 発火", { loggedIn: !!user, email: user?.email || null });
-    if (user) {
-      document.getElementById('loginScreen').classList.remove('active');
-      window.currentUser = user;
-    } else {
-      window.currentUser = null;
-      const welcomeActive = document.getElementById('welcomeScreen').classList.contains('active');
-      if (!welcomeActive) {
-        document.getElementById('loginScreen').classList.add('active');
-      }
-    }
-  });
-</script>
+    window.addEventListener('load', () => {
+      renderDebugPanel();
+      addDebugLog("🚀 ページ読み込み完了", { url: window.location.href });
+      handleRedirectResult();
+    });
+  </script>
 </head>
 <body>
 
   <!-- ==================== デバッグパネル ==================== -->
-  <div id="debugPanel" style="display:none; position:fixed; top:0; left:0; right:0; background:#111; color:#0f0; font-family:monospace; font-size:13px; padding:8px; z-index:99999; max-height:45vh; overflow-y:auto; border-bottom:3px solid #0f0; box-shadow:0 2px 10px rgba(0,0,0,0.5);">
-    <div style="color:#ff0; margin-bottom:8px; font-weight:bold;">【ManCHEStar デバッグログ】 ページ遷移しても残ります</div>
-    <div id="debugLog" style="line-height:1.4;"></div>
+  <div id="debugPanel" style="display:none; position:fixed; top:0; left:0; right:0; background:#111; color:#0f0; font-family:monospace; font-size:13px; padding:8px; z-index:99999; max-height:50vh; overflow-y:auto; border-bottom:3px solid #0f0; box-shadow:0 2px 10px rgba(0,0,0,0.5);">
+    <div style="color:#ff0; margin-bottom:8px; font-weight:bold;">【ManCHEStar デバッグログ】</div>
+    <div id="debugLog"></div>
   </div>
   <!-- ==================================================== -->
 
-  <div id="welcomeScreen"> ...（あなたの元のwelcomeScreenはそのまま）... </div>
+  <!-- ここからあなたの元のHTMLをすべて貼り付け -->
+  <div id="welcomeScreen">
+    <!-- あなたのwelcomeScreen内容（そのまま） -->
+  </div>
 
-  <div id="loginScreen"> ...（あなたの元のloginScreenはそのまま）... </div>
+  <div id="loginScreen">
+    <!-- あなたのloginScreen内容（Googleボタン付き、そのまま） -->
+  </div>
 
-  <!-- 以降はあなたの元のbody内容を全部そのまま貼り付けてください（mc-logo-h以降全部） -->
+  <!-- 以降もあなたの元の全HTML（mc-logo-h, setup, table-wrap など全部）をここに貼り付けてください -->
 
   <script>
-    // あなたの元の全<script>内容はそのままここに貼り付けてください
-    // （一番下に以下のloadイベントだけ追加）
+    // あなたの元の全JavaScriptコードをここに貼り付けてください
+    // （一番最後に以下のpopstate対策コメントアウトを追加）
 
-    window.addEventListener('load', () => {
-      renderDebugPanel();
-      addDebugLog("🚀 ページ読み込み完了", { 
-        url: window.location.href, 
-        userAgent: navigator.userAgent.substring(0, 100) 
-      });
-    });
-
-    // あなたの元のスクリプトの最後（history.pushStateの部分など）
+    // === popstate対策を一時的に無効化（テスト中） ===
+    // history.pushState(null, null, location.href);
+    // window.addEventListener('popstate', function () { ... });
+    // ================================================
   </script>
 </body>
 </html>
