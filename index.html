@@ -663,8 +663,7 @@
   <div id="outputArea">
     <button onclick="printRyomenzu()">📄 立面図を印刷</button>
     <button onclick="exportFuryoText()">📋 不良一覧テキストを表示</button>
-    <button onclick="printFuryo(false)">🖨️ 不良一覧を印刷（写真なし）</button>
-    <button onclick="printFuryo(true)">📷 不良一覧を印刷（写真あり）</button>
+    <button onclick="printFuryo()">🖨️ 不良一覧を印刷</button>
     <br>
     <textarea id="textOutput" readonly></textarea>
   </div>
@@ -1371,7 +1370,6 @@
             state: cell.dataset.state,
             sign: cell.dataset.sign,
             furyo: cell.dataset.furyo,
-            photo: cell.dataset.photo,
             photoName: cell.dataset.photoName,
             times: cell.dataset.times,
             yoyakuTime: cell.dataset.yoyakuTime,
@@ -1439,7 +1437,6 @@
             html += '<td class="cell" data-room="' + room + '" data-state="' + (prev ? prev.state : 'mi') + '"' +
               (prev && prev.sign ? ' data-sign="' + prev.sign + '"' : '') +
               (prev && prev.furyo ? ' data-furyo="' + prev.furyo.replace(/"/g, '&quot;') + '"' : '') +
-              (prev && prev.photo ? ' data-photo="' + prev.photo + '"' : '') +
               (prev && prev.photoName ? ' data-photo-name="' + prev.photoName.replace(/"/g, '&quot;') + '"' : '') +
               (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
               (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
@@ -1688,7 +1685,6 @@
         cell.dataset.times = '[]';
         cell.dataset.sign = '';
         cell.dataset.furyo = '';
-        cell.dataset.photo = '';
         cell.dataset.photoName = '';
         cell.dataset.yoyakuTime = '';
         cell.dataset.yoyakuNote = '';
@@ -1898,8 +1894,6 @@
       const text = document.getElementById('furyoText').value.trim();
       if (!text) { alert('不良内容を入力してください'); return; }
       furyoCell.dataset.furyo = text;
-      const preview = document.getElementById('furyoPreview');
-      if (preview.src && preview.style.display !== 'none') furyoCell.dataset.photo = preview.src;
       const photoInput = document.getElementById('furyoPhoto');
       const photoFile = photoInput.files && photoInput.files[0];
       if (photoFile) furyoCell.dataset.photoName = photoFile.name;
@@ -2091,7 +2085,7 @@
       const list = [];
       document.querySelectorAll('td.cell').forEach(cell => {
         if (cell.dataset.furyo && cell.dataset.furyo.length > 0) {
-          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photo: cell.dataset.photo || '', photoName: cell.dataset.photoName || '' });
+          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photoName: cell.dataset.photoName || '' });
         }
       });
       return list;
@@ -2205,7 +2199,7 @@ ${tableHtml}
       setTimeout(() => win.print(), 500);
     }
 
-    function printFuryo(withPhoto) {
+    function printFuryo() {
       const prop = getProperty();
       const list = getFuryoList();
       let bodyHtml = '';
@@ -2219,13 +2213,10 @@ ${tableHtml}
           if (item.photoName) {
             bodyHtml += '<p class="photo-name">📎 写真ファイル名：' + item.photoName + '</p>';
           }
-          if (withPhoto && item.photo) {
-            bodyHtml += '<img class="photo" src="' + item.photo + '">';
-          }
           bodyHtml += '</div>';
         });
       }
-      const title = withPhoto ? '不良一覧（写真付き）' : '不良一覧';
+      const title = '不良一覧';
       const win = window.open('', '_blank');
       win.document.write(`<!DOCTYPE html>
 <html lang="ja"><head>
@@ -2239,7 +2230,6 @@ ${tableHtml}
   .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
   .furyo-text { margin: 0 0 8px; padding-left: 12px; }
   .photo-name { margin: 0 0 8px; padding-left: 12px; font-size: 13px; color: #555; }
-  .photo { max-width: 200px; max-height: 150px; display: block; margin-top: 6px; border: 1px solid #ccc; }
   @media print { body { padding: 8mm; } }
 </style>
 </head><body>
