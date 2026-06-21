@@ -17,7 +17,7 @@
       -webkit-touch-callout: default;
     }
     h1 { font-size: 20px; padding: 20px 20px 0; }
-    input[type="number"] { width: 60px; font-size: 16px; margin: 5px; }
+    input[type="number"], .count-input { width: 60px; font-size: 16px; margin: 5px; }
     input[type="text"] { font-size: 14px; padding: 4px; }
     select { font-size: 14px; padding: 4px; }
     button { font-size: 16px; padding: 8px 20px; margin-top: 10px; cursor: pointer; }
@@ -64,7 +64,7 @@
     .setsubi-row label { font-weight: bold; display: block; margin-bottom: 4px; }
     .setsubi-inputs { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .setsubi-inputs span { font-size: 13px; }
-    .setsubi-inputs input[type="number"] { width: 50px; font-size: 14px; margin: 0; }
+    .setsubi-inputs input { width: 50px; font-size: 14px; margin: 0; }
 
     #yoyakuArea { margin-top: 24px; padding: 0 20px; display: none; }
     #yoyakuArea h2 { font-size: 16px; margin-bottom: 8px; }
@@ -455,9 +455,9 @@
     </div>
 
     <p>階数を入力してください</p>
-    <input type="number" id="floorCount" min="1" value="3">
+    <input type="text" inputmode="numeric" id="floorCount" class="count-input zenkaku-ok" value="3">
     <p>各階の号室数を入力してください</p>
-    <input type="number" id="roomCount" min="1" value="6">
+    <input type="text" inputmode="numeric" id="roomCount" class="count-input zenkaku-ok" value="6">
     <div class="checkbox-area"><label><input type="checkbox" id="cut4Room"> 4号室をカットする（104・204等）</label></div>
     <div class="checkbox-area"><label><input type="checkbox" id="cut4Floor"> 4階をカットする</label></div>
     <div class="checkbox-area"><label><input type="checkbox" id="useSetsubiInfo" onchange="toggleSetsubiSetup()"> 住戸内設備情報を利用する</label></div>
@@ -474,7 +474,7 @@
       <p>各階の号室を確認・編集してください（カンマ区切り）</p>
       <div id="floorEditList"></div>
       <p style="margin-top:12px;">避難はしご設置の号室列番号を入力してください<br><span style="font-size:12px;color:#666;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</span></p>
-      <input type="text" id="hasshigoInput" placeholder="例：3,5" style="width:200px;">
+      <input type="text" id="hasshigoInput" class="zenkaku-ok" placeholder="例：3,5" style="width:200px;">
       <br>
       <button onclick="generateTable()">表を作成する</button>
     </div>
@@ -494,7 +494,8 @@
     <div class="yoyaku-add">
       <input type="text" id="addRoom" class="room-input" placeholder="号室">
       <select id="addTime"></select>
-      <select id="addNote"></select>
+      <select id="addNote" onchange="toggleNoteOther('addNote','addNoteOther')"></select>
+      <input type="text" id="addNoteOther" class="note-input" placeholder="備考を入力" style="display:none;">
       <button onclick="addYoyaku()">追加</button>
     </div>
     <div id="notePatternManage"><a onclick="openPatternModal()">備考パターンを編集する</a></div>
@@ -580,7 +581,8 @@
       <p style="font-size:13px;color:#666;">時間を選択してください</p>
       <select id="yoyakuModalTime" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
       <p style="font-size:13px;color:#666;margin-top:8px;">備考</p>
-      <select id="yoyakuModalNote" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <select id="yoyakuModalNote" onchange="toggleNoteOther('yoyakuModalNote','yoyakuModalNoteOther')" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <input type="text" id="yoyakuModalNoteOther" placeholder="備考を入力" style="display:none;margin-top:8px;width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;">
       <div class="modal-buttons">
         <button id="yoyakuCancel" onclick="cancelYoyaku()">キャンセル</button>
         <button id="yoyakuDelete" onclick="deleteYoyaku()">予約削除</button>
@@ -667,6 +669,8 @@
     }
     buildTimeSelects();
 
+    const NOTE_OTHER_VALUE = '__other__';
+
     function buildNoteSelects() {
       const ids = ['addNote', 'yoyakuModalNote'];
       ids.forEach(id => {
@@ -683,10 +687,48 @@
           opt.textContent = p;
           sel.appendChild(opt);
         });
+        const otherOpt = document.createElement('option');
+        otherOpt.value = NOTE_OTHER_VALUE;
+        otherOpt.textContent = 'その他';
+        sel.appendChild(otherOpt);
         sel.value = currentVal;
       });
     }
     buildNoteSelects();
+
+    // 「その他」選択時、テキスト入力欄の表示・非表示を切り替える
+    function toggleNoteOther(selectId, inputId) {
+      const sel = document.getElementById(selectId);
+      const input = document.getElementById(inputId);
+      if (sel.value === NOTE_OTHER_VALUE) {
+        input.style.display = 'block';
+        input.focus();
+      } else {
+        input.style.display = 'none';
+        input.value = '';
+      }
+    }
+
+    // 備考の最終的な値を確定する。「その他」が選択されている場合はテキスト入力を使い、
+    // 必要なら「選択項目に加えますか？」と確認して備考パターンに追加する。
+    // 入力エラー等で確定できない場合は null を返す。
+    function resolveNoteValue(selectId, inputId) {
+      const sel = document.getElementById(selectId);
+      const input = document.getElementById(inputId);
+      if (sel.value === NOTE_OTHER_VALUE) {
+        const text = input.value.trim();
+        if (!text) {
+          alert('備考を入力してください');
+          return null;
+        }
+        if (!notePatterns.includes(text)) {
+          const add = confirm('「' + text + '」を選択項目に加えますか？');
+          if (add) notePatterns.push(text);
+        }
+        return text;
+      }
+      return sel.value;
+    }
 
     // 備考パターン管理
     function openPatternModal() {
@@ -723,6 +765,24 @@
     function toHankaku(str) {
       return str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
     }
+
+    // 号室リストなどの入力欄向け：全角数字→半角、区切り文字（、．. /／・･，）→半角カンマに統一
+    function normalizeListInput(str) {
+      if (!str) return str;
+      let s = toHankaku(str);
+      s = s.replace(/[、．\.\/／・･，]/g, ',');
+      s = s.split(',').map(v => v.trim()).filter(v => v !== '').join(',');
+      return s;
+    }
+
+    // class="zenkaku-ok" の付いた入力欄は、フォーカスが外れた時点で自動的に半角に変換する
+    // （blurはバブリングしないため、document側はキャプチャフェーズで監視する）
+    document.addEventListener('blur', function (e) {
+      if (e.target && e.target.classList && e.target.classList.contains('zenkaku-ok')) {
+        const converted = normalizeListInput(e.target.value);
+        if (converted !== e.target.value) e.target.value = converted;
+      }
+    }, true);
 
     // 画面の初期表示（welcomeScreen / loginScreen の出し分け）は
     // showInitialScreen()（認証状態の確認後に実行）が担当する。
@@ -761,9 +821,9 @@
         div.innerHTML =
           '<label>' + String(r).padStart(2,'0') + '系統（' + r + '号室列）</label>' +
           '<div class="setsubi-inputs">' +
-          '定 × <input type="number" min="0" value="' + existing.tei + '" id="tei_' + r + '" style="width:45px;">' +
-          '差 × <input type="number" min="0" value="' + existing.sa + '" id="sa_' + r + '" style="width:45px;">' +
-          '煙 × <input type="number" min="0" value="' + existing.ke + '" id="ke_' + r + '" style="width:45px;">' +
+          '定 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.tei + '" id="tei_' + r + '" style="width:45px;">' +
+          '差 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.sa + '" id="sa_' + r + '" style="width:45px;">' +
+          '煙 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.ke + '" id="ke_' + r + '" style="width:45px;">' +
           '</div>';
         list.appendChild(div);
       });
@@ -791,7 +851,7 @@
         }
         const div = document.createElement('div');
         div.className = 'floor-edit';
-        div.innerHTML = f + '階：<input type="text" id="floor_' + f + '" value="' + roomNumbers + '">';
+        div.innerHTML = f + '階：<input type="text" class="zenkaku-ok" id="floor_' + f + '" value="' + roomNumbers + '">';
         floorEditList.appendChild(div);
       }
       document.getElementById('editArea').style.display = 'block';
@@ -824,7 +884,7 @@
           if (cut4Floor && f === 4) continue;
           const input = document.getElementById('floor_' + f);
           if (!input) continue;
-          input.value.split(',').map(r => r.trim()).filter(r => r !== '').forEach(r => newRoomSet.add(r));
+          normalizeListInput(input.value).split(',').map(r => r.trim()).filter(r => r !== '').forEach(r => newRoomSet.add(r));
         }
 
         const lostRooms = [];
@@ -864,7 +924,7 @@
       }
 
       hasshigoSuffixes = new Set();
-      const hasshigoVal = document.getElementById('hasshigoInput').value;
+      const hasshigoVal = normalizeListInput(document.getElementById('hasshigoInput').value);
       if (hasshigoVal.trim() !== '') {
         hasshigoVal.split(',').forEach(v => {
           const n = parseInt(v.trim());
@@ -910,7 +970,7 @@
         if (cut4Floor && f === 4) continue;
         const input = document.getElementById('floor_' + f);
         if (!input) continue;
-        const rooms = input.value.split(',').map(r => r.trim()).filter(r => r !== '');
+        const rooms = normalizeListInput(input.value).split(',').map(r => r.trim()).filter(r => r !== '');
         tableFloorData.push({ floor: f, rooms: rooms });
       }
       let allSuffixes = new Set();
@@ -930,7 +990,7 @@
           if (roomMap[suffix]) {
             const room = roomMap[suffix];
             const prevRoom = preservedRoomData[room];
-            const isH = prevRoom ? prevRoom.hasshigo === '1' : (hasshigoSuffixes.has(suffix) && fd.floor !== 1);
+            const isH = hasshigoSuffixes.has(suffix) && fd.floor !== 1;
             const label = prevRoom && prevRoom.label ? prevRoom.label : room;
             html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (prevRoom && prevRoom.label ? prevRoom.label : '') + '">' + label + '</td>';
           } else {
@@ -1225,9 +1285,9 @@
       const s = getSetsubiForRoom(room);
       document.getElementById('setsubiTitle').textContent = room + '号室　設備情報を編集';
       document.getElementById('setsubiContent').innerHTML =
-        '<div class="setsubi-edit-row">定温スポット型：定 × <input type="number" min="0" id="editTei" value="' + s.tei + '"></div>' +
-        '<div class="setsubi-edit-row">差動式スポット型：差 × <input type="number" min="0" id="editSa" value="' + s.sa + '"></div>' +
-        '<div class="setsubi-edit-row">煙感知器：煙 × <input type="number" min="0" id="editKe" value="' + s.ke + '"></div>';
+        '<div class="setsubi-edit-row">定温スポット型：定 × <input type="text" inputmode="numeric" class="zenkaku-ok" id="editTei" value="' + s.tei + '"></div>' +
+        '<div class="setsubi-edit-row">差動式スポット型：差 × <input type="text" inputmode="numeric" class="zenkaku-ok" id="editSa" value="' + s.sa + '"></div>' +
+        '<div class="setsubi-edit-row">煙感知器：煙 × <input type="text" inputmode="numeric" class="zenkaku-ok" id="editKe" value="' + s.ke + '"></div>';
       document.getElementById('setsubiOk').style.display = 'inline-block';
       document.getElementById('setsubiModal').classList.add('active');
     }
@@ -1393,16 +1453,33 @@
       const sel = document.getElementById('yoyakuModalTime');
       sel.value = existingTime;
       const noteSel = document.getElementById('yoyakuModalNote');
-      noteSel.value = cell.dataset.yoyakuNote || '';
+      const noteInput = document.getElementById('yoyakuModalNoteOther');
+      const existingNote = cell.dataset.yoyakuNote || '';
+      const matched = Array.from(noteSel.options).some(o => o.value === existingNote);
+      if (existingNote && !matched) {
+        // 過去に「その他」で入力されたが選択肢には未登録の備考
+        noteSel.value = NOTE_OTHER_VALUE;
+        noteInput.value = existingNote;
+        noteInput.style.display = 'block';
+      } else {
+        noteSel.value = existingNote;
+        noteInput.style.display = 'none';
+        noteInput.value = '';
+      }
       document.getElementById('yoyakuDelete').style.display =
         cell.dataset.state === 'yoyaku' ? 'inline-block' : 'none';
       document.getElementById('yoyakuModal').classList.add('active');
     }
-    function cancelYoyaku() { document.getElementById('yoyakuModal').classList.remove('active'); yoyakuCell = null; }
+    function cancelYoyaku() {
+      document.getElementById('yoyakuModal').classList.remove('active');
+      document.getElementById('yoyakuModalNoteOther').style.display = 'none';
+      yoyakuCell = null;
+    }
 
     function confirmYoyaku() {
       const time = document.getElementById('yoyakuModalTime').value;
-      const note = document.getElementById('yoyakuModalNote').value;
+      const note = resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
+      if (note === null) return;
       const room = yoyakuCell.dataset.room;
       yoyakuCell.dataset.state = 'yoyaku';
       yoyakuCell.dataset.yoyakuTime = time;
@@ -1414,7 +1491,9 @@
       yoyakuList.push({ time, room, note });
       renderYoyakuTable();
       document.getElementById('yoyakuModal').classList.remove('active');
+      document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
+      buildNoteSelects();
     }
 
     function deleteYoyaku() {
@@ -1428,6 +1507,7 @@
       updateYoyakuRowState(room, false);
       renderYoyakuTable();
       document.getElementById('yoyakuModal').classList.remove('active');
+      document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
     }
 
@@ -1438,7 +1518,8 @@
     function addYoyaku() {
       const room = toHankaku(document.getElementById('addRoom').value.trim());
       const time = document.getElementById('addTime').value;
-      const note = document.getElementById('addNote').value;
+      const note = resolveNoteValue('addNote', 'addNoteOther');
+      if (note === null) return;
       if (!room) { alert('号室を入力してください'); return; }
       removeYoyakuByRoom(room);
       yoyakuList.push({ time, room, note });
@@ -1453,6 +1534,9 @@
         updateCellDisplay(cell);
       }
       document.getElementById('addRoom').value = '';
+      document.getElementById('addNoteOther').style.display = 'none';
+      document.getElementById('addNoteOther').value = '';
+      buildNoteSelects();
     }
 
     function renderYoyakuTable() {
@@ -1461,12 +1545,15 @@
       yoyakuList.forEach((y, idx) => {
         const tr = document.createElement('tr');
         const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
-        if (cell && cell.dataset.state === 'nyushitsu') {
+        const isPass = y.time === '';
+        // パス（時間指定なし）は入室済と同様、即時に完了扱いとする
+        if ((cell && cell.dataset.state === 'nyushitsu') || isPass) {
           tr.classList.add('done');
         }
+        const timeLabel = isPass ? 'パス' : y.time;
         tr.innerHTML =
           '<td>' + y.room + '</td>' +
-          '<td>' + y.time + '</td>' +
+          '<td>' + timeLabel + '</td>' +
           '<td>' + y.note + '</td>' +
           '<td class="sort-btn"><button onclick="moveYoyaku(' + idx + ',1)">↓</button></td>' +
           '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + idx + ')">削除</button></td>';
@@ -1593,13 +1680,13 @@
           const d = cellData[roomMap[suffix]] || { state: 'mi', sign: '', furyo: '', yoyakuTime: '' };
           let cls = 'cell';
           if (d.state === 'kushitsu') cls += ' kushitsu';
-          if (d.state === 'yoyaku') cls += ' yoyaku';
+          if (d.state === 'yoyaku' && d.yoyakuTime !== '') cls += ' yoyaku';
           let inner = '';
           if (d.state === 'nyushitsu' && d.sign) {
             inner = '<img class="sign-img" src="' + d.sign + '">';
           } else if (d.state === 'kushitsu') {
             inner = '空室';
-          } else if (d.state === 'yoyaku') {
+          } else if (d.state === 'yoyaku' && d.yoyakuTime !== '') {
             inner = '<span class="yoyaku-time">' + d.yoyakuTime + '</span>予約';
           }
           tableHtml += '<td class="' + cls + '">' + inner + '</td>';
