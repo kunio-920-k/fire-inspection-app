@@ -776,11 +776,7 @@
         <button onclick="closeQrModal()" style="background:#eee;">閉じる</button>
       </div>
       <div style="margin-top:16px;padding-top:14px;border-top:1px solid #ddd;">
-        <p style="font-size:13px;color:#666;margin-bottom:8px;">QRの読み取りでうまく開けない場合は、メールで送ってください（相手はメール内のリンクから開きます）。</p>
-        <input type="email" id="qrInviteEmail" class="zenkaku-ok" placeholder="相手のメールアドレス" style="width:100%;box-sizing:border-box;margin-bottom:8px;">
-        <div class="modal-buttons">
-          <button onclick="sendQrInviteEmail()" style="background:#eef5ff;">メールで送る</button>
-        </div>
+        <p style="font-size:13px;color:#666;">iPhoneでQRがうまく開けない場合は、上の「リンクをコピー」を押して、メールやLINEなどで相手に送ってください。相手はそのリンクをメール（またはLINE）側から開いてください。</p>
       </div>
     </div>
   </div>
@@ -872,22 +868,6 @@
       } else {
         alert('このブラウザでは自動コピーに対応していません。上のリンクを手動で選択してコピーしてください。');
       }
-    }
-
-    // 招待リンクをメールで送る（mailto: で自分のメールアプリの下書きを開く。実際の送信は自分で行う）
-    function sendQrInviteEmail() {
-      const emailInput = document.getElementById('qrInviteEmail');
-      const email = emailInput.value.trim();
-      if (!email) { alert('相手のメールアドレスを入力してください。'); return; }
-      const url = document.getElementById('qrLinkText').textContent;
-      if (!url) { alert('招待リンクの準備ができていません。少し待ってからもう一度お試しください。'); return; }
-      const subject = encodeURIComponent('マンチェスター：現場への招待');
-      const body = encodeURIComponent(
-        '下記のリンクをタップして、マンチェスターに参加してください。\n\n' +
-        url +
-        '\n\n開いたら、そのままGoogleアカウントでログインしてください。'
-      );
-      window.location.href = 'mailto:' + email + '?subject=' + subject + '&body=' + body;
     }
 
     // 新しい現場を始める（現在の現場とは別の、新しいデータとして開始する）
