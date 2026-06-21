@@ -261,7 +261,10 @@
       getFirestore,
       collection,
       addDoc,
-      serverTimestamp
+      serverTimestamp,
+      doc,
+      setDoc,
+      getDoc
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -349,6 +352,48 @@
       }
     };
 
+    // ---- 点検データのクラウド保存・読込 ----
+    // メインスクリプト側（gatherInspectionState）が集めたデータを受け取って保存する。
+    // 短時間に連続で呼ばれた場合は最後の1回だけ実際に書き込む（連打対策）。
+    let saveTimer = null;
+    window.saveInspectionToCloud = function (stateObj) {
+      if (!window.currentUser) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        const ref = doc(db, 'inspections', window.currentUser.uid);
+        setDoc(ref, {
+          data: JSON.stringify(stateObj),
+          updatedAt: serverTimestamp()
+        }).then(() => {
+          dlog('クラウド保存OK');
+        }).catch((e) => {
+          dlog('クラウド保存エラー / ' + e.message);
+          console.error('クラウド保存エラー:', e);
+        });
+      }, 800);
+    };
+
+    // 前回保存された点検データを読み込む。データが無ければnullを返す。
+    window.loadInspectionFromCloud = function () {
+      if (!window.currentUser) return Promise.resolve(null);
+      const ref = doc(db, 'inspections', window.currentUser.uid);
+      return getDoc(ref).then((snap) => {
+        if (snap.exists() && snap.data() && snap.data().data) {
+          try {
+            return JSON.parse(snap.data().data);
+          } catch (e) {
+            dlog('クラウドデータの解析に失敗 / ' + e.message);
+            return null;
+          }
+        }
+        return null;
+      }).catch((e) => {
+        dlog('クラウド読込エラー / ' + e.message);
+        console.error('クラウド読込エラー:', e);
+        return null;
+      });
+    };
+
     // 認証状態の初回確認が完了するまで、画面側の表示判定を待機させるためのフラグ
     window.authReady = false;
     window.currentUser = null;
@@ -365,6 +410,16 @@
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email;
+
+        // 前回の続きをクラウドから自動復元する（1セッションにつき1回だけ）
+        if (!window.cloudRestoreDone) {
+          window.cloudRestoreDone = true;
+          window.loadInspectionFromCloud().then((state) => {
+            if (state && window.restoreInspectionState) {
+              window.restoreInspectionState(state);
+            }
+          });
+        }
       } else {
         if (emailLabel) emailLabel.textContent = '';
         if (window.authReady) {
@@ -811,11 +866,17 @@
     }
 
     // class="zenkaku-ok" の付いた入力欄は、フォーカスが外れた時点で自動的に半角に変換する
+    // 物件情報欄（物件名・作業日・担当者）は、フォーカスが外れた時点でクラウド保存する
     // （blurはバブリングしないため、document側はキャプチャフェーズで監視する）
+    const PROPERTY_FIELD_IDS = ['propName', 'propDate', 'propStaff'];
     document.addEventListener('blur', function (e) {
-      if (e.target && e.target.classList && e.target.classList.contains('zenkaku-ok')) {
+      if (!e.target || !e.target.id) return;
+      if (e.target.classList && e.target.classList.contains('zenkaku-ok')) {
         const converted = normalizeListInput(e.target.value);
         if (converted !== e.target.value) e.target.value = converted;
+      }
+      if (PROPERTY_FIELD_IDS.includes(e.target.id)) {
+        syncToCloud();
       }
     }, true);
 
@@ -862,6 +923,186 @@
           '</div>';
         list.appendChild(div);
       });
+    }
+
+    // ---- クラウド同期 ----
+    // 画面上の状態を1つのオブジェクトにまとめる（サイン画像・不良写真は容量の都合上含めない）
+    function gatherInspectionState() {
+      const cells = {};
+      document.querySelectorAll('td.cell').forEach(cell => {
+        cells[cell.dataset.room] = {
+          state: cell.dataset.state || 'mi',
+          furyo: cell.dataset.furyo || '',
+          times: cell.dataset.times || '[]',
+          yoyakuTime: cell.dataset.yoyakuTime || '',
+          yoyakuNote: cell.dataset.yoyakuNote || ''
+        };
+      });
+      const rooms = {};
+      document.querySelectorAll('td.room-number').forEach(cell => {
+        rooms[cell.dataset.room] = {
+          label: cell.dataset.label || ''
+        };
+      });
+
+      return {
+        property: {
+          name: document.getElementById('propName').value,
+          date: document.getElementById('propDate').value,
+          staff: document.getElementById('propStaff').value
+        },
+        setup: {
+          floorCount: document.getElementById('floorCount').value,
+          roomCount: document.getElementById('roomCount').value,
+          cut4Room: document.getElementById('cut4Room').checked,
+          cut4Floor: document.getElementById('cut4Floor').checked,
+          useSetsubiInfo: document.getElementById('useSetsubiInfo').checked,
+          hasshigoInput: document.getElementById('hasshigoInput').value,
+          pendingFloorValues: pendingFloorValues
+        },
+        tableFloorData: tableFloorData,
+        tableGenerated: tableGenerated,
+        cells: cells,
+        rooms: rooms,
+        setsubiDefaults: setsubiDefaults,
+        setsubiCustom: setsubiCustom,
+        yoyakuList: yoyakuList,
+        notePatterns: notePatterns
+      };
+    }
+
+    // 状態が変わるたびにこれを呼ぶ。ログインしていなければ何もしない。
+    function syncToCloud() {
+      if (window.saveInspectionToCloud) window.saveInspectionToCloud(gatherInspectionState());
+    }
+
+    // クラウドから読み込んだ内容で画面を復元する（loginWithGoogle成功後、自動的に呼ばれる）
+    window.restoreInspectionState = function (state) {
+      if (!state) return;
+
+      if (state.property) {
+        document.getElementById('propName').value = state.property.name || '';
+        document.getElementById('propDate').value = state.property.date || '';
+        document.getElementById('propStaff').value = state.property.staff || '';
+      }
+
+      if (state.setup) {
+        document.getElementById('floorCount').value = state.setup.floorCount || '3';
+        document.getElementById('roomCount').value = state.setup.roomCount || '6';
+        document.getElementById('cut4Room').checked = !!state.setup.cut4Room;
+        document.getElementById('cut4Floor').checked = !!state.setup.cut4Floor;
+        document.getElementById('useSetsubiInfo').checked = !!state.setup.useSetsubiInfo;
+        document.getElementById('hasshigoInput').value = state.setup.hasshigoInput || '';
+        pendingFloorValues = state.setup.pendingFloorValues || {};
+      }
+
+      setsubiDefaults = state.setsubiDefaults || {};
+      setsubiCustom = state.setsubiCustom || {};
+      yoyakuList = state.yoyakuList || [];
+      if (state.notePatterns && state.notePatterns.length) {
+        notePatterns = state.notePatterns;
+      }
+      useSetsubiFlag = !!(state.setup && state.setup.useSetsubiInfo);
+
+      if (state.tableGenerated && state.tableFloorData && state.tableFloorData.length > 0) {
+        renderTableFromState(state);
+      } else {
+        buildNoteSelects();
+      }
+    };
+
+    // 保存されていた表データから立面図を再構築する（generateTable()の表構築部分に相当）
+    function renderTableFromState(state) {
+      tableFloorData = state.tableFloorData || [];
+      let allSuffixes = new Set();
+      for (const fd of tableFloorData) {
+        for (const room of fd.rooms) allSuffixes.add(parseInt(room) % 100);
+      }
+      tableSuffixes = Array.from(allSuffixes).sort((a, b) => a - b);
+
+      hasshigoSuffixes = new Set();
+      const hv = normalizeListInput(document.getElementById('hasshigoInput').value);
+      if (hv.trim() !== '') {
+        hv.split(',').forEach(v => {
+          const n = parseInt(v.trim());
+          if (!isNaN(n)) hasshigoSuffixes.add(n);
+        });
+      }
+
+      const cellsData = state.cells || {};
+      const roomsData = state.rooms || {};
+
+      let html = '<table>';
+      for (const fd of tableFloorData) {
+        let roomMap = {};
+        for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
+
+        html += '<tr>';
+        for (const suffix of tableSuffixes) {
+          if (roomMap[suffix]) {
+            const room = roomMap[suffix];
+            const rd = roomsData[room];
+            const isH = hasshigoSuffixes.has(suffix) && fd.floor !== 1;
+            const label = rd && rd.label ? rd.label : room;
+            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (rd && rd.label ? rd.label : '') + '">' + label + '</td>';
+          } else {
+            html += '<td class="empty-number"></td>';
+          }
+        }
+        html += '</tr>';
+
+        html += '<tr>';
+        for (const suffix of tableSuffixes) {
+          if (roomMap[suffix]) {
+            const room = roomMap[suffix];
+            const cd = cellsData[room];
+            html += '<td class="cell" data-room="' + room + '" data-state="' + (cd ? cd.state : 'mi') + '"' +
+              (cd && cd.furyo ? ' data-furyo="' + cd.furyo.replace(/"/g, '&quot;') + '"' : '') +
+              (cd && cd.times ? ' data-times=\'' + cd.times + '\'' : '') +
+              (cd && cd.yoyakuTime ? ' data-yoyaku-time="' + cd.yoyakuTime + '"' : '') +
+              (cd && cd.yoyakuNote ? ' data-yoyaku-note="' + cd.yoyakuNote + '"' : '') +
+              '>未</td>';
+          } else {
+            html += '<td class="empty-state"></td>';
+          }
+        }
+        html += '</tr>';
+      }
+      html += '</table>';
+
+      document.getElementById('tableArea').innerHTML = html;
+
+      document.querySelectorAll('td.cell').forEach(cell => {
+        if (cell.dataset.state && cell.dataset.state !== 'mi') {
+          updateCellDisplay(cell);
+          if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
+          if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
+          if (cell.dataset.state === 'kushitsu') cell.classList.add('kushitsu');
+          if (cell.dataset.furyo) cell.classList.add('furyo');
+        }
+      });
+
+      renderYoyakuTable();
+      buildNoteSelects();
+
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('propertyArea').style.display = 'block';
+      document.getElementById('yoyakuArea').style.display = 'block';
+      document.getElementById('outputArea').style.display = 'block';
+      document.querySelector('.table-wrap').style.display = 'block';
+      document.getElementById('backToSetupBtn').style.display = 'block';
+
+      document.getElementById('menuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
+      document.getElementById('roomMenuSetsubiItem').style.display = useSetsubiFlag ? 'block' : 'none';
+
+      updatePropertyDisplay();
+      attachCellEvents();
+
+      canvas = document.getElementById('signCanvas');
+      ctx = canvas.getContext('2d');
+      initCanvas();
+
+      tableGenerated = true;
     }
 
     function prepareEdit() {
@@ -1102,6 +1343,7 @@
       initCanvas();
 
       tableGenerated = true;
+      syncToCloud();
     }
 
     function attachCellEvents() {
@@ -1243,7 +1485,9 @@
         const room = cell.dataset.room;
         const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
         openSetsubiEdit(stateCell || cell, room);
+        return;
       }
+      syncToCloud();
     }
 
     function getTime() {
@@ -1292,6 +1536,7 @@
         removeYoyakuByRoom(cell.dataset.room);
         updateYoyakuRowState(cell.dataset.room, false);
       }
+      syncToCloud();
     }
 
     function getSetsubiForRoom(room) {
@@ -1340,6 +1585,7 @@
       setsubiCustom[room] = { tei, sa, ke };
       document.getElementById('setsubiModal').classList.remove('active');
       setsubiCell = null;
+      syncToCloud();
     }
 
     function updateCellDisplay(cell) {
@@ -1410,6 +1656,7 @@
       }
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
+      syncToCloud();
     }
 
     function initCanvas() {
@@ -1485,6 +1732,7 @@
       updateCellDisplay(furyoCell);
       document.getElementById('furyoModal').classList.remove('active');
       furyoCell = null;
+      syncToCloud();
     }
 
     function openYoyaku(cell) {
@@ -1536,6 +1784,7 @@
       document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
       buildNoteSelects();
+      syncToCloud();
     }
 
     function deleteYoyaku() {
@@ -1551,6 +1800,7 @@
       document.getElementById('yoyakuModal').classList.remove('active');
       document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
+      syncToCloud();
     }
 
     function removeYoyakuByRoom(room) {
@@ -1579,6 +1829,7 @@
       document.getElementById('addNoteOther').style.display = 'none';
       document.getElementById('addNoteOther').value = '';
       buildNoteSelects();
+      syncToCloud();
     }
 
     function renderYoyakuTable() {
