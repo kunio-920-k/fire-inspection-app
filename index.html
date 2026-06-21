@@ -713,6 +713,7 @@
       <label id="furyoPhotoLabel">📷 写真を追加
         <input type="file" id="furyoPhoto" accept="image/*" capture="environment" onchange="previewPhoto(this)">
       </label>
+      <span id="furyoPhotoNameLabel" style="display:none;font-size:13px;color:#336699;margin-left:8px;"></span>
       <br>
       <img id="furyoPreview" src="" alt="写真プレビュー">
       <div class="modal-buttons">
@@ -773,6 +774,13 @@
       <div class="modal-buttons">
         <button onclick="copyQrLink()" style="background:#eef5ff;">リンクをコピー</button>
         <button onclick="closeQrModal()" style="background:#eee;">閉じる</button>
+      </div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid #ddd;">
+        <p style="font-size:13px;color:#666;margin-bottom:8px;">QRの読み取りでうまく開けない場合は、メールで送ってください（相手はメール内のリンクから開きます）。</p>
+        <input type="email" id="qrInviteEmail" class="zenkaku-ok" placeholder="相手のメールアドレス" style="width:100%;box-sizing:border-box;margin-bottom:8px;">
+        <div class="modal-buttons">
+          <button onclick="sendQrInviteEmail()" style="background:#eef5ff;">メールで送る</button>
+        </div>
       </div>
     </div>
   </div>
@@ -864,6 +872,22 @@
       } else {
         alert('このブラウザでは自動コピーに対応していません。上のリンクを手動で選択してコピーしてください。');
       }
+    }
+
+    // 招待リンクをメールで送る（mailto: で自分のメールアプリの下書きを開く。実際の送信は自分で行う）
+    function sendQrInviteEmail() {
+      const emailInput = document.getElementById('qrInviteEmail');
+      const email = emailInput.value.trim();
+      if (!email) { alert('相手のメールアドレスを入力してください。'); return; }
+      const url = document.getElementById('qrLinkText').textContent;
+      if (!url) { alert('招待リンクの準備ができていません。少し待ってからもう一度お試しください。'); return; }
+      const subject = encodeURIComponent('マンチェスター：現場への招待');
+      const body = encodeURIComponent(
+        '下記のリンクをタップして、マンチェスターに参加してください。\n\n' +
+        url +
+        '\n\n開いたら、そのままGoogleアカウントでログインしてください。'
+      );
+      window.location.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + subject + '&body=' + body;
     }
 
     // 新しい現場を始める（現在の現場とは別の、新しいデータとして開始する）
@@ -1078,6 +1102,7 @@
         cells[cell.dataset.room] = {
           state: cell.dataset.state || 'mi',
           furyo: cell.dataset.furyo || '',
+          photoName: cell.dataset.photoName || '',
           times: cell.dataset.times || '[]',
           yoyakuTime: cell.dataset.yoyakuTime || '',
           yoyakuNote: cell.dataset.yoyakuNote || ''
@@ -1086,7 +1111,8 @@
       const rooms = {};
       document.querySelectorAll('td.room-number').forEach(cell => {
         rooms[cell.dataset.room] = {
-          label: cell.dataset.label || ''
+          label: cell.dataset.label || '',
+          hasshigo: cell.dataset.hasshigo || '0'
         };
       });
 
@@ -1187,7 +1213,9 @@
           if (roomMap[suffix]) {
             const room = roomMap[suffix];
             const rd = roomsData[room];
-            const isH = hasshigoSuffixes.has(suffix) && fd.floor !== 1;
+            const isH = rd && typeof rd.hasshigo !== 'undefined'
+              ? rd.hasshigo === '1'
+              : (hasshigoSuffixes.has(suffix) && fd.floor !== 1);
             const label = rd && rd.label ? rd.label : room;
             html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (rd && rd.label ? rd.label : '') + '">' + label + '</td>';
           } else {
@@ -1203,6 +1231,7 @@
             const cd = cellsData[room];
             html += '<td class="cell" data-room="' + room + '" data-state="' + (cd ? cd.state : 'mi') + '"' +
               (cd && cd.furyo ? ' data-furyo="' + cd.furyo.replace(/"/g, '&quot;') + '"' : '') +
+              (cd && cd.photoName ? ' data-photo-name="' + cd.photoName.replace(/"/g, '&quot;') + '"' : '') +
               (cd && cd.times ? ' data-times=\'' + cd.times + '\'' : '') +
               (cd && cd.yoyakuTime ? ' data-yoyaku-time="' + cd.yoyakuTime + '"' : '') +
               (cd && cd.yoyakuNote ? ' data-yoyaku-note="' + cd.yoyakuNote + '"' : '') +
@@ -1363,6 +1392,7 @@
             sign: cell.dataset.sign,
             furyo: cell.dataset.furyo,
             photo: cell.dataset.photo,
+            photoName: cell.dataset.photoName,
             times: cell.dataset.times,
             yoyakuTime: cell.dataset.yoyakuTime,
             yoyakuNote: cell.dataset.yoyakuNote
@@ -1430,6 +1460,7 @@
               (prev && prev.sign ? ' data-sign="' + prev.sign + '"' : '') +
               (prev && prev.furyo ? ' data-furyo="' + prev.furyo.replace(/"/g, '&quot;') + '"' : '') +
               (prev && prev.photo ? ' data-photo="' + prev.photo + '"' : '') +
+              (prev && prev.photoName ? ' data-photo-name="' + prev.photoName.replace(/"/g, '&quot;') + '"' : '') +
               (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
               (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
               (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
@@ -1678,6 +1709,7 @@
         cell.dataset.sign = '';
         cell.dataset.furyo = '';
         cell.dataset.photo = '';
+        cell.dataset.photoName = '';
         cell.dataset.yoyakuTime = '';
         cell.dataset.yoyakuNote = '';
         cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku');
@@ -1857,12 +1889,23 @@
       document.getElementById('furyoPreview').style.display = 'none';
       document.getElementById('furyoPreview').src = '';
       document.getElementById('furyoPhoto').value = '';
+      const nameLabel = document.getElementById('furyoPhotoNameLabel');
+      if (cell.dataset.photoName) {
+        nameLabel.textContent = '📎 ' + cell.dataset.photoName;
+        nameLabel.style.display = 'inline';
+      } else {
+        nameLabel.textContent = '';
+        nameLabel.style.display = 'none';
+      }
       document.getElementById('furyoModal').classList.add('active');
     }
     function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; }
     function previewPhoto(input) {
       const file = input.files[0];
       if (!file) return;
+      const nameLabel = document.getElementById('furyoPhotoNameLabel');
+      nameLabel.textContent = '📎 ' + file.name;
+      nameLabel.style.display = 'inline';
       const reader = new FileReader();
       reader.onload = (e) => {
         const preview = document.getElementById('furyoPreview');
@@ -1877,6 +1920,9 @@
       furyoCell.dataset.furyo = text;
       const preview = document.getElementById('furyoPreview');
       if (preview.src && preview.style.display !== 'none') furyoCell.dataset.photo = preview.src;
+      const photoInput = document.getElementById('furyoPhoto');
+      const photoFile = photoInput.files && photoInput.files[0];
+      if (photoFile) furyoCell.dataset.photoName = photoFile.name;
       furyoCell.classList.add('furyo');
       updateCellDisplay(furyoCell);
       document.getElementById('furyoModal').classList.remove('active');
@@ -2065,7 +2111,7 @@
       const list = [];
       document.querySelectorAll('td.cell').forEach(cell => {
         if (cell.dataset.furyo && cell.dataset.furyo.length > 0) {
-          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photo: cell.dataset.photo || '' });
+          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photo: cell.dataset.photo || '', photoName: cell.dataset.photoName || '' });
         }
       });
       return list;
@@ -2074,7 +2120,7 @@
     function exportFuryoText() {
       const list = getFuryoList();
       const ta = document.getElementById('textOutput');
-      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
+      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo + (item.photoName ? '\n📎' + item.photoName : '')).join('\n\n');
       ta.style.display = 'block';
     }
 
@@ -2190,6 +2236,9 @@ ${tableHtml}
           bodyHtml += '<div class="item">';
           bodyHtml += '<p class="room-title">' + (idx + 1) + '. 【' + item.room + '】</p>';
           bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
+          if (item.photoName) {
+            bodyHtml += '<p class="photo-name">📎 写真ファイル名：' + item.photoName + '</p>';
+          }
           if (withPhoto && item.photo) {
             bodyHtml += '<img class="photo" src="' + item.photo + '">';
           }
@@ -2209,6 +2258,7 @@ ${tableHtml}
   .item { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
   .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
   .furyo-text { margin: 0 0 8px; padding-left: 12px; }
+  .photo-name { margin: 0 0 8px; padding-left: 12px; font-size: 13px; color: #555; }
   .photo { max-width: 200px; max-height: 150px; display: block; margin-top: 6px; border: 1px solid #ccc; }
   @media print { body { padding: 8mm; } }
 </style>
