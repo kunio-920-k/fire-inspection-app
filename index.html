@@ -353,19 +353,21 @@
     };
 
     // ---- 点検データのクラウド保存・読込 ----
+    // 「現場（物件）ID」をキーにして保存する（親機・子機が同じ現場IDを共有することで同期される）。
     // メインスクリプト側（gatherInspectionState）が集めたデータを受け取って保存する。
     // 短時間に連続で呼ばれた場合は最後の1回だけ実際に書き込む（連打対策）。
     let saveTimer = null;
     window.saveInspectionToCloud = function (stateObj) {
-      if (!window.currentUser) return;
+      if (!window.currentUser || !window.currentJobId) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
-        const ref = doc(db, 'inspections', window.currentUser.uid);
+        const ref = doc(db, 'inspections', window.currentJobId);
         setDoc(ref, {
           data: JSON.stringify(stateObj),
-          updatedAt: serverTimestamp()
-        }).then(() => {
-          dlog('クラウド保存OK');
+          updatedAt: serverTimestamp(),
+          lastEditedBy: window.currentUser.email || ''
+        }, { merge: true }).then(() => {
+          dlog('クラウド保存OK / job=' + window.currentJobId);
         }).catch((e) => {
           dlog('クラウド保存エラー / ' + e.message);
           console.error('クラウド保存エラー:', e);
@@ -375,8 +377,8 @@
 
     // 前回保存された点検データを読み込む。データが無ければnullを返す。
     window.loadInspectionFromCloud = function () {
-      if (!window.currentUser) return Promise.resolve(null);
-      const ref = doc(db, 'inspections', window.currentUser.uid);
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve(null);
+      const ref = doc(db, 'inspections', window.currentJobId);
       return getDoc(ref).then((snap) => {
         if (snap.exists() && snap.data() && snap.data().data) {
           try {
@@ -410,6 +412,15 @@
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email;
+
+        // 現場IDがまだ無ければ（初めて使う親機、または現場未開始）新規発行する
+        if (!window.currentJobId) {
+          window.currentJobId = (window.crypto && window.crypto.randomUUID)
+            ? window.crypto.randomUUID()
+            : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+          localStorage.setItem('mc_job_id', window.currentJobId);
+          dlog('現場IDを新規発行 / job=' + window.currentJobId);
+        }
 
         // 前回の続きをクラウドから自動復元する（1セッションにつき1回だけ）
         if (!window.cloudRestoreDone) {
@@ -452,6 +463,7 @@
       }
     }
   </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -530,6 +542,8 @@
     </div>
     <div style="margin-left:auto;text-align:right;font-size:11px;color:#666;line-height:1.6;">
       <div id="userEmailLabel"></div>
+      <a onclick="confirmStartNewJob()" style="color:#336699;cursor:pointer;text-decoration:underline;">新しい現場を始める</a>
+      ／
       <a onclick="confirmLogout()" style="color:#c0392b;cursor:pointer;text-decoration:underline;">ログアウト</a>
     </div>
   </div>
@@ -573,6 +587,7 @@
   <div id="propertyArea">
     <p><strong id="propDisplayName">（物件名未入力）</strong></p>
     <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
+    <button onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
   </div>
 
   <div class="table-wrap">
@@ -707,6 +722,19 @@
     </div>
   </div>
 
+  <div id="qrModal" class="modal">
+    <div class="modal-box">
+      <h2>子機を招待</h2>
+      <p style="font-size:13px;color:#666;">このQRコードを子機のカメラ（読み取りアプリ）で読み取ってもらうと、同じ現場のデータに参加できます。子機側もGoogleでのログインが必要です。</p>
+      <div id="qrCodeArea" style="display:flex;justify-content:center;margin:14px 0;"></div>
+      <p id="qrLinkText" style="font-size:11px;color:#888;word-break:break-all;"></p>
+      <div class="modal-buttons">
+        <button onclick="copyQrLink()" style="background:#eef5ff;">リンクをコピー</button>
+        <button onclick="closeQrModal()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let activeCell = null;
     let activeRoomCell = null;
@@ -733,6 +761,60 @@
 
     // 備考パターンのデフォルト
     let notePatterns = ['以降', '5分以内', '立会い希望', '鍵預かり'];
+
+    // ---- 現場（物件）ID の判定 ----
+    // QRコード経由（URLの?join=…）で開かれた場合はそれを現場IDとして採用し、
+    // localStorageに記録する。無ければ、前回保存しておいた現場IDを使う。
+    // どちらも無い場合（初めて使う親機）はnullのままにし、ログイン後に新規発行する。
+    function getOrInitJobId() {
+      const params = new URLSearchParams(location.search);
+      const joinId = params.get('join');
+      if (joinId) {
+        localStorage.setItem('mc_job_id', joinId);
+        // 次回リロード時に毎回joinを処理しないよう、URLからパラメータを消しておく
+        history.replaceState(null, '', location.pathname);
+        return joinId;
+      }
+      return localStorage.getItem('mc_job_id') || null;
+    }
+    window.currentJobId = getOrInitJobId();
+
+    // 子機招待用のQRコードを表示する
+    function openQrModal() {
+      if (!window.currentJobId) { alert('まだログインが完了していません。少し待ってからもう一度お試しください。'); return; }
+      const url = location.origin + location.pathname + '?join=' + window.currentJobId;
+      const area = document.getElementById('qrCodeArea');
+      area.innerHTML = '';
+      new QRCode(area, { text: url, width: 200, height: 200 });
+      document.getElementById('qrLinkText').textContent = url;
+      document.getElementById('qrModal').classList.add('active');
+    }
+    function closeQrModal() {
+      document.getElementById('qrModal').classList.remove('active');
+    }
+    function copyQrLink() {
+      const url = document.getElementById('qrLinkText').textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          alert('リンクをコピーしました');
+        }).catch(() => {
+          alert('コピーに失敗しました。上のリンクを手動で選択してコピーしてください。');
+        });
+      } else {
+        alert('このブラウザでは自動コピーに対応していません。上のリンクを手動で選択してコピーしてください。');
+      }
+    }
+
+    // 新しい現場を始める（現在の現場とは別の、新しいデータとして開始する）
+    function confirmStartNewJob() {
+      const ok = confirm('新しい現場を始めますか？\n今のデータはクラウドに保存済みなので消えませんが、画面は新しい現場用にまっさらな状態になります。');
+      if (!ok) return;
+      window.currentJobId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+      localStorage.setItem('mc_job_id', window.currentJobId);
+      location.reload();
+    }
 
     function buildTimeSelects() {
       const ids = ['addTime', 'yoyakuModalTime'];
