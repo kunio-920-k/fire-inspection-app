@@ -37,6 +37,7 @@
     td.cell.kushitsu { background-color: #ccc; color: #666; }
     td.cell.furyo { outline: 3px solid red; outline-offset: -3px; }
     td.cell.yoyaku { background-color: #ffb347; }
+    td.cell.yoyaku-pass { background-color: #b3e5fc; }
     td.empty-number { height: 35px; background-color: #eee; }
     td.empty-state { height: 55px; background-color: #eee; }
     th.floor-label { background-color: #ddd; vertical-align: middle; }
@@ -1029,7 +1030,6 @@
           if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
           if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
           if (cell.dataset.state === 'kushitsu') cell.classList.add('kushitsu');
-          if (cell.dataset.state === 'yoyaku') cell.classList.add('yoyaku');
           if (cell.dataset.furyo) cell.classList.add('furyo');
         }
       });
@@ -1312,6 +1312,8 @@
       const state = cell.dataset.state || 'mi';
       const hasFuryo = cell.dataset.furyo && cell.dataset.furyo.length > 0;
       const yoyakuTime = cell.dataset.yoyakuTime || cell.getAttribute('data-yoyaku-time') || '';
+      // 予約系のクラスはここで一括管理する（呼び出し元での個別操作は不要）
+      cell.classList.remove('yoyaku', 'yoyaku-pass');
       let html = '';
       if (state === 'nyushitsu') {
         const sign = cell.dataset.sign || cell.getAttribute('data-sign');
@@ -1327,7 +1329,13 @@
       } else if (state === 'kushitsu') {
         html += '空室';
       } else if (state === 'yoyaku') {
-        html += '<span class="yoyaku-time">' + yoyakuTime + '</span>予約';
+        if (yoyakuTime === '') {
+          cell.classList.add('yoyaku-pass');
+          html += 'パス';
+        } else {
+          cell.classList.add('yoyaku');
+          html += '<span class="yoyaku-time">' + yoyakuTime + '</span>予約';
+        }
       } else {
         html += '未';
       }
