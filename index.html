@@ -986,7 +986,7 @@
         let roomMap = {};
         for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
 
-        html += '<tr><th class="floor-empty"></th>';
+        html += '<tr>';
         for (const suffix of tableSuffixes) {
           if (roomMap[suffix]) {
             const room = roomMap[suffix];
@@ -1000,7 +1000,7 @@
         }
         html += '</tr>';
 
-        html += '<tr><th class="floor-label">' + fd.floor + '階</th>';
+        html += '<tr>';
         for (const suffix of tableSuffixes) {
           if (roomMap[suffix]) {
             const room = roomMap[suffix];
@@ -1671,7 +1671,7 @@
         let roomMap = {};
         for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
 
-        tableHtml += '<tr><th class="floor-empty"></th>';
+        tableHtml += '<tr>';
         for (const suffix of tableSuffixes) {
           if (roomMap[suffix]) {
             const rn = roomNumberData[roomMap[suffix]] || { label: roomMap[suffix] };
@@ -1682,7 +1682,7 @@
         }
         tableHtml += '</tr>';
 
-        tableHtml += '<tr><th class="floor-label">' + fd.floor + '階</th>';
+        tableHtml += '<tr>';
         for (const suffix of tableSuffixes) {
           if (!roomMap[suffix]) { tableHtml += '<td class="empty-state"></td>'; continue; }
           const d = cellData[roomMap[suffix]] || { state: 'mi', sign: '', furyo: '', yoyakuTime: '' };
@@ -1703,7 +1703,7 @@
       }
       tableHtml += '</table>';
 
-      const colCount = tableSuffixes.length + 1;
+      const colCount = tableSuffixes.length;
       const colW = Math.floor(257 / colCount);
 
       const win = window.open('', '_blank');
