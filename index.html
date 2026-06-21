@@ -257,6 +257,12 @@
       onAuthStateChanged,
       signOut
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
@@ -270,6 +276,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const provider = new GoogleAuthProvider();
+    const db = getFirestore(app);
 
     // デバッグ用：localStorageに蓄積しつつ画面上のdebugPanelにも表示する
     function dlog(msg) {
@@ -310,6 +317,17 @@
         .then((result) => {
           dlog('signInWithPopup成功 / user=' + (result && result.user ? result.user.email : 'なし'));
           loadingEl.textContent = '';
+          if (result && result.user) {
+            // ログイン履歴をFirestoreに記録する（使用頻度の把握用）
+            addDoc(collection(db, 'login_logs'), {
+              email: result.user.email || '',
+              displayName: result.user.displayName || '',
+              timestamp: serverTimestamp()
+            }).catch((e) => {
+              dlog('ログイン履歴の記録に失敗 / ' + e.message);
+              console.error('ログイン履歴の記録に失敗:', e);
+            });
+          }
         })
         .catch((error) => {
           dlog('signInWithPopupエラー / code=' + error.code + ' / message=' + error.message);
