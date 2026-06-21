@@ -325,6 +325,12 @@
       });
     };
 
+    window.confirmLogout = function() {
+      if (confirm('ログアウトしますか？')) {
+        logoutUser();
+      }
+    };
+
     // 認証状態の初回確認が完了するまで、画面側の表示判定を待機させるためのフラグ
     window.authReady = false;
     window.currentUser = null;
@@ -334,14 +340,20 @@
       window.currentUser = user || null;
       dlog('onAuthStateChanged発火 / user=' + (user ? user.email : 'null') + ' / authReady=' + window.authReady);
 
+      const emailLabel = document.getElementById('userEmailLabel');
+
       if (user) {
         console.log('ログイン中:', user.displayName, user.email);
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
+        if (emailLabel) emailLabel.textContent = user.email;
       } else {
+        if (emailLabel) emailLabel.textContent = '';
         if (window.authReady) {
           const isMobile = window.innerWidth <= 1024;
-          if (!isMobile) {
+          if (isMobile) {
+            document.getElementById('welcomeScreen').classList.add('active');
+          } else {
             document.getElementById('loginScreen').classList.add('active');
           }
         }
@@ -442,6 +454,10 @@
       <span class="mc-sub">FIRE SAFETY <span class="mc-accent">CHECK</span></span>
       <span class="mc-main">Man<span class="mc-accent">CHE</span>Star</span>
       <span class="mc-eyebrow">共同住宅点検支援のマンチェスター</span>
+    </div>
+    <div style="margin-left:auto;text-align:right;font-size:11px;color:#666;line-height:1.6;">
+      <div id="userEmailLabel"></div>
+      <a onclick="confirmLogout()" style="color:#c0392b;cursor:pointer;text-decoration:underline;">ログアウト</a>
     </div>
   </div>
 
