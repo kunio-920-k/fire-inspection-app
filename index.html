@@ -539,6 +539,35 @@
       });
     };
 
+    // ---- 現場メモ管理 ----
+    window.addMemoToCloud = function(text) {
+      if (!window.currentUser || !window.currentJobId || !text) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'memos');
+      addDoc(ref, {
+        text: text,
+        author: window.currentUser.displayName || window.currentUser.email || '作業員',
+        createdAt: serverTimestamp()
+      }).catch((e) => dlog('メモ保存エラー / ' + e.message));
+    };
+
+    window.startMemoWatch = function() {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'memos');
+      onSnapshot(ref, (snap) => {
+        const memos = [];
+        snap.forEach(d => {
+          const data = d.data();
+          memos.push({
+            text: data.text || '',
+            author: data.author || '',
+            createdAt: data.createdAt ? data.createdAt.toMillis() : 0
+          });
+        });
+        memos.sort((a, b) => a.createdAt - b.createdAt);
+        if (window.renderMemoList) window.renderMemoList(memos);
+      });
+    };
+
     window.authReady = false;
     window.currentUser = null;
 
@@ -577,6 +606,12 @@
         if (!window.presenceWatchDone) {
           window.presenceWatchDone = true;
           window.startPresenceWatch();
+        }
+
+        // メモ監視を開始する（1回だけ）
+        if (!window.memoWatchDone) {
+          window.memoWatchDone = true;
+          window.startMemoWatch();
         }
 
         // クラウドのリアルタイム監視を開始する（1セッションにつき1回だけ）
@@ -828,6 +863,16 @@
     <textarea id="textOutput" readonly></textarea>
   </div>
 
+  <div id="memoArea" style="display:none;margin-top:16px;padding:12px;border-top:2px solid #ccc;">
+    <div style="font-weight:bold;font-size:14px;margin-bottom:8px;">📝 現場メモ</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <input type="text" id="memoInput" placeholder="メモを入力..." style="flex:1;font-size:14px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
+      <button id="memoVoiceBtn" onclick="toggleVoiceMemo()" style="padding:6px 12px;font-size:18px;background:#eef5ff;">🎤</button>
+      <button onclick="addMemo()" style="padding:6px 12px;font-size:13px;background:#336699;color:white;border:none;border-radius:4px;">追加</button>
+    </div>
+    <div id="memoList" style="max-height:200px;overflow-y:auto;font-size:13px;"></div>
+  </div>
+
   <div id="menuOverlay" onclick="closeMenu()"></div>
   <div id="contextMenu">
     <div id="menuRoomTitle">号室</div>
@@ -999,6 +1044,9 @@
       if (backBtn && tableGenerated) {
         backBtn.style.display = isOwner ? 'block' : 'none';
       }
+      // メモ欄はテーブル生成後に全員に表示
+      const memoArea = document.getElementById('memoArea');
+      if (memoArea && tableGenerated) memoArea.style.display = 'block';
     }
     window.applyOwnerUI = applyOwnerUI;
 
@@ -2276,6 +2324,80 @@
         }
       });
       return list;
+    }
+
+    // ---- 現場メモ ----
+    let voiceRecognition = null;
+    let voiceActive = false;
+
+    // メモリストを画面に描画する（onSnapshotから呼ばれる）
+    window.renderMemoList = function(memos) {
+      const list = document.getElementById('memoList');
+      if (!list) return;
+      if (memos.length === 0) {
+        list.innerHTML = '<span style="color:#aaa;">まだメモはありません</span>';
+        return;
+      }
+      list.innerHTML = memos.map(m => {
+        const time = m.createdAt ? new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+        return '<div style="padding:5px 0;border-bottom:1px solid #eee;">' +
+          '<span style="color:#888;font-size:11px;">' + time + ' ' + m.author + '　</span>' +
+          '<span>' + m.text.replace(/</g, '&lt;') + '</span></div>';
+      }).join('');
+      list.scrollTop = list.scrollHeight;
+    };
+
+    // テキスト入力からメモを追加する
+    function addMemo() {
+      const input = document.getElementById('memoInput');
+      const text = input.value.trim();
+      if (!text) return;
+      if (window.addMemoToCloud) window.addMemoToCloud(text);
+      input.value = '';
+    }
+
+    // Enterキーでも追加できるようにする
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && document.activeElement.id === 'memoInput') {
+        addMemo();
+      }
+    });
+
+    // 音声入力の開始・停止を切り替える
+    function toggleVoiceMemo() {
+      const btn = document.getElementById('memoVoiceBtn');
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert('このブラウザは音声入力に対応していません。テキストで入力してください。');
+        return;
+      }
+      if (voiceActive) {
+        if (voiceRecognition) voiceRecognition.stop();
+        return;
+      }
+      voiceRecognition = new SpeechRecognition();
+      voiceRecognition.lang = 'ja-JP';
+      voiceRecognition.continuous = false;
+      voiceRecognition.interimResults = false;
+      voiceRecognition.onstart = () => {
+        voiceActive = true;
+        btn.textContent = '⏹';
+        btn.style.background = '#ffcccc';
+      };
+      voiceRecognition.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        if (text && window.addMemoToCloud) window.addMemoToCloud(text);
+      };
+      voiceRecognition.onerror = (e) => {
+        dlog('音声認識エラー / ' + e.error);
+        if (e.error !== 'no-speech') alert('音声認識エラー：' + e.error);
+      };
+      voiceRecognition.onend = () => {
+        voiceActive = false;
+        btn.textContent = '🎤';
+        btn.style.background = '#eef5ff';
+      };
+      voiceRecognition.start();
     }
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
