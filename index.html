@@ -31,7 +31,7 @@
     td { border: 1px solid #333; width: 80px; min-width: 80px; text-align: center; font-size: 13px; }
     td.room-number { height: 35px; background-color: #f5f5f5; font-weight: bold; vertical-align: middle; overflow: hidden; cursor: pointer; user-select: none; }
     td.room-number.hasshigo { background-color: #b0d4f1; }
-    td.cell { height: 55px; background-color: white; cursor: pointer; vertical-align: middle; padding: 2px; user-select: none; overflow: hidden; }
+    td.cell { height: 55px; background-color: white; cursor: pointer; vertical-align: middle; padding: 2px; user-select: none; overflow: hidden; position: relative; }
     td.cell.nyushitsu { background-color: #90ee90; }
     td.cell.fuzai { background-color: #ffff99; }
     td.cell.kushitsu { background-color: #ccc; color: #666; }
@@ -46,6 +46,17 @@
     #editArea { margin-top: 15px; padding: 10px; border: 1px solid #ccc; display: none; }
     .fuzai-time { font-size: 10px; color: #333; display: block; margin-top: 2px; }
     .furyo-mark { font-size: 10px; color: red; display: block; }
+    .presence-dot {
+      position: absolute; top: 3px; right: 3px;
+      width: 9px; height: 9px; border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.8);
+      animation: presence-blink 1.2s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes presence-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
     .yoyaku-time { font-size: 10px; color: #333; display: block; }
     .sign-img { width: 76px; height: 40px; object-fit: contain; display: block; margin: 0 auto; pointer-events: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
@@ -486,7 +497,48 @@
       });
     };
 
-    // 認証状態の初回確認が完了するまで、画面側の表示判定を待機させるためのフラグ
+    // ---- 作業員の現在位置（presence）管理 ----
+    // 保存先: inspections/{jobId}/presence/{uid}
+    // 操作のたびに自分の最終操作部屋を書き込み、他端末がonSnapshotで受け取る
+
+    const PRESENCE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00'];
+
+    // 自分の現在位置をクラウドに書き込む
+    window.updatePresence = function(room) {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
+      setDoc(ref, {
+        uid: window.currentUser.uid,
+        displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
+        room: String(room),
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch((e) => dlog('presence書き込みエラー / ' + e.message));
+    };
+
+    // presence監視を開始する（ログイン後1回だけ呼ぶ）
+    window.startPresenceWatch = function() {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'presence');
+      onSnapshot(ref, (snap) => {
+        // uidの一覧を取得し、ログイン順に色を割り当てる
+        const docs = [];
+        snap.forEach(d => docs.push(d.data()));
+        // updatedAtでソートして色のインデックスを安定させる
+        docs.sort((a, b) => {
+          const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+          const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+          return ta - tb;
+        });
+        // 色マップを作成（uid → color）
+        const colorMap = {};
+        docs.forEach((d, i) => {
+          colorMap[d.uid] = PRESENCE_COLORS[i % PRESENCE_COLORS.length];
+        });
+        // 画面に反映
+        if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
+      });
+    };
+
     window.authReady = false;
     window.currentUser = null;
 
@@ -519,6 +571,12 @@
           window.checkJobOwnership().then(() => {
             if (window.applyOwnerUI) window.applyOwnerUI();
           });
+        }
+
+        // presence監視を開始する（1回だけ）
+        if (!window.presenceWatchDone) {
+          window.presenceWatchDone = true;
+          window.startPresenceWatch();
         }
 
         // クラウドのリアルタイム監視を開始する（1セッションにつき1回だけ）
@@ -1796,6 +1854,7 @@
         updateYoyakuRowState(cell.dataset.room, false);
       }
       syncToCloud();
+      if (window.updatePresence) window.updatePresence(cell.dataset.room);
     }
 
     function getSetsubiForRoom(room) {
@@ -1880,7 +1939,27 @@
       }
       if (hasFuryo) html += '<span class="furyo-mark">⚠不良</span>';
       cell.innerHTML = html;
+      // presenceドットを再描画（innerHTML更新で消えるため）
+      if (window._presenceDots) window.applyPresenceDots(window._presenceDots.docs, window._presenceDots.colorMap);
     }
+
+    // 各セルの右上に作業員の現在位置ドットを描画する
+    window.applyPresenceDots = function(docs, colorMap) {
+      // 前回のドットを全て除去
+      document.querySelectorAll('.presence-dot').forEach(el => el.remove());
+      // 最新情報をキャッシュしておく（updateCellDisplay後の再描画用）
+      window._presenceDots = { docs, colorMap };
+      docs.forEach((d) => {
+        if (!d.room) return;
+        const cell = document.querySelector('td.cell[data-room="' + d.room + '"]');
+        if (!cell) return;
+        const dot = document.createElement('span');
+        dot.className = 'presence-dot';
+        dot.title = d.displayName;
+        dot.style.background = colorMap[d.uid] || '#999';
+        cell.appendChild(dot);
+      });
+    };
 
     function updateYoyakuRowState(room, done) {
       const rows = document.querySelectorAll('#yoyakuBody tr');
@@ -1915,9 +1994,11 @@
       }
       // サイン画像をクラウドに個別保存
       if (window.saveSignToCloud) window.saveSignToCloud(signCell.dataset.room, signData);
+      const signedRoom = signCell.dataset.room;
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
       syncToCloud();
+      if (window.updatePresence) window.updatePresence(signedRoom);
     }
 
     function initCanvas() {
@@ -2004,8 +2085,10 @@
       furyoCell.classList.add('furyo');
       updateCellDisplay(furyoCell);
       document.getElementById('furyoModal').classList.remove('active');
+      const furyoRoom = furyoCell.dataset.room;
       furyoCell = null;
       syncToCloud();
+      if (window.updatePresence) window.updatePresence(furyoRoom);
     }
 
     function openYoyaku(cell) {
