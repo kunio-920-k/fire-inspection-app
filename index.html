@@ -2356,9 +2356,9 @@
       input.value = '';
     }
 
-    // Enterキーでも追加できるようにする
+    // Enterキーでも追加できるようにする（IME変換中の確定Enterは除外）
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && document.activeElement.id === 'memoInput') {
+      if (e.key === 'Enter' && !e.isComposing && document.activeElement.id === 'memoInput') {
         addMemo();
       }
     });
