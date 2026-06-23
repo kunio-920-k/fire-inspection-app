@@ -266,7 +266,8 @@
       setDoc,
       getDoc,
       getDocs,
-      deleteDoc
+      deleteDoc,
+      onSnapshot
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -520,14 +521,38 @@
           });
         }
 
-        // 前回の続きをクラウドから自動復元する（1セッションにつき1回だけ）
+        // クラウドのリアルタイム監視を開始する（1セッションにつき1回だけ）
+        // 他端末が保存した変更を自動で受け取り、画面に反映する
         if (!window.cloudRestoreDone) {
           window.cloudRestoreDone = true;
+          const jobRef = doc(db, 'inspections', window.currentJobId);
+
+          // 自分自身が書き込んだ直後の反映は無視する（自分の操作が上書きされるのを防ぐ）
+          let skipNext = false;
+          const origSave = window.saveInspectionToCloud;
+          window.saveInspectionToCloud = function(stateObj) {
+            skipNext = true;
+            origSave(stateObj);
+          };
+
+          onSnapshot(jobRef, (snap) => {
+            if (skipNext) { skipNext = false; return; }
+            if (!snap.exists() || !snap.data() || !snap.data().data) return;
+            try {
+              const state = JSON.parse(snap.data().data);
+              if (state && window.restoreInspectionState) {
+                window.restoreInspectionState(state);
+              }
+            } catch (e) {
+              dlog('リアルタイム更新 データ解析エラー / ' + e.message);
+            }
+          });
+
+          // 初回読み込み（サイン画像含む）
           window.loadInspectionFromCloud().then((state) => {
             if (state && window.restoreInspectionState) {
               window.restoreInspectionState(state);
             }
-            // サイン画像を別サブコレクションから読み込んでセルに反映
             if (window.loadSignsFromCloud) {
               window.loadSignsFromCloud().then((signs) => {
                 Object.keys(signs).forEach((room) => {
@@ -2165,7 +2190,7 @@
     // 印刷完了後にサイン画像をクラウドから一括削除する
     function deleteAllSigns() {
       if (!window.deleteAllSignsFromCloud) { alert('まだログインが完了していません。'); return; }
-      const ok = confirm('全部屋のサイン画像をクラウドから削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nよろしいですか？');
+      const ok = confirm('全部屋のサイン画像をすべての場所から削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nこの操作は取り消せません。よろしいですか？');
       if (!ok) return;
       // 画面上のサインも同時にクリア
       document.querySelectorAll('td.cell').forEach(cell => {
