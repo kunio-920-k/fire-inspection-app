@@ -264,7 +264,9 @@
       serverTimestamp,
       doc,
       setDoc,
-      getDoc
+      getDoc,
+      getDocs,
+      deleteDoc
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -429,6 +431,60 @@
       });
     };
 
+    // ---- サイン画像のクラウド保存・読込・削除 ----
+    // サインは1部屋ごとに別ドキュメントに保存（Firestoreの1MB上限を回避するため）
+    // 保存先: inspections/{jobId}/signs/{room}
+
+    // 1部屋分のサイン画像をFirestoreに保存する（サイン記録時に呼ぶ）
+    window.saveSignToCloud = function(room, signDataUrl) {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId, 'signs', String(room));
+      setDoc(ref, {
+        sign: signDataUrl,
+        room: String(room),
+        updatedAt: serverTimestamp()
+      }).then(() => {
+        dlog('サイン保存OK / room=' + room);
+      }).catch((e) => {
+        dlog('サイン保存エラー / room=' + room + ' / ' + e.message);
+      });
+    };
+
+    // 全部屋分のサイン画像をFirestoreから読み込む（復元時に呼ぶ）
+    // 戻り値: { room: signDataUrl, ... } 形式のオブジェクト
+    window.loadSignsFromCloud = function() {
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve({});
+      const ref = collection(db, 'inspections', window.currentJobId, 'signs');
+      return getDocs(ref).then((snap) => {
+        const signs = {};
+        snap.forEach((d) => {
+          if (d.data() && d.data().sign) {
+            signs[d.data().room] = d.data().sign;
+          }
+        });
+        dlog('サイン読込OK / ' + Object.keys(signs).length + '部屋分');
+        return signs;
+      }).catch((e) => {
+        dlog('サイン読込エラー / ' + e.message);
+        return {};
+      });
+    };
+
+    // 全部屋分のサイン画像をFirestoreから一括削除する（印刷完了後に呼ぶ）
+    window.deleteAllSignsFromCloud = function() {
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve();
+      const ref = collection(db, 'inspections', window.currentJobId, 'signs');
+      return getDocs(ref).then((snap) => {
+        const deletes = [];
+        snap.forEach((d) => { deletes.push(deleteDoc(d.ref)); });
+        return Promise.all(deletes);
+      }).then(() => {
+        dlog('サイン全削除OK');
+      }).catch((e) => {
+        dlog('サイン削除エラー / ' + e.message);
+      });
+    };
+
     // 認証状態の初回確認が完了するまで、画面側の表示判定を待機させるためのフラグ
     window.authReady = false;
     window.currentUser = null;
@@ -470,6 +526,18 @@
           window.loadInspectionFromCloud().then((state) => {
             if (state && window.restoreInspectionState) {
               window.restoreInspectionState(state);
+            }
+            // サイン画像を別サブコレクションから読み込んでセルに反映
+            if (window.loadSignsFromCloud) {
+              window.loadSignsFromCloud().then((signs) => {
+                Object.keys(signs).forEach((room) => {
+                  const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+                  if (cell) {
+                    cell.dataset.sign = signs[room];
+                    if (window.updateCellDisplay) window.updateCellDisplay(cell);
+                  }
+                });
+              });
             }
           });
         }
@@ -664,6 +732,7 @@
     <button onclick="printRyomenzu()">📄 立面図を印刷</button>
     <button onclick="exportFuryoText()">📋 不良一覧テキストを表示</button>
     <button onclick="printFuryo()">🖨️ 不良一覧を印刷</button>
+    <button onclick="deleteAllSigns()" style="background:#fff0f0;color:#cc0000;">🗑️ サイン画像を削除（印刷完了後）</button>
     <br>
     <textarea id="textOutput" readonly></textarea>
   </div>
@@ -1811,6 +1880,8 @@
       if (signCell.dataset.yoyakuTime) {
         updateYoyakuRowState(signCell.dataset.room, true);
       }
+      // サイン画像をクラウドに個別保存
+      if (window.saveSignToCloud) window.saveSignToCloud(signCell.dataset.room, signData);
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
       syncToCloud();
@@ -2089,6 +2160,21 @@
         }
       });
       return list;
+    }
+
+    // 印刷完了後にサイン画像をクラウドから一括削除する
+    function deleteAllSigns() {
+      if (!window.deleteAllSignsFromCloud) { alert('まだログインが完了していません。'); return; }
+      const ok = confirm('全部屋のサイン画像をクラウドから削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nよろしいですか？');
+      if (!ok) return;
+      // 画面上のサインも同時にクリア
+      document.querySelectorAll('td.cell').forEach(cell => {
+        cell.dataset.sign = '';
+        if (window.updateCellDisplay) window.updateCellDisplay(cell);
+      });
+      window.deleteAllSignsFromCloud().then(() => {
+        alert('サイン画像を削除しました。');
+      });
     }
 
     function exportFuryoText() {
