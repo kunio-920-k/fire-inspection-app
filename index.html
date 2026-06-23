@@ -527,21 +527,39 @@
           window.cloudRestoreDone = true;
           const jobRef = doc(db, 'inspections', window.currentJobId);
 
-          // 自分自身が書き込んだ直後の反映は無視する（自分の操作が上書きされるのを防ぐ）
-          let skipNext = false;
+          // 自分が最後に保存した時刻を記録する（自分の書き込みによるonSnapshot発火を無視するため）
+          window._lastLocalSaveAt = 0;
           const origSave = window.saveInspectionToCloud;
           window.saveInspectionToCloud = function(stateObj) {
-            skipNext = true;
+            window._lastLocalSaveAt = Date.now();
             origSave(stateObj);
           };
 
+          // サイン画像をクラウドから読み込んでセルに反映するヘルパー
+          function applyCloudSigns() {
+            if (!window.loadSignsFromCloud) return;
+            window.loadSignsFromCloud().then((signs) => {
+              Object.keys(signs).forEach((room) => {
+                const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+                if (cell) {
+                  cell.dataset.sign = signs[room];
+                  if (window.updateCellDisplay) window.updateCellDisplay(cell);
+                }
+              });
+            });
+          }
+          window.applyCloudSigns = applyCloudSigns;
+
           onSnapshot(jobRef, (snap) => {
-            if (skipNext) { skipNext = false; return; }
+            // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
+            if (Date.now() - window._lastLocalSaveAt < 2000) return;
             if (!snap.exists() || !snap.data() || !snap.data().data) return;
             try {
               const state = JSON.parse(snap.data().data);
               if (state && window.restoreInspectionState) {
                 window.restoreInspectionState(state);
+                // テーブル復元後にサイン画像も必ず再反映する
+                applyCloudSigns();
               }
             } catch (e) {
               dlog('リアルタイム更新 データ解析エラー / ' + e.message);
@@ -553,17 +571,7 @@
             if (state && window.restoreInspectionState) {
               window.restoreInspectionState(state);
             }
-            if (window.loadSignsFromCloud) {
-              window.loadSignsFromCloud().then((signs) => {
-                Object.keys(signs).forEach((room) => {
-                  const cell = document.querySelector('td.cell[data-room="' + room + '"]');
-                  if (cell) {
-                    cell.dataset.sign = signs[room];
-                    if (window.updateCellDisplay) window.updateCellDisplay(cell);
-                  }
-                });
-              });
-            }
+            applyCloudSigns();
           });
         }
       } else {
