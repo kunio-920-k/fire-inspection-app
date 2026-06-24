@@ -2179,7 +2179,7 @@
       yoyakuCell.dataset.yoyakuTime = time;
       yoyakuCell.dataset.yoyakuNote = note;
       yoyakuCell.classList.add('yoyaku');
-      yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu');
+      yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'furyo');
       updateCellDisplay(yoyakuCell);
       removeYoyakuByRoom(room);
       yoyakuList.push({ time, room, note });
@@ -2233,6 +2233,8 @@
       document.getElementById('addNoteOther').style.display = 'none';
       document.getElementById('addNoteOther').value = '';
       buildNoteSelects();
+      // 次の予約入力に備えてセレクトを「パス」に戻す
+      document.getElementById('addNote').value = '';
       syncToCloud();
     }
 
