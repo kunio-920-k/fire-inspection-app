@@ -143,9 +143,7 @@
     #furyoModal .modal-box { text-align: left; }
     #furyoModal h2 { text-align: center; }
     #furyoText { width: 100%; height: 80px; font-size: 14px; margin-top: 8px; border: 1px solid #ccc; border-radius: 4px; padding: 6px; resize: none; }
-    #furyoPhotoLabel { display: inline-block; margin-top: 10px; padding: 8px 16px; background: #ddd; border-radius: 4px; cursor: pointer; font-size: 14px; }
-    #furyoPhoto { display: none; }
-    #furyoPreview { margin-top: 8px; max-width: 100%; max-height: 150px; display: none; border-radius: 4px; }
+    #furyoPreview { display: none; }
     #furyoOk { background: #ffcccc; }
     #furyoCancel { background: #eee; }
 
@@ -914,12 +912,7 @@
       <p style="font-size:13px;color:#666;">不良内容を入力してください</p>
       <textarea id="furyoText" placeholder="例：感知器の作動不良、消火器の期限切れ など"></textarea>
       <br>
-      <label id="furyoPhotoLabel">📷 写真を追加
-        <input type="file" id="furyoPhoto" accept="image/*" capture="environment" onchange="previewPhoto(this)">
-      </label>
-      <span id="furyoPhotoNameLabel" style="display:none;font-size:13px;color:#336699;margin-left:8px;"></span>
-      <br>
-      <img id="furyoPreview" src="" alt="写真プレビュー">
+      <img id="furyoPreview" src="" alt="" style="display:none;">
       <div class="modal-buttons">
         <button id="furyoCancel" onclick="cancelFuryo()">キャンセル</button>
         <button id="furyoOk" onclick="confirmFuryo()">記録する</button>
@@ -1289,7 +1282,7 @@
         cells[cell.dataset.room] = {
           state: cell.dataset.state || 'mi',
           furyo: cell.dataset.furyo || '',
-          photoName: cell.dataset.photoName || '',
+          
           times: cell.dataset.times || '[]',
           yoyakuTime: cell.dataset.yoyakuTime || '',
           yoyakuNote: cell.dataset.yoyakuNote || ''
@@ -1418,7 +1411,6 @@
             const cd = cellsData[room];
             html += '<td class="cell" data-room="' + room + '" data-state="' + (cd ? cd.state : 'mi') + '"' +
               (cd && cd.furyo ? ' data-furyo="' + cd.furyo.replace(/"/g, '&quot;') + '"' : '') +
-              (cd && cd.photoName ? ' data-photo-name="' + cd.photoName.replace(/"/g, '&quot;') + '"' : '') +
               (cd && cd.times ? ' data-times=\'' + cd.times + '\'' : '') +
               (cd && cd.yoyakuTime ? ' data-yoyaku-time="' + cd.yoyakuTime + '"' : '') +
               (cd && cd.yoyakuNote ? ' data-yoyaku-note="' + cd.yoyakuNote + '"' : '') +
@@ -1578,7 +1570,7 @@
             state: cell.dataset.state,
             sign: cell.dataset.sign,
             furyo: cell.dataset.furyo,
-            photoName: cell.dataset.photoName,
+            
             times: cell.dataset.times,
             yoyakuTime: cell.dataset.yoyakuTime,
             yoyakuNote: cell.dataset.yoyakuNote
@@ -1645,7 +1637,6 @@
             html += '<td class="cell" data-room="' + room + '" data-state="' + (prev ? prev.state : 'mi') + '"' +
               (prev && prev.sign ? ' data-sign="' + prev.sign + '"' : '') +
               (prev && prev.furyo ? ' data-furyo="' + prev.furyo.replace(/"/g, '&quot;') + '"' : '') +
-              (prev && prev.photoName ? ' data-photo-name="' + prev.photoName.replace(/"/g, '&quot;') + '"' : '') +
               (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
               (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
               (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
@@ -1893,7 +1884,7 @@
         cell.dataset.times = '[]';
         cell.dataset.sign = '';
         cell.dataset.furyo = '';
-        cell.dataset.photoName = '';
+        
         cell.dataset.yoyakuTime = '';
         cell.dataset.yoyakuNote = '';
         cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku');
@@ -2097,39 +2088,13 @@
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
       document.getElementById('furyoPreview').style.display = 'none';
       document.getElementById('furyoPreview').src = '';
-      document.getElementById('furyoPhoto').value = '';
-      const nameLabel = document.getElementById('furyoPhotoNameLabel');
-      if (cell.dataset.photoName) {
-        nameLabel.textContent = '📎 ' + cell.dataset.photoName;
-        nameLabel.style.display = 'inline';
-      } else {
-        nameLabel.textContent = '';
-        nameLabel.style.display = 'none';
-      }
       document.getElementById('furyoModal').classList.add('active');
     }
     function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; }
-    function previewPhoto(input) {
-      const file = input.files[0];
-      if (!file) return;
-      const nameLabel = document.getElementById('furyoPhotoNameLabel');
-      nameLabel.textContent = '📎 ' + file.name;
-      nameLabel.style.display = 'inline';
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const preview = document.getElementById('furyoPreview');
-        preview.src = e.target.result;
-        preview.style.display = 'block';
-      };
-      reader.readAsDataURL(file);
-    }
     function confirmFuryo() {
       const text = document.getElementById('furyoText').value.trim();
       if (!text) { alert('不良内容を入力してください'); return; }
       furyoCell.dataset.furyo = text;
-      const photoInput = document.getElementById('furyoPhoto');
-      const photoFile = photoInput.files && photoInput.files[0];
-      if (photoFile) furyoCell.dataset.photoName = photoFile.name;
       furyoCell.classList.add('furyo');
       updateCellDisplay(furyoCell);
       document.getElementById('furyoModal').classList.remove('active');
@@ -2322,7 +2287,7 @@
       const list = [];
       document.querySelectorAll('td.cell').forEach(cell => {
         if (cell.dataset.furyo && cell.dataset.furyo.length > 0) {
-          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo, photoName: cell.dataset.photoName || '' });
+          list.push({ room: cell.dataset.room, furyo: cell.dataset.furyo });
         }
       });
       return list;
@@ -2420,7 +2385,7 @@
     function exportFuryoText() {
       const list = getFuryoList();
       const ta = document.getElementById('textOutput');
-      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo + (item.photoName ? '\n📎' + item.photoName : '')).join('\n\n');
+      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
       ta.style.display = 'block';
     }
 
@@ -2536,9 +2501,6 @@ ${tableHtml}
           bodyHtml += '<div class="item">';
           bodyHtml += '<p class="room-title">' + (idx + 1) + '. 【' + item.room + '】</p>';
           bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
-          if (item.photoName) {
-            bodyHtml += '<p class="photo-name">📎 写真ファイル名：' + item.photoName + '</p>';
-          }
           bodyHtml += '</div>';
         });
       }
@@ -2555,7 +2517,6 @@ ${tableHtml}
   .item { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
   .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
   .furyo-text { margin: 0 0 8px; padding-left: 12px; }
-  .photo-name { margin: 0 0 8px; padding-left: 12px; font-size: 13px; color: #555; }
   @media print { body { padding: 8mm; } }
 </style>
 </head><body>
