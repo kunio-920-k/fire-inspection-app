@@ -514,15 +514,17 @@
           window.myRole = snap.data().role;
           if (window.applyRoleUI) window.applyRoleUI();
         } else {
-          // 未登録 → workerとして初期登録
+          // 未登録またはroleフィールドなし → isJobOwnerならadmin、それ以外はworker
+          const initialRole = window.isJobOwner ? 'admin' : 'worker';
           setDoc(ref, {
             uid: window.currentUser.uid,
             displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
-            role: 'worker',
+            role: initialRole,
             room: '',
+            joinedAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           }, { merge: true }).then(() => {
-            window.myRole = 'worker';
+            window.myRole = initialRole;
             if (window.applyRoleUI) window.applyRoleUI();
           });
         }
@@ -631,18 +633,18 @@
           window.setJobOwnerIfNew(window.currentJobId);
         }
 
-        // このセッションでのオーナー確認（1回だけ）。終わったら画面側のボタン表示を更新する
+        // このセッションでのオーナー確認（1回だけ）。終わったらpresence登録→画面更新
         if (!window.ownerCheckDone) {
           window.ownerCheckDone = true;
           window.checkJobOwnership().then(() => {
+            window.registerPresence();
             if (window.applyOwnerUI) window.applyOwnerUI();
           });
         }
 
-        // presence登録・監視を開始する（1回だけ）
+        // presence監視を開始する（1回だけ）
         if (!window.presenceWatchDone) {
           window.presenceWatchDone = true;
-          window.registerPresence();
           window.startPresenceWatch();
         }
 
