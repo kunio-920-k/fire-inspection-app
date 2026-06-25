@@ -509,12 +509,12 @@
       if (!window.currentUser || !window.currentJobId) return;
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
       getDoc(ref).then((snap) => {
-        if (snap.exists() && snap.data().role) {
-          // 既に登録済み → roleだけ取得してwindow.myRoleに保持
+        if (snap.exists() && snap.data().role && !window.isJobOwner) {
+          // 既に登録済み かつ オーナーでない → roleをそのまま使う
           window.myRole = snap.data().role;
           if (window.applyRoleUI) window.applyRoleUI();
         } else {
-          // 未登録またはroleフィールドなし → isJobOwnerならadmin、それ以外はworker
+          // 未登録、またはオーナーの場合はadminで登録・上書き
           const initialRole = window.isJobOwner ? 'admin' : 'worker';
           setDoc(ref, {
             uid: window.currentUser.uid,
