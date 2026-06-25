@@ -2544,6 +2544,14 @@
         const maxFloor = Math.max(range.floorFrom, range.floorTo);
         cell.classList.toggle('schedule-dim', !(floor >= minFloor && floor <= maxFloor));
       });
+      const dimCount = document.querySelectorAll('td.cell.schedule-dim').length;
+      alert(
+        '【診断情報】\n' +
+        '今日：' + todayStr + ' / 現在：' + nowHHMM + '\n' +
+        'range：' + JSON.stringify(range) + '\n' +
+        '全セル数：' + cells.length + '\n' +
+        'schedule-dim付与数：' + dimCount
+      );
     }
     window.applyScheduleDim = applyScheduleDim;
 
