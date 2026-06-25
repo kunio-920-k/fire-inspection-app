@@ -501,7 +501,7 @@
     // 操作のたびに自分の最終操作部屋を書き込み、他端末がonSnapshotで受け取る
 
     const PRESENCE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00'];
-    const ROLE_LABELS = { admin: '管理者', sub: 'サブ管理者', worker: '一般作業員' };
+    const ROLE_LABELS = { admin: '管理者', sub: 'サブ管理者', worker: '一般' };
     window.ROLE_LABELS = ROLE_LABELS;
 
     // ログイン時に自分のpresenceドキュメントを初期登録する（roleは初回のみworkerで登録）
@@ -1131,7 +1131,7 @@
       // 権限名を表示
       const roleLabel = document.getElementById('myRoleLabel');
       if (roleLabel) {
-        const labels = { admin: '【管理者】', sub: '【サブ管理者】', worker: '【一般作業員】' };
+        const labels = { admin: '【管理者】', sub: '【サブ管理者】', worker: '【一般】' };
         roleLabel.textContent = labels[role] || '';
       }
 
@@ -2670,14 +2670,14 @@
       }
       list.innerHTML = docs.map(d => {
         const isMe = window.currentUser && d.uid === window.currentUser.uid;
-        const roleLabel = window.ROLE_LABELS ? window.ROLE_LABELS[d.role] || '一般作業員' : d.role;
+        const roleLabel = window.ROLE_LABELS ? window.ROLE_LABELS[d.role] || '一般' : d.role;
         if (isAdmin && !isMe) {
           return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
             <span style="font-size:14px;">${d.displayName || d.uid}</span>
             <select onchange="changeMemberRole('${d.uid}', this.value)" style="font-size:13px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;">
               <option value="admin" ${d.role === 'admin' ? 'selected' : ''}>管理者</option>
               <option value="sub" ${d.role === 'sub' ? 'selected' : ''}>サブ管理者</option>
-              <option value="worker" ${(!d.role || d.role === 'worker') ? 'selected' : ''}>一般作業員</option>
+              <option value="worker" ${(!d.role || d.role === 'worker') ? 'selected' : ''}>一般</option>
             </select>
           </div>`;
         } else {
