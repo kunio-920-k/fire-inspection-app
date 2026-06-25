@@ -2524,6 +2524,10 @@
 
     function applyScheduleDim() {
       const range = getActiveFloorRange();
+      const now = new Date();
+      const todayStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+      const nowHHMM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      dlog('applyScheduleDim / today=' + todayStr + ' / now=' + nowHHMM + ' / scheduleData件数=' + scheduleData.length + ' / range=' + JSON.stringify(range));
       document.querySelectorAll('td.cell').forEach(cell => {
         const floor = Math.floor(parseInt(cell.dataset.room) / 100);
         const isYoyaku = cell.dataset.state === 'yoyaku';
