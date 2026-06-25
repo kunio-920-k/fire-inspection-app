@@ -2447,7 +2447,29 @@
       }).join('');
     }
 
+    // スケジュールモーダルのDOM上の現在値をscheduleDataに反映する（再描画前に必ず呼ぶ）
+    function flushScheduleDOM() {
+      document.querySelectorAll('#scheduleDayList .schedule-day-row').forEach(dayEl => {
+        const di = parseInt(dayEl.dataset.di);
+        if (!scheduleData[di]) return;
+        const dateEl = dayEl.querySelector('input[type="date"]');
+        if (dateEl) scheduleData[di].date = dateEl.value;
+      });
+      document.querySelectorAll('#scheduleDayList .schedule-session-row').forEach(row => {
+        const di = parseInt(row.dataset.di);
+        const si = parseInt(row.dataset.si);
+        if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
+        const s = scheduleData[di].sessions[si];
+        const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
+        const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
+        const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
+        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
+        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(ft.value) || 1;
+      });
+    }
+
     function addScheduleDay() {
+      flushScheduleDOM();
       const today = new Date();
       const yyyy = today.getFullYear();
       const mm = String(today.getMonth()+1).padStart(2,'0');
@@ -2456,20 +2478,24 @@
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
+      flushScheduleDOM();
       scheduleData.splice(di, 1);
       renderScheduleDayList();
     }
     function updateDayDate(di, val) { scheduleData[di].date = val; }
     function updateDayReserve(di, checked) {
+      flushScheduleDOM();
       scheduleData[di].reserveOnly = checked;
       renderScheduleDayList();
     }
     function addSession(di) {
+      flushScheduleDOM();
       scheduleData[di].sessions = scheduleData[di].sessions || [];
       scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1 });
       renderScheduleDayList();
     }
     function removeSession(di, si) {
+      flushScheduleDOM();
       scheduleData[di].sessions.splice(si, 1);
       renderScheduleDayList();
     }
