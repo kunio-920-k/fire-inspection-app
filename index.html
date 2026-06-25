@@ -863,7 +863,7 @@
 
   <div id="propertyArea">
     <p><strong id="propDisplayName">（物件名未入力）</strong></p>
-    <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
+    <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span>　<span id="myRoleLabel" style="font-weight:bold;color:#336699;"></span></p>
     <button id="qrInviteBtn" onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
     <button id="scheduleBtn" onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
     <button id="memberBtn" onclick="openMemberModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#fff8e1;">👥 メンバー管理</button>
@@ -1126,6 +1126,13 @@
       // メモ欄はテーブル生成後に全員に表示
       const memoArea = document.getElementById('memoArea');
       if (memoArea && tableGenerated) memoArea.style.display = 'block';
+
+      // 権限名を表示
+      const roleLabel = document.getElementById('myRoleLabel');
+      if (roleLabel) {
+        const labels = { admin: '【管理者】', sub: '【サブ管理者】', worker: '【一般作業員】' };
+        roleLabel.textContent = labels[role] || '';
+      }
 
       // 権限をwindow.isJobOwnerにも反映（既存のガード処理との互換性）
       window.isJobOwner = isAdmin;
