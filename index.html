@@ -507,15 +507,16 @@
     // ログイン時に自分のpresenceドキュメントを初期登録する（roleは初回のみworkerで登録）
     window.registerPresence = function() {
       if (!window.currentUser || !window.currentJobId) return;
+      const amOwner = !!window.isJobOwner; // 非同期処理の前に値を確定させる
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
       getDoc(ref).then((snap) => {
-        if (snap.exists() && snap.data().role && !window.isJobOwner) {
+        if (snap.exists() && snap.data().role && !amOwner) {
           // 既に登録済み かつ オーナーでない → roleをそのまま使う
           window.myRole = snap.data().role;
           if (window.applyRoleUI) window.applyRoleUI();
         } else {
           // 未登録、またはオーナーの場合はadminで登録・上書き
-          const initialRole = window.isJobOwner ? 'admin' : 'worker';
+          const initialRole = amOwner ? 'admin' : 'worker';
           setDoc(ref, {
             uid: window.currentUser.uid,
             displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
@@ -557,9 +558,9 @@
       onSnapshot(ref, (snap) => {
         const docs = [];
         snap.forEach(d => docs.push(d.data()));
-        // 自分のroleを最新に保つ
+        // 自分のroleを最新に保つ（ただしregisterPresence完了後のみ反映）
         const me = docs.find(d => d.uid === window.currentUser.uid);
-        if (me && me.role && me.role !== window.myRole) {
+        if (me && me.role && window.myRole && me.role !== window.myRole) {
           window.myRole = me.role;
           if (window.applyRoleUI) window.applyRoleUI();
         }
