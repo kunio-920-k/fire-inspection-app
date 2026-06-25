@@ -2524,17 +2524,6 @@
 
     function applyScheduleDim() {
       const range = getActiveFloorRange();
-      const now = new Date();
-      const todayStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-      const nowHHMM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-      alert(
-        '【診断情報】\n' +
-        '今日の日付：' + todayStr + '\n' +
-        '現在時刻：' + nowHHMM + '\n' +
-        'scheduleDataの件数：' + scheduleData.length + '\n' +
-        'scheduleData：' + JSON.stringify(scheduleData) + '\n' +
-        '検出されたrange：' + JSON.stringify(range)
-      );
       document.querySelectorAll('td.cell').forEach(cell => {
         const floor = Math.floor(parseInt(cell.dataset.room) / 100);
         const isYoyaku = cell.dataset.state === 'yoyaku';
@@ -2544,14 +2533,6 @@
         const maxFloor = Math.max(range.floorFrom, range.floorTo);
         cell.classList.toggle('schedule-dim', !(floor >= minFloor && floor <= maxFloor));
       });
-      const dimCount = document.querySelectorAll('td.cell.schedule-dim').length;
-      alert(
-        '【診断情報】\n' +
-        '今日：' + todayStr + ' / 現在：' + nowHHMM + '\n' +
-        'range：' + JSON.stringify(range) + '\n' +
-        '全セル数：' + cells.length + '\n' +
-        'schedule-dim付与数：' + dimCount
-      );
     }
     window.applyScheduleDim = applyScheduleDim;
 
