@@ -37,7 +37,8 @@
     td.cell.kushitsu { background-color: #ccc; color: #666; }
     td.cell.furyo { outline: 3px solid red; outline-offset: -3px; }
     td.cell.yoyaku { background-color: #ffb347; }
-    td.cell.yoyaku-pass { background-color: #b3e5fc; }
+    td.cell.schedule-dim { opacity: 0.35; }
+    td.cell.yoyaku.schedule-dim { opacity: 1; }
     td.empty-number { height: 35px; background-color: #eee; }
     td.empty-state { height: 55px; background-color: #eee; }
     th.floor-label { background-color: #ddd; vertical-align: middle; }
@@ -1475,6 +1476,7 @@
 
       tableGenerated = true;
       applyOwnerUI();
+      applyScheduleDim();
     }
 
     function prepareEdit() {
@@ -1715,6 +1717,7 @@
 
       tableGenerated = true;
       applyOwnerUI();
+      applyScheduleDim();
       syncToCloud();
     }
 
@@ -1913,6 +1916,7 @@
       }
       syncToCloud();
       if (window.updatePresence) window.updatePresence(cell.dataset.room);
+      applyScheduleDim();
     }
 
     function getSetsubiForRoom(room) {
@@ -2173,6 +2177,7 @@
       yoyakuCell = null;
       buildNoteSelects();
       syncToCloud();
+      applyScheduleDim();
     }
 
     function deleteYoyaku() {
@@ -2189,6 +2194,7 @@
       document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
       syncToCloud();
+      applyScheduleDim();
     }
 
     function removeYoyakuByRoom(room) {
@@ -2406,17 +2412,24 @@
       }
       container.innerHTML = scheduleData.map((day, di) => {
         const sessions = (day.sessions || []).map((s, si) => `
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding-left:12px;">
-            <input type="text" value="${s.label}" placeholder="午前・午後など"
-              style="width:80px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;padding-left:12px;">
+            <input type="text" value="${s.label || ''}" placeholder="午前・午後など"
+              style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
               onchange="updateSession(${di},${si},'label',this.value)">
+            <input type="time" value="${s.timeFrom || '09:00'}"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
+              onchange="updateSession(${di},${si},'timeFrom',this.value)">
+            <span style="font-size:13px;color:#555;">〜</span>
+            <input type="time" value="${s.timeTo || '12:00'}"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
+              onchange="updateSession(${di},${si},'timeTo',this.value)">
             <span style="font-size:13px;color:#555;">フロア</span>
             <input type="number" value="${s.floorFrom}" min="1"
-              style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
               onchange="updateSession(${di},${si},'floorFrom',this.value)">
             <span style="font-size:13px;color:#555;">階〜</span>
             <input type="number" value="${s.floorTo}" min="1"
-              style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
               onchange="updateSession(${di},${si},'floorTo',this.value)">
             <span style="font-size:13px;color:#555;">階</span>
             <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
@@ -2444,7 +2457,7 @@
       const yyyy = today.getFullYear();
       const mm = String(today.getMonth()+1).padStart(2,'0');
       const dd = String(today.getDate()).padStart(2,'0');
-      scheduleData.push({ date: yyyy+'-'+mm+'-'+dd, reserveOnly: false, sessions: [{ label:'午前', floorFrom:1, floorTo:1 }] });
+      scheduleData.push({ date: yyyy+'-'+mm+'-'+dd, reserveOnly: false, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1 }] });
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
@@ -2458,7 +2471,7 @@
     }
     function addSession(di) {
       scheduleData[di].sessions = scheduleData[di].sessions || [];
-      scheduleData[di].sessions.push({ label:'午後', floorFrom:1, floorTo:1 });
+      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1 });
       renderScheduleDayList();
     }
     function removeSession(di, si) {
@@ -2466,8 +2479,41 @@
       renderScheduleDayList();
     }
     function updateSession(di, si, key, val) {
-      scheduleData[di].sessions[si][key] = (key === 'label') ? val : parseInt(val) || 1;
+      const numKeys = ['floorFrom', 'floorTo'];
+      scheduleData[di].sessions[si][key] = numKeys.includes(key) ? (parseInt(val) || 1) : val;
     }
+
+    function getActiveFloorRange() {
+      const now = new Date();
+      const todayStr = now.getFullYear() + '-' +
+        String(now.getMonth()+1).padStart(2,'0') + '-' +
+        String(now.getDate()).padStart(2,'0');
+      const todaySchedule = scheduleData.find(d => d.date === todayStr);
+      if (!todaySchedule) return null;
+      if (todaySchedule.reserveOnly) return { reserveOnly: true };
+      const nowHHMM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      const active = (todaySchedule.sessions || []).find(s => s.timeFrom && s.timeTo && nowHHMM >= s.timeFrom && nowHHMM < s.timeTo);
+      if (active) return { floorFrom: active.floorFrom, floorTo: active.floorTo };
+      const upcoming = (todaySchedule.sessions || []).filter(s => s.timeFrom && nowHHMM < s.timeFrom).sort((a,b) => a.timeFrom.localeCompare(b.timeFrom))[0];
+      if (upcoming) return { floorFrom: upcoming.floorFrom, floorTo: upcoming.floorTo };
+      const last = (todaySchedule.sessions || []).filter(s => s.timeTo).sort((a,b) => b.timeTo.localeCompare(a.timeTo))[0];
+      if (last) return { floorFrom: last.floorFrom, floorTo: last.floorTo };
+      return null;
+    }
+
+    function applyScheduleDim() {
+      const range = getActiveFloorRange();
+      document.querySelectorAll('td.cell').forEach(cell => {
+        const floor = Math.floor(parseInt(cell.dataset.room) / 100);
+        const isYoyaku = cell.dataset.state === 'yoyaku';
+        if (!range || isYoyaku) { cell.classList.remove('schedule-dim'); return; }
+        if (range.reserveOnly) { cell.classList.toggle('schedule-dim', !isYoyaku); return; }
+        const minFloor = Math.min(range.floorFrom, range.floorTo);
+        const maxFloor = Math.max(range.floorFrom, range.floorTo);
+        cell.classList.toggle('schedule-dim', !(floor >= minFloor && floor <= maxFloor));
+      });
+    }
+    window.applyScheduleDim = applyScheduleDim;
 
     function saveSchedule() {
       // クラウドに保存（inspections/{jobId}のscheduleフィールドに格納）
@@ -2477,6 +2523,7 @@
         window.saveInspectionToCloud(state);
       }
       closeScheduleModal();
+      applyScheduleDim();
       alert('スケジュールを保存しました。');
     }
 
