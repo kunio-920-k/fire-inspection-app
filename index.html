@@ -2646,6 +2646,13 @@
       const colCount = tableSuffixes.length;
       const colW = Math.floor(257 / colCount);
 
+      const now = new Date();
+      const printedAt = now.getFullYear() + '/' +
+        String(now.getMonth()+1).padStart(2,'0') + '/' +
+        String(now.getDate()).padStart(2,'0') + ' ' +
+        String(now.getHours()).padStart(2,'0') + ':' +
+        String(now.getMinutes()).padStart(2,'0') + '印刷';
+
       const win = window.open('', '_blank');
       win.document.write(`<!DOCTYPE html>
 <html lang="ja"><head>
@@ -2676,7 +2683,7 @@
 <h2>${prop.name}　消防設備点検立面図</h2>
 <div class="info">
   <span>作業日：${prop.date}　担当：${prop.staff}</span>
-  <span class="count">入室数：${counts.nyushitsu}／${counts.total}</span>
+  <span>${printedAt}　入室数：${counts.nyushitsu}／${counts.total}</span>
 </div>
 ${tableHtml}
 </body></html>`);
