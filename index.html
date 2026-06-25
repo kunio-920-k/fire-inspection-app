@@ -501,8 +501,35 @@
     // 操作のたびに自分の最終操作部屋を書き込み、他端末がonSnapshotで受け取る
 
     const PRESENCE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00'];
+    const ROLE_LABELS = { admin: '管理者', sub: 'サブ管理者', worker: '一般作業員' };
+    window.ROLE_LABELS = ROLE_LABELS;
 
-    // 自分の現在位置をクラウドに書き込む
+    // ログイン時に自分のpresenceドキュメントを初期登録する（roleは初回のみworkerで登録）
+    window.registerPresence = function() {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
+      getDoc(ref).then((snap) => {
+        if (snap.exists() && snap.data().role) {
+          // 既に登録済み → roleだけ取得してwindow.myRoleに保持
+          window.myRole = snap.data().role;
+          if (window.applyRoleUI) window.applyRoleUI();
+        } else {
+          // 未登録 → workerとして初期登録
+          setDoc(ref, {
+            uid: window.currentUser.uid,
+            displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
+            role: 'worker',
+            room: '',
+            updatedAt: serverTimestamp()
+          }, { merge: true }).then(() => {
+            window.myRole = 'worker';
+            if (window.applyRoleUI) window.applyRoleUI();
+          });
+        }
+      }).catch((e) => dlog('presence初期登録エラー / ' + e.message));
+    };
+
+    // 自分の現在位置をクラウドに書き込む（roleは上書きしない）
     window.updatePresence = function(room) {
       if (!window.currentUser || !window.currentJobId) return;
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
@@ -514,27 +541,38 @@
       }, { merge: true }).catch((e) => dlog('presence書き込みエラー / ' + e.message));
     };
 
+    // メンバーのroleを変更する（管理者のみ呼べる）
+    window.updateMemberRole = function(uid, newRole) {
+      if (!window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId, 'presence', uid);
+      setDoc(ref, { role: newRole }, { merge: true }).catch((e) => dlog('role変更エラー / ' + e.message));
+    };
+
     // presence監視を開始する（ログイン後1回だけ呼ぶ）
     window.startPresenceWatch = function() {
       if (!window.currentUser || !window.currentJobId) return;
       const ref = collection(db, 'inspections', window.currentJobId, 'presence');
       onSnapshot(ref, (snap) => {
-        // uidの一覧を取得し、ログイン順に色を割り当てる
         const docs = [];
         snap.forEach(d => docs.push(d.data()));
-        // updatedAtでソートして色のインデックスを安定させる
+        // 自分のroleを最新に保つ
+        const me = docs.find(d => d.uid === window.currentUser.uid);
+        if (me && me.role && me.role !== window.myRole) {
+          window.myRole = me.role;
+          if (window.applyRoleUI) window.applyRoleUI();
+        }
+        // joinedAtでソートして色のインデックスを安定させる
         docs.sort((a, b) => {
-          const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
-          const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+          const ta = a.joinedAt ? a.joinedAt.toMillis() : 0;
+          const tb = b.joinedAt ? b.joinedAt.toMillis() : 0;
           return ta - tb;
         });
-        // 色マップを作成（uid → color）
         const colorMap = {};
         docs.forEach((d, i) => {
           colorMap[d.uid] = PRESENCE_COLORS[i % PRESENCE_COLORS.length];
         });
-        // 画面に反映
         if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
+        if (window.renderMemberList) window.renderMemberList(docs);
       });
     };
 
@@ -601,9 +639,10 @@
           });
         }
 
-        // presence監視を開始する（1回だけ）
+        // presence登録・監視を開始する（1回だけ）
         if (!window.presenceWatchDone) {
           window.presenceWatchDone = true;
+          window.registerPresence();
           window.startPresenceWatch();
         }
 
@@ -823,7 +862,20 @@
     <p><strong id="propDisplayName">（物件名未入力）</strong></p>
     <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
     <button id="qrInviteBtn" onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
-    <button onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
+    <button id="scheduleBtn" onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
+    <button id="memberBtn" onclick="openMemberModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#fff8e1;">👥 メンバー管理</button>
+  </div>
+
+  <!-- メンバー管理モーダル -->
+  <div id="memberModal" class="modal">
+    <div class="modal-box" style="max-width:480px;">
+      <h2>👥 メンバー管理</h2>
+      <p style="font-size:13px;color:#666;margin-bottom:12px;">参加メンバーの権限を設定します。</p>
+      <div id="memberList"></div>
+      <div class="modal-buttons" style="margin-top:16px;">
+        <button onclick="closeMemberModal()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
   </div>
 
   <!-- スケジュール設定モーダル -->
@@ -1043,21 +1095,40 @@
     if (typeof window.isJobOwner === 'undefined') window.isJobOwner = true;
 
     // 画面上の「親機専用」ボタン類を、オーナー判定に合わせて出し分ける
+    // myRoleに基づいて画面の各ボタン・機能を出し分ける
+    // admin: 全操作可 / sub: 作業+予約+不良+備考パターン / worker: 住戸状態入力のみ
     function applyOwnerUI() {
-      const isOwner = window.isJobOwner !== false;
+      const role = window.myRole || (window.isJobOwner ? 'admin' : 'worker');
+      const isAdmin = role === 'admin';
+      const isSub = role === 'sub';
+
+      // 管理者専用
       const newJobLink = document.getElementById('newJobLink');
-      if (newJobLink) newJobLink.style.display = isOwner ? 'inline' : 'none';
+      if (newJobLink) newJobLink.style.display = isAdmin ? 'inline' : 'none';
       const qrBtn = document.getElementById('qrInviteBtn');
-      if (qrBtn) qrBtn.style.display = (isOwner && tableGenerated) ? 'inline-block' : 'none';
+      if (qrBtn) qrBtn.style.display = (isAdmin && tableGenerated) ? 'inline-block' : 'none';
       const backBtn = document.getElementById('backToSetupBtn');
-      if (backBtn && tableGenerated) {
-        backBtn.style.display = isOwner ? 'block' : 'none';
-      }
+      if (backBtn && tableGenerated) backBtn.style.display = isAdmin ? 'block' : 'none';
+      const scheduleBtn = document.getElementById('scheduleBtn');
+      if (scheduleBtn) scheduleBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const memberBtn = document.getElementById('memberBtn');
+      if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
+      if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
+
+      // 管理者・サブ管理者：備考パターン編集
+      const notePatternManage = document.getElementById('notePatternManage');
+      if (notePatternManage) notePatternManage.style.display = (isAdmin || isSub) ? 'block' : 'none';
+
       // メモ欄はテーブル生成後に全員に表示
       const memoArea = document.getElementById('memoArea');
       if (memoArea && tableGenerated) memoArea.style.display = 'block';
+
+      // 権限をwindow.isJobOwnerにも反映（既存のガード処理との互換性）
+      window.isJobOwner = isAdmin;
     }
     window.applyOwnerUI = applyOwnerUI;
+    window.applyRoleUI = applyOwnerUI;
 
     // 子機招待用のQRコードを表示する
     function openQrModal() {
@@ -2106,6 +2177,8 @@
     }
 
     function openFuryo(cell) {
+      const role = window.myRole || 'worker';
+      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
       furyoCell = cell;
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
@@ -2128,6 +2201,8 @@
     }
 
     function openYoyaku(cell) {
+      const role = window.myRole || 'worker';
+      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
       yoyakuCell = cell;
       buildNoteSelects();
       document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
@@ -2202,6 +2277,8 @@
     }
 
     function addYoyaku() {
+      const role = window.myRole || 'worker';
+      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
       const room = toHankaku(document.getElementById('addRoom').value.trim());
       const time = document.getElementById('addTime').value;
       const note = resolveNoteValue('addNote', 'addNoteOther');
@@ -2463,8 +2540,8 @@
         const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
         const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
         const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
-        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
-        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(ft.value) || 1;
+        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(toHankaku(ff.value)) || 1;
+        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(toHankaku(ft.value)) || 1;
       });
     }
 
@@ -2560,6 +2637,49 @@
       closeScheduleModal();
       applyScheduleDim();
       alert('スケジュールを保存しました。');
+    }
+
+    // ---- メンバー管理 ----
+    function openMemberModal() {
+      document.getElementById('memberModal').classList.add('active');
+    }
+    function closeMemberModal() {
+      document.getElementById('memberModal').classList.remove('active');
+    }
+
+    // メンバー一覧を描画する（startPresenceWatchのonSnapshotから呼ばれる）
+    window.renderMemberList = function(docs) {
+      const list = document.getElementById('memberList');
+      if (!list) return;
+      const role = window.myRole || 'worker';
+      const isAdmin = role === 'admin';
+      if (docs.length === 0) {
+        list.innerHTML = '<p style="color:#aaa;font-size:13px;">まだ参加メンバーがいません</p>';
+        return;
+      }
+      list.innerHTML = docs.map(d => {
+        const isMe = window.currentUser && d.uid === window.currentUser.uid;
+        const roleLabel = window.ROLE_LABELS ? window.ROLE_LABELS[d.role] || '一般作業員' : d.role;
+        if (isAdmin && !isMe) {
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
+            <span style="font-size:14px;">${d.displayName || d.uid}</span>
+            <select onchange="changeMemberRole('${d.uid}', this.value)" style="font-size:13px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;">
+              <option value="admin" ${d.role === 'admin' ? 'selected' : ''}>管理者</option>
+              <option value="sub" ${d.role === 'sub' ? 'selected' : ''}>サブ管理者</option>
+              <option value="worker" ${(!d.role || d.role === 'worker') ? 'selected' : ''}>一般作業員</option>
+            </select>
+          </div>`;
+        } else {
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
+            <span style="font-size:14px;">${d.displayName || d.uid}${isMe ? '（自分）' : ''}</span>
+            <span style="font-size:13px;color:#666;">${roleLabel}</span>
+          </div>`;
+        }
+      }).join('');
+    };
+
+    function changeMemberRole(uid, newRole) {
+      if (window.updateMemberRole) window.updateMemberRole(uid, newRole);
     }
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
