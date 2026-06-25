@@ -2412,31 +2412,26 @@
       }
       container.innerHTML = scheduleData.map((day, di) => {
         const sessions = (day.sessions || []).map((s, si) => `
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;padding-left:12px;">
-            <input type="text" value="${s.label || ''}" placeholder="午前・午後など"
-              style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
-              onchange="updateSession(${di},${si},'label',this.value)">
-            <input type="time" value="${s.timeFrom || '09:00'}"
-              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
-              onchange="updateSession(${di},${si},'timeFrom',this.value)">
+          <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;padding-left:12px;">
+            <input type="text" class="ss-label" value="${s.label || ''}" placeholder="午前・午後など"
+              style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
+            <input type="time" class="ss-timeFrom" value="${s.timeFrom || '09:00'}"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <span style="font-size:13px;color:#555;">〜</span>
-            <input type="time" value="${s.timeTo || '12:00'}"
-              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
-              onchange="updateSession(${di},${si},'timeTo',this.value)">
+            <input type="time" class="ss-timeTo" value="${s.timeTo || '12:00'}"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <span style="font-size:13px;color:#555;">フロア</span>
-            <input type="number" value="${s.floorFrom}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
-              onchange="updateSession(${di},${si},'floorFrom',this.value)">
+            <input type="number" class="ss-floorFrom" value="${s.floorFrom}" min="1"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
             <span style="font-size:13px;color:#555;">階〜</span>
-            <input type="number" value="${s.floorTo}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
-              onchange="updateSession(${di},${si},'floorTo',this.value)">
+            <input type="number" class="ss-floorTo" value="${s.floorTo}" min="1"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
             <span style="font-size:13px;color:#555;">階</span>
             <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
           </div>`).join('');
         const isReserveOnly = day.reserveOnly ? 'checked' : '';
         return `
-          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
+          <div class="schedule-day-row" data-di="${di}" style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
               <input type="date" value="${day.date}"
                 style="font-size:14px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;"
@@ -2516,12 +2511,25 @@
     window.applyScheduleDim = applyScheduleDim;
 
     function saveSchedule() {
-      // クラウドに保存（inspections/{jobId}のscheduleフィールドに格納）
-      if (window.saveInspectionToCloud) {
-        const state = gatherInspectionState();
-        state.schedule = scheduleData;
-        window.saveInspectionToCloud(state);
-      }
+      // 保存前にDOMから全入力値を確実に読み取る
+      document.querySelectorAll('#scheduleDayList .schedule-day-row').forEach(dayEl => {
+        const di = parseInt(dayEl.dataset.di);
+        if (!scheduleData[di]) return;
+        const dateEl = dayEl.querySelector('input[type="date"]');
+        if (dateEl) scheduleData[di].date = dateEl.value;
+      });
+      document.querySelectorAll('#scheduleDayList .schedule-session-row').forEach(row => {
+        const di = parseInt(row.dataset.di);
+        const si = parseInt(row.dataset.si);
+        if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
+        const s = scheduleData[di].sessions[si];
+        const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
+        const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
+        const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
+        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
+        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(ft.value) || 1;
+      });
+      if (window.saveInspectionToCloud) window.saveInspectionToCloud(gatherInspectionState());
       closeScheduleModal();
       applyScheduleDim();
       alert('スケジュールを保存しました。');
