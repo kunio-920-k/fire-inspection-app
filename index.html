@@ -822,6 +822,21 @@
     <p><strong id="propDisplayName">（物件名未入力）</strong></p>
     <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
     <button id="qrInviteBtn" onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
+    <button onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
+  </div>
+
+  <!-- スケジュール設定モーダル -->
+  <div id="scheduleModal" class="modal">
+    <div class="modal-box" style="max-width:520px;">
+      <h2>📅 スケジュール設定</h2>
+      <p style="font-size:13px;color:#666;margin-bottom:12px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
+      <div id="scheduleDayList"></div>
+      <button onclick="addScheduleDay()" style="margin-top:8px;width:100%;padding:8px;background:#eef5ff;border:1px dashed #336699;border-radius:4px;font-size:13px;cursor:pointer;">＋ 作業日を追加</button>
+      <div class="modal-buttons" style="margin-top:16px;">
+        <button onclick="saveSchedule()" style="background:#336699;color:white;">保存</button>
+        <button onclick="closeScheduleModal()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
   </div>
 
   <div class="table-wrap">
@@ -1318,7 +1333,8 @@
         setsubiDefaults: setsubiDefaults,
         setsubiCustom: setsubiCustom,
         yoyakuList: yoyakuList,
-        notePatterns: notePatterns
+        notePatterns: notePatterns,
+        schedule: scheduleData
       };
     }
 
@@ -1352,6 +1368,9 @@
       yoyakuList = state.yoyakuList || [];
       if (state.notePatterns && state.notePatterns.length) {
         notePatterns = state.notePatterns;
+      }
+      if (state.schedule && Array.isArray(state.schedule)) {
+        scheduleData = state.schedule;
       }
       useSetsubiFlag = !!(state.setup && state.setup.useSetsubiInfo);
 
@@ -2365,6 +2384,100 @@
         btn.style.background = '#eef5ff';
       };
       voiceRecognition.start();
+    }
+
+    // ---- スケジュール設定 ----
+    // scheduleData = [ { date:'2026-06-30', sessions:[ { label:'午前', floorFrom:20, floorTo:16 }, ... ] }, ... ]
+    let scheduleData = [];
+
+    function openScheduleModal() {
+      renderScheduleDayList();
+      document.getElementById('scheduleModal').classList.add('active');
+    }
+    function closeScheduleModal() {
+      document.getElementById('scheduleModal').classList.remove('active');
+    }
+
+    function renderScheduleDayList() {
+      const container = document.getElementById('scheduleDayList');
+      if (scheduleData.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">まだ作業日が登録されていません</p>';
+        return;
+      }
+      container.innerHTML = scheduleData.map((day, di) => {
+        const sessions = (day.sessions || []).map((s, si) => `
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding-left:12px;">
+            <input type="text" value="${s.label}" placeholder="午前・午後など"
+              style="width:80px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;"
+              onchange="updateSession(${di},${si},'label',this.value)">
+            <span style="font-size:13px;color:#555;">フロア</span>
+            <input type="number" value="${s.floorFrom}" min="1"
+              style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
+              onchange="updateSession(${di},${si},'floorFrom',this.value)">
+            <span style="font-size:13px;color:#555;">階〜</span>
+            <input type="number" value="${s.floorTo}" min="1"
+              style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;"
+              onchange="updateSession(${di},${si},'floorTo',this.value)">
+            <span style="font-size:13px;color:#555;">階</span>
+            <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
+          </div>`).join('');
+        const isReserveOnly = day.reserveOnly ? 'checked' : '';
+        return `
+          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <input type="date" value="${day.date}"
+                style="font-size:14px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;"
+                onchange="updateDayDate(${di},this.value)">
+              <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                <input type="checkbox" ${isReserveOnly} onchange="updateDayReserve(${di},this.checked)">予備日（予約部屋のみ）
+              </label>
+              <button onclick="removeScheduleDay(${di})" style="margin-left:auto;font-size:12px;padding:2px 8px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">削除</button>
+            </div>
+            <div id="sessions-${di}">${day.reserveOnly ? '' : sessions}</div>
+            ${day.reserveOnly ? '' : `<button onclick="addSession(${di})" style="font-size:12px;padding:4px 10px;background:#f5f5f5;border:1px dashed #999;border-radius:4px;margin-left:12px;">＋ セッションを追加</button>`}
+          </div>`;
+      }).join('');
+    }
+
+    function addScheduleDay() {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth()+1).padStart(2,'0');
+      const dd = String(today.getDate()).padStart(2,'0');
+      scheduleData.push({ date: yyyy+'-'+mm+'-'+dd, reserveOnly: false, sessions: [{ label:'午前', floorFrom:1, floorTo:1 }] });
+      renderScheduleDayList();
+    }
+    function removeScheduleDay(di) {
+      scheduleData.splice(di, 1);
+      renderScheduleDayList();
+    }
+    function updateDayDate(di, val) { scheduleData[di].date = val; }
+    function updateDayReserve(di, checked) {
+      scheduleData[di].reserveOnly = checked;
+      renderScheduleDayList();
+    }
+    function addSession(di) {
+      scheduleData[di].sessions = scheduleData[di].sessions || [];
+      scheduleData[di].sessions.push({ label:'午後', floorFrom:1, floorTo:1 });
+      renderScheduleDayList();
+    }
+    function removeSession(di, si) {
+      scheduleData[di].sessions.splice(si, 1);
+      renderScheduleDayList();
+    }
+    function updateSession(di, si, key, val) {
+      scheduleData[di].sessions[si][key] = (key === 'label') ? val : parseInt(val) || 1;
+    }
+
+    function saveSchedule() {
+      // クラウドに保存（inspections/{jobId}のscheduleフィールドに格納）
+      if (window.saveInspectionToCloud) {
+        const state = gatherInspectionState();
+        state.schedule = scheduleData;
+        window.saveInspectionToCloud(state);
+      }
+      closeScheduleModal();
+      alert('スケジュールを保存しました。');
     }
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
