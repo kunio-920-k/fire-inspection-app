@@ -37,8 +37,8 @@
     td.cell.kushitsu { background-color: #ccc; color: #666; }
     td.cell.furyo { outline: 3px solid red; outline-offset: -3px; }
     td.cell.yoyaku { background-color: #ffb347; }
-    td.cell.schedule-dim { background-color: #b0b0b0 !important; color: #666; }
-    td.cell.yoyaku.schedule-dim { background-color: #ffb347 !important; color: inherit; opacity: 1; }
+    td.room-number.schedule-dim { background-color: #b0b0b0 !important; color: #666; }
+    td.room-number.yoyaku-dim { background-color: inherit !important; }
     td.empty-number { height: 35px; background-color: #eee; }
     td.empty-state { height: 55px; background-color: #eee; }
     th.floor-label { background-color: #ddd; vertical-align: middle; }
@@ -2524,9 +2524,10 @@
 
     function applyScheduleDim() {
       const range = getActiveFloorRange();
-      document.querySelectorAll('td.cell').forEach(cell => {
+      document.querySelectorAll('td.room-number').forEach(cell => {
         const floor = Math.floor(parseInt(cell.dataset.room) / 100);
-        const isYoyaku = cell.dataset.state === 'yoyaku';
+        const roomCell = document.querySelector('td.cell[data-room="' + cell.dataset.room + '"]');
+        const isYoyaku = roomCell && roomCell.dataset.state === 'yoyaku';
         if (!range || isYoyaku) { cell.classList.remove('schedule-dim'); return; }
         if (range.reserveOnly) { cell.classList.toggle('schedule-dim', !isYoyaku); return; }
         const minFloor = Math.min(range.floorFrom, range.floorTo);
