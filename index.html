@@ -586,6 +586,7 @@
         });
         if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
         if (window.renderMemberList) window.renderMemberList(docs);
+        latestPresenceDocs = docs;
       });
     };
 
@@ -618,7 +619,56 @@
       });
     };
 
-    window.authReady = false;
+    // ---- 予約指示システム ----
+    // 保存先: inspections/{jobId}/instructions/{autoId}
+    // status: 'pending'（指示中）→ 'accepted'（了解）/ 'declined'（対応できません）
+
+    window.sendInstruction = function(toUid, toName, room, time) {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'instructions');
+      return addDoc(ref, {
+        fromUid: window.currentUser.uid,
+        fromName: window.currentUser.displayName || window.currentUser.email || '管理者',
+        toUid: toUid,
+        toName: toName,
+        room: room,
+        time: time,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+    };
+
+    window.replyInstruction = function(docId, status) {
+      if (!window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId, 'instructions', docId);
+      setDoc(ref, { status: status }, { merge: true });
+    };
+
+    window.startInstructionWatch = function() {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'instructions');
+      onSnapshot(ref, (snap) => {
+        const myUid = window.currentUser.uid;
+        const role = window.myRole || 'worker';
+        const isManager = role === 'admin' || role === 'sub';
+        snap.docChanges().forEach(change => {
+          if (change.type !== 'added' && change.type !== 'modified') return;
+          const d = change.doc.data();
+          const id = change.doc.id;
+          if (d.toUid === myUid && d.status === 'pending') {
+            // 自分宛の指示が来た
+            if (window.showInstructionReceived) window.showInstructionReceived(id, d);
+          }
+          if (d.fromUid === myUid && (d.status === 'accepted' || d.status === 'declined')) {
+            // 自分が出した指示への返答
+            if (window.showInstructionReply) window.showInstructionReply(id, d);
+          }
+        });
+        // 管理者・サブ：予約の事前通知チェック
+        if (isManager && window.checkYoyakuNotifications) window.checkYoyakuNotifications();
+      });
+    };
+
     window.currentUser = null;
 
     // 認証状態の変化を監視
@@ -663,6 +713,12 @@
         if (!window.memoWatchDone) {
           window.memoWatchDone = true;
           window.startMemoWatch();
+        }
+
+        // 指示システム監視を開始する（1回だけ）
+        if (!window.instructionWatchDone) {
+          window.instructionWatchDone = true;
+          window.startInstructionWatch();
         }
 
         // クラウドのリアルタイム監視を開始する（1セッションにつき1回だけ）
@@ -894,6 +950,48 @@
     </div>
   </div>
 
+  <!-- 予約事前通知バナー（管理者・サブ用） -->
+  <div id="yoyakuNoticeBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:#e53935;color:white;padding:10px 16px;font-size:14px;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+    <span id="yoyakuNoticeText"></span>
+    <button onclick="openAssignModal()" style="margin-left:12px;background:white;color:#e53935;border:none;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:bold;cursor:pointer;">担当者を指名</button>
+    <button onclick="dismissNoticeBanner()" style="margin-left:8px;background:rgba(255,255,255,0.3);color:white;border:none;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer;">✕</button>
+  </div>
+
+  <!-- 担当者指名モーダル（管理者・サブ用） -->
+  <div id="assignModal" class="modal">
+    <div class="modal-box" style="max-width:400px;">
+      <h2>担当者を指名</h2>
+      <p id="assignRoomLabel" style="font-size:15px;font-weight:bold;color:#333;margin-bottom:12px;"></p>
+      <div id="assignMemberList"></div>
+      <div class="modal-buttons" style="margin-top:16px;">
+        <button onclick="closeAssignModal()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 指示受信モーダル（作業員用） -->
+  <div id="instructionModal" class="modal">
+    <div class="modal-box" style="text-align:center;">
+      <h2 style="color:#e53935;">📋 作業依頼</h2>
+      <p id="instructionText" style="font-size:16px;margin:16px 0;line-height:1.6;"></p>
+      <div class="modal-buttons">
+        <button onclick="replyInstruction('accepted')" style="background:#43a047;color:white;font-size:15px;padding:10px 20px;">了解</button>
+        <button onclick="replyInstruction('declined')" style="background:#fff0f0;color:#c00;font-size:15px;padding:10px 20px;">対応できません</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 指示返答通知モーダル（管理者・サブ用） -->
+  <div id="replyModal" class="modal">
+    <div class="modal-box" style="text-align:center;">
+      <p id="replyText" style="font-size:16px;margin:16px 0;"></p>
+      <div class="modal-buttons">
+        <button onclick="closeReplyModal()" style="background:#eee;">閉じる</button>
+        <button onclick="openAssignModalFromReply()" id="reassignBtn" style="display:none;background:#336699;color:white;">別の担当者を指名</button>
+      </div>
+    </div>
+  </div>
+
   <!-- メンバー管理モーダル -->
   <div id="memberModal" class="modal">
     <div class="modal-box" style="max-width:480px;">
@@ -910,7 +1008,12 @@
   <div id="scheduleModal" class="modal">
     <div class="modal-box" style="max-width:520px;">
       <h2>📅 スケジュール設定</h2>
-      <p style="font-size:13px;color:#666;margin-bottom:12px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
+      <div style="margin-bottom:14px;padding:10px;background:#f5f5f5;border-radius:6px;">
+        <label style="font-size:13px;">予約の事前通知タイミング：
+          <input type="number" id="noticeMinutes" min="1" max="60" value="5" style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;margin:0 4px;">分前
+        </label>
+      </div>
       <div id="scheduleDayList"></div>
       <button onclick="addScheduleDay()" style="margin-top:8px;width:100%;padding:8px;background:#eef5ff;border:1px dashed #336699;border-radius:4px;font-size:13px;cursor:pointer;">＋ 作業日を追加</button>
       <div class="modal-buttons" style="margin-top:16px;">
@@ -1825,6 +1928,15 @@
       applyOwnerUI();
       applyScheduleDim();
       syncToCloud();
+      // 予約事前通知チェックを1分おきに実行
+      if (!window.noticeTimerStarted) {
+        window.noticeTimerStarted = true;
+        setInterval(() => {
+          if (window.checkYoyakuNotifications) window.checkYoyakuNotifications();
+        }, 60000);
+        // 初回は即チェック
+        setTimeout(() => { if (window.checkYoyakuNotifications) window.checkYoyakuNotifications(); }, 2000);
+      }
     }
 
     function attachCellEvents() {
@@ -2748,6 +2860,130 @@
       closeScheduleModal();
       applyScheduleDim();
       alert('スケジュールを保存しました。');
+    }
+
+    // ---- 予約事前通知・指示システム ----
+    let notifiedRooms = new Set(); // 通知済み予約（再通知防止）
+    let currentNoticeRoom = null;  // 現在通知中の予約部屋
+    let currentInstructionId = null; // 受信中の指示ID
+    let latestPresenceDocs = [];   // 最新のメンバー一覧
+
+    // 通知タイミング（分）を取得
+    function getNoticeMinutes() {
+      const el = document.getElementById('noticeMinutes');
+      return el ? (parseInt(el.value) || 5) : 5;
+    }
+
+    // 予約の事前通知チェック（1分おきに呼ばれる）
+    window.checkYoyakuNotifications = function() {
+      const role = window.myRole || 'worker';
+      if (role !== 'admin' && role !== 'sub') return;
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const notice = getNoticeMinutes();
+      yoyakuList.forEach(y => {
+        if (!y.time || notifiedRooms.has(y.room)) return;
+        // 予約セルがまだ未対応（yoyaku状態）かチェック
+        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+        if (!cell || cell.dataset.state !== 'yoyaku') return;
+        const parts = y.time.split(':');
+        if (parts.length < 2) return;
+        const yoyakuMin = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+        const diff = yoyakuMin - nowMin;
+        if (diff >= 0 && diff <= notice) {
+          notifiedRooms.add(y.room);
+          currentNoticeRoom = y;
+          document.getElementById('yoyakuNoticeText').textContent =
+            y.room + '号室（' + y.time + '）まであと' + diff + '分です';
+          document.getElementById('yoyakuNoticeBanner').style.display = 'block';
+        }
+      });
+    };
+
+    // 通知バナーを閉じる
+    function dismissNoticeBanner() {
+      document.getElementById('yoyakuNoticeBanner').style.display = 'none';
+    }
+
+    // 担当者指名モーダルを開く
+    function openAssignModal() {
+      if (!currentNoticeRoom) return;
+      document.getElementById('assignRoomLabel').textContent =
+        currentNoticeRoom.room + '号室（' + currentNoticeRoom.time + '）の担当者を選んでください';
+      renderAssignMemberList();
+      document.getElementById('assignModal').classList.add('active');
+    }
+    function closeAssignModal() {
+      document.getElementById('assignModal').classList.remove('active');
+    }
+    function openAssignModalFromReply() {
+      closeReplyModal();
+      openAssignModal();
+    }
+
+    // 担当者一覧を描画する
+    function renderAssignMemberList() {
+      const list = document.getElementById('assignMemberList');
+      if (!list) return;
+      const members = latestPresenceDocs.filter(d =>
+        d.uid !== (window.currentUser && window.currentUser.uid)
+      );
+      if (members.length === 0) {
+        list.innerHTML = '<p style="color:#aaa;font-size:13px;">他のメンバーがいません</p>';
+        return;
+      }
+      list.innerHTML = members.map(d => {
+        const roomLabel = d.room ? '（' + d.room + '号室付近）' : '';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
+          <span style="font-size:14px;">${d.displayName || d.uid}${roomLabel}</span>
+          <button onclick="sendInstructionTo('${d.uid}','${d.displayName || d.uid}')"
+            style="font-size:13px;padding:6px 14px;background:#336699;color:white;border:none;border-radius:4px;cursor:pointer;">指名</button>
+        </div>`;
+      }).join('');
+    }
+
+    // 指示を送信する
+    function sendInstructionTo(toUid, toName) {
+      if (!currentNoticeRoom || !window.sendInstruction) return;
+      window.sendInstruction(toUid, toName, currentNoticeRoom.room, currentNoticeRoom.time).then(() => {
+        closeAssignModal();
+        dismissNoticeBanner();
+        alert(toName + ' さんに ' + currentNoticeRoom.room + '号室の対応を依頼しました。');
+      });
+    }
+
+    // 指示受信モーダルを表示（作業員側）
+    window.showInstructionReceived = function(id, d) {
+      currentInstructionId = id;
+      document.getElementById('instructionText').innerHTML =
+        '<strong>' + d.fromName + '</strong> より依頼：<br><br>' +
+        '<strong style="font-size:20px;">' + d.room + '号室</strong>（' + d.time + '）<br><br>' +
+        '今の作業終了後、対応をお願いします。';
+      document.getElementById('instructionModal').classList.add('active');
+    };
+
+    // 返答を送信する（作業員側）
+    function replyInstruction(status) {
+      if (!currentInstructionId || !window.replyInstruction) return;
+      window.replyInstruction(currentInstructionId, status);
+      document.getElementById('instructionModal').classList.remove('active');
+      currentInstructionId = null;
+    }
+
+    // 返答通知を表示（管理者・サブ側）
+    window.showInstructionReply = function(id, d) {
+      const accepted = d.status === 'accepted';
+      document.getElementById('replyText').innerHTML =
+        '<strong>' + d.toName + '</strong> より返答：<br><br>' +
+        (accepted
+          ? '✅ <strong style="color:#43a047;">了解</strong> しました（' + d.room + '号室）'
+          : '❌ <strong style="color:#c00;">対応できません</strong>（' + d.room + '号室）');
+      const reassignBtn = document.getElementById('reassignBtn');
+      if (reassignBtn) reassignBtn.style.display = accepted ? 'none' : 'inline-block';
+      document.getElementById('replyModal').classList.add('active');
+    };
+    function closeReplyModal() {
+      document.getElementById('replyModal').classList.remove('active');
     }
 
     // ---- メンバー管理 ----
