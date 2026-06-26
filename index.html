@@ -586,7 +586,7 @@
         });
         if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
         if (window.renderMemberList) window.renderMemberList(docs);
-        latestPresenceDocs = docs;
+        window.latestPresenceDocs = docs;
       });
     };
 
@@ -2867,10 +2867,10 @@
     }
 
     // ---- 予約事前通知・指示システム ----
-    let notifiedRooms = new Set(); // 通知済み予約（再通知防止）
-    let currentNoticeRoom = null;  // 現在通知中の予約部屋
-    let currentInstructionId = null; // 受信中の指示ID
-    let latestPresenceDocs = [];   // 最新のメンバー一覧
+    let notifiedRooms = new Set();
+    let currentNoticeRoom = null;
+    let currentInstructionId = null;
+    window.latestPresenceDocs = [];
 
     // 通知タイミング（分）を取得
     function getNoticeMinutes() {
@@ -2931,7 +2931,7 @@
     function renderAssignMemberList() {
       const list = document.getElementById('assignMemberList');
       if (!list) return;
-      const members = latestPresenceDocs.filter(d =>
+      const members = window.latestPresenceDocs.filter(d =>
         d.uid !== (window.currentUser && window.currentUser.uid)
       );
       if (members.length === 0) {
