@@ -1259,6 +1259,15 @@
       const memoArea = document.getElementById('memoArea');
       if (memoArea && tableGenerated) memoArea.style.display = 'block';
 
+      // 予約事前通知チェックを1分おきに実行（1回だけ起動）
+      if (tableGenerated && !window.noticeTimerStarted) {
+        window.noticeTimerStarted = true;
+        if (window.checkYoyakuNotifications) window.checkYoyakuNotifications();
+        setInterval(() => {
+          if (window.checkYoyakuNotifications) window.checkYoyakuNotifications();
+        }, 60000);
+      }
+
       // 権限名を表示
       const roleLabel = document.getElementById('myRoleLabel');
       if (roleLabel) {
@@ -1932,15 +1941,6 @@
       applyOwnerUI();
       applyScheduleDim();
       syncToCloud();
-      // 予約事前通知チェックを1分おきに実行
-      if (!window.noticeTimerStarted) {
-        window.noticeTimerStarted = true;
-        setInterval(() => {
-          if (window.checkYoyakuNotifications) window.checkYoyakuNotifications();
-        }, 60000);
-        // 初回は即チェック
-        setTimeout(() => { if (window.checkYoyakuNotifications) window.checkYoyakuNotifications(); }, 2000);
-      }
     }
 
     function attachCellEvents() {
