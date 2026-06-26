@@ -638,7 +638,7 @@
       });
     };
 
-    window.replyInstruction = function(docId, status) {
+    window.sendReplyToCloud = function(docId, status) {
       if (!window.currentJobId) return;
       const ref = doc(db, 'inspections', window.currentJobId, 'instructions', docId);
       setDoc(ref, { status: status }, { merge: true });
@@ -655,6 +655,10 @@
           if (change.type !== 'added' && change.type !== 'modified') return;
           const d = change.doc.data();
           const id = change.doc.id;
+          // 担当者が了解した → 全端末でその部屋のバナーを消す
+          if (d.status === 'accepted' && currentNoticeRoom && d.room === currentNoticeRoom.room) {
+            document.getElementById('yoyakuNoticeBanner').style.display = 'none';
+          }
           if (d.toUid === myUid && d.status === 'pending') {
             // 自分宛の指示が来た
             if (window.showInstructionReceived) window.showInstructionReceived(id, d);
@@ -2876,14 +2880,11 @@
 
     // 予約の事前通知チェック（1分おきに呼ばれる）
     window.checkYoyakuNotifications = function() {
-      const role = window.myRole || 'worker';
-      if (role !== 'admin' && role !== 'sub') return;
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
       const notice = getNoticeMinutes();
       yoyakuList.forEach(y => {
         if (!y.time || notifiedRooms.has(y.room)) return;
-        // 予約セルがまだ未対応（yoyaku状態）かチェック
         const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
         if (!cell || cell.dataset.state !== 'yoyaku') return;
         const parts = y.time.split(':');
@@ -2893,8 +2894,13 @@
         if (diff >= 0 && diff <= notice) {
           notifiedRooms.add(y.room);
           currentNoticeRoom = y;
+          const role = window.myRole || 'worker';
+          const isManager = role === 'admin' || role === 'sub';
           document.getElementById('yoyakuNoticeText').textContent =
             y.room + '号室（' + y.time + '）まであと' + diff + '分です';
+          // 管理者・サブには指名ボタンを表示、一般には非表示
+          const assignBtn = document.querySelector('#yoyakuNoticeBanner button[onclick="openAssignModal()"]');
+          if (assignBtn) assignBtn.style.display = isManager ? 'inline-block' : 'none';
           document.getElementById('yoyakuNoticeBanner').style.display = 'block';
         }
       });
@@ -2964,8 +2970,8 @@
 
     // 返答を送信する（作業員側）
     function replyInstruction(status) {
-      if (!currentInstructionId || !window.replyInstruction) return;
-      window.replyInstruction(currentInstructionId, status);
+      if (!currentInstructionId || !window.sendReplyToCloud) return;
+      window.sendReplyToCloud(currentInstructionId, status);
       document.getElementById('instructionModal').classList.remove('active');
       currentInstructionId = null;
     }
