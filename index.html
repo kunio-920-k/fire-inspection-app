@@ -1035,7 +1035,8 @@
     <h2>予約一覧</h2>
     <div class="yoyaku-add">
       <input type="text" id="addRoom" class="room-input" placeholder="号室">
-      <select id="addTime"></select>
+      <select id="addTimeH" style="width:52px;"></select>時
+      <select id="addTimeM" style="width:52px;"></select>分
       <select id="addNote" onchange="toggleNoteOther('addNote','addNoteOther')"></select>
       <input type="text" id="addNoteOther" class="note-input" placeholder="備考を入力" style="display:none;">
       <button onclick="addYoyaku()">追加</button>
@@ -1127,7 +1128,12 @@
     <div class="modal-box">
       <h2 id="yoyakuTitle">予約を設定</h2>
       <p style="font-size:13px;color:#666;">時間を選択してください</p>
-      <select id="yoyakuModalTime" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <select id="yoyakuModalTimeH" style="flex:1;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+        <span style="font-size:14px;">時</span>
+        <select id="yoyakuModalTimeM" style="flex:1;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+        <span style="font-size:14px;">分</span>
+      </div>
       <p style="font-size:13px;color:#666;margin-top:8px;">備考</p>
       <select id="yoyakuModalNote" onchange="toggleNoteOther('yoyakuModalNote','yoyakuModalNoteOther')" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
       <input type="text" id="yoyakuModalNoteOther" placeholder="備考を入力" style="display:none;margin-top:8px;width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;">
@@ -1322,29 +1328,56 @@
     }
 
     function buildTimeSelects() {
-      const ids = ['addTime', 'yoyakuModalTime'];
-      ids.forEach(id => {
+      // 時セレクト（パス＋8〜18時）
+      const hourIds = ['addTimeH', 'yoyakuModalTimeH'];
+      hourIds.forEach(id => {
         const sel = document.getElementById(id);
+        if (!sel) return;
         sel.innerHTML = '';
         const passOpt = document.createElement('option');
         passOpt.value = '';
         passOpt.textContent = 'パス';
         sel.appendChild(passOpt);
         for (let h = 8; h <= 18; h++) {
-          [0, 15, 30, 45].forEach(m => {
-            if (h === 18 && m > 0) return;
-            const hh = String(h).padStart(2, '0');
-            const mm = String(m).padStart(2, '0');
-            const val = hh + ':' + mm;
-            const opt = document.createElement('option');
-            opt.value = val;
-            opt.textContent = val;
-            sel.appendChild(opt);
-          });
+          const opt = document.createElement('option');
+          opt.value = String(h).padStart(2, '0');
+          opt.textContent = String(h).padStart(2, '0');
+          sel.appendChild(opt);
+        }
+      });
+      // 分セレクト（00〜59の1分刻み）
+      const minIds = ['addTimeM', 'yoyakuModalTimeM'];
+      minIds.forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '';
+        for (let m = 0; m <= 59; m++) {
+          const opt = document.createElement('option');
+          opt.value = String(m).padStart(2, '0');
+          opt.textContent = String(m).padStart(2, '0');
+          sel.appendChild(opt);
         }
       });
     }
     buildTimeSelects();
+
+    // 時・分セレクトからHH:MM形式の文字列を取得する（パスの場合は空文字）
+    function getTimeFromSelects(hId, mId) {
+      const h = document.getElementById(hId)?.value;
+      const m = document.getElementById(mId)?.value;
+      if (!h) return '';
+      return h + ':' + (m || '00');
+    }
+
+    // 時・分セレクトに既存のHH:MM値をセットする
+    function setTimeToSelects(hId, mId, timeStr) {
+      if (!timeStr) return;
+      const parts = timeStr.split(':');
+      const hEl = document.getElementById(hId);
+      const mEl = document.getElementById(mId);
+      if (hEl && parts[0]) hEl.value = parts[0];
+      if (mEl && parts[1]) mEl.value = parts[1];
+    }
 
     const NOTE_OTHER_VALUE = '__other__';
 
@@ -2434,8 +2467,11 @@
       buildNoteSelects();
       document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
       const existingTime = cell.dataset.yoyakuTime || '';
-      const sel = document.getElementById('yoyakuModalTime');
-      sel.value = existingTime;
+      const parts = existingTime.split(':');
+      const selH = document.getElementById('yoyakuModalTimeH');
+      const selM = document.getElementById('yoyakuModalTimeM');
+      if (selH) selH.value = parts[0] || '';
+      if (selM) selM.value = parts[1] || '00';
       const noteSel = document.getElementById('yoyakuModalNote');
       const noteInput = document.getElementById('yoyakuModalNoteOther');
       const existingNote = cell.dataset.yoyakuNote || '';
@@ -2461,7 +2497,7 @@
     }
 
     function confirmYoyaku() {
-      const time = document.getElementById('yoyakuModalTime').value;
+      const time = getTimeFromSelects('yoyakuModalTimeH', 'yoyakuModalTimeM');
       const note = resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
       if (note === null) return;
       const room = yoyakuCell.dataset.room;
@@ -2507,7 +2543,7 @@
       const role = window.myRole || 'worker';
       if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
       const room = toHankaku(document.getElementById('addRoom').value.trim());
-      const time = document.getElementById('addTime').value;
+      const time = getTimeFromSelects('addTimeH', 'addTimeM');
       const note = resolveNoteValue('addNote', 'addNoteOther');
       if (note === null) return;
       if (!room) { alert('号室を入力してください'); return; }
