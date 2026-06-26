@@ -884,7 +884,8 @@
       <div id="tenkenSetsubiInfo" style="display:none;background:#f5f5f5;border-radius:6px;padding:10px;margin-bottom:16px;font-size:14px;color:#333;text-align:left;"></div>
       <div class="modal-buttons">
         <button onclick="finishTenken()" style="background:#1e88e5;color:white;font-size:16px;padding:10px 24px;">点検終了（サインへ）</button>
-        <button onclick="closeTenkenModal()" style="background:#eee;">戻る</button>
+        <button onclick="closeTenkenModal()" style="background:#eee;">表に戻る</button>
+        <button onclick="cancelTenken()" style="background:#fff0f0;color:#c00;">キャンセル</button>
       </div>
     </div>
   </div>
@@ -2062,7 +2063,7 @@
         }
         const isH = cell.dataset.hasshigo === '1' ||
           document.querySelector('td.room-number[data-room="' + room + '"]')?.dataset.hasshigo === '1';
-        if (isH) lines.push('🪜 避難はしご設置');
+        if (isH) lines.push('避難はしご設置');
         infoEl.innerHTML = lines.length > 0
           ? lines.map(l => '<div>' + l + '</div>').join('')
           : '';
@@ -2074,6 +2075,15 @@
     function closeTenkenModal() {
       document.getElementById('tenkenModal').classList.remove('active');
       tenkenCell = null;
+    }
+    function cancelTenken() {
+      if (!tenkenCell) return;
+      const cell = tenkenCell;
+      closeTenkenModal();
+      cell.dataset.state = 'mi';
+      cell.classList.remove('tenkenchuu');
+      updateCellDisplay(cell);
+      syncToCloud();
     }
     function finishTenken() {
       if (!tenkenCell) return;
