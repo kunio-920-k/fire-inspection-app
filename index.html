@@ -964,7 +964,6 @@
   <div id="menuOverlay" onclick="closeMenu()"></div>
   <div id="contextMenu">
     <div id="menuRoomTitle">号室</div>
-    <div class="menu-item menu-nyushitsu" onclick="menuSelect('nyushitsu')">入室済</div>
     <div class="menu-item menu-tenkenchuu" onclick="menuSelect('tenkenchuu')">点検中</div>
     <div class="menu-item menu-fuzai" onclick="menuSelect('fuzai')">不在</div>
     <div class="menu-item menu-furyo" onclick="menuSelect('furyo')">不良を記録</div>
@@ -1986,8 +1985,16 @@
       if (!activeCell) return;
       const cell = activeCell;
       closeMenu();
-      if (action === 'nyushitsu') {
-        openSign(cell);
+      if (action === 'tenkenchuu') {
+        cell.dataset.state = 'tenkenchuu';
+        cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'yoyaku', 'furyo');
+        cell.classList.add('tenkenchuu');
+        updateCellDisplay(cell);
+        syncToCloud();
+        if (window.updatePresence) window.updatePresence(cell.dataset.room);
+        applyScheduleDim();
+        openTenkenModal(cell);
+        return;
       } else if (action === 'fuzai') {
         cell.dataset.state = 'fuzai';
         cell.classList.remove('nyushitsu', 'kushitsu', 'yoyaku');
