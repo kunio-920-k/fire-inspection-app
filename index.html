@@ -116,6 +116,12 @@
     #contextMenu div.menu-fuzai { color: #999900; font-weight: bold; }
     #contextMenu div.menu-furyo { color: #cc0000; font-weight: bold; }
     #contextMenu div.menu-yoyaku { color: #cc6600; font-weight: bold; }
+    #contextMenu div.menu-tenkenchuu { color: #1565c0; font-weight: bold; }
+    td.cell.tenkenchuu { background-color: #1e88e5; color: white; font-size: 14px; font-weight: bold; animation: tenkenchuu-blink 1s ease-in-out infinite; }
+    @keyframes tenkenchuu-blink {
+      0%, 100% { background-color: #1e88e5; }
+      50% { background-color: #90caf9; }
+    }
     #contextMenu div.menu-setsubi { color: #336699; }
     #contextMenu div.menu-kushitsu { color: #666; }
     #contextMenu div.menu-reset { color: #888; }
@@ -870,6 +876,18 @@
     <button id="memberBtn" onclick="openMemberModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#fff8e1;">👥 メンバー管理</button>
   </div>
 
+  <!-- 点検終了モーダル -->
+  <div id="tenkenModal" class="modal">
+    <div class="modal-box" style="text-align:center;">
+      <p style="font-size:36px;font-weight:bold;color:#1e88e5;margin:16px 0;">点検中</p>
+      <p id="tenkenRoomLabel" style="font-size:18px;color:#555;margin-bottom:20px;"></p>
+      <div class="modal-buttons">
+        <button onclick="finishTenken()" style="background:#1e88e5;color:white;font-size:16px;padding:10px 24px;">点検終了（サインへ）</button>
+        <button onclick="closeTenkenModal()" style="background:#eee;">戻る</button>
+      </div>
+    </div>
+  </div>
+
   <!-- メンバー管理モーダル -->
   <div id="memberModal" class="modal">
     <div class="modal-box" style="max-width:480px;">
@@ -947,6 +965,7 @@
   <div id="contextMenu">
     <div id="menuRoomTitle">号室</div>
     <div class="menu-item menu-nyushitsu" onclick="menuSelect('nyushitsu')">入室済</div>
+    <div class="menu-item menu-tenkenchuu" onclick="menuSelect('tenkenchuu')">点検中</div>
     <div class="menu-item menu-fuzai" onclick="menuSelect('fuzai')">不在</div>
     <div class="menu-item menu-furyo" onclick="menuSelect('furyo')">不良を記録</div>
     <div class="menu-item menu-yoyaku" onclick="menuSelect('yoyaku')">予約を設定</div>
@@ -1845,8 +1864,16 @@
       touchMoved = false;
       pressTimer = setTimeout(() => {
         if (!touchMoved) {
-          if (type === 'state') openMenu(cell);
-          else openRoomMenu(cell);
+          if (type === 'state') {
+            // 点検中セルは専用モーダルを開く
+            if (cell.dataset.state === 'tenkenchuu') {
+              openTenkenModal(cell);
+            } else {
+              openMenu(cell);
+            }
+          } else {
+            openRoomMenu(cell);
+          }
         }
       }, 500);
     }
@@ -1975,6 +2002,11 @@
         openYoyaku(cell);
       } else if (action === 'setsubi') {
         openSetsubiView(cell);
+      } else if (action === 'tenkenchuu') {
+        cell.dataset.state = 'tenkenchuu';
+        cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'yoyaku', 'furyo');
+        cell.classList.add('tenkenchuu');
+        updateCellDisplay(cell);
       } else if (action === 'kushitsu') {
         cell.dataset.state = 'kushitsu';
         cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'yoyaku');
@@ -1991,7 +2023,7 @@
         
         cell.dataset.yoyakuTime = '';
         cell.dataset.yoyakuNote = '';
-        cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku');
+        cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku', 'tenkenchuu');
         updateCellDisplay(cell);
         removeYoyakuByRoom(cell.dataset.room);
         updateYoyakuRowState(cell.dataset.room, false);
@@ -1999,6 +2031,26 @@
       syncToCloud();
       if (window.updatePresence) window.updatePresence(cell.dataset.room);
       applyScheduleDim();
+    }
+
+    // ---- 点検中モーダル ----
+    let tenkenCell = null;
+    function openTenkenModal(cell) {
+      tenkenCell = cell;
+      document.getElementById('tenkenRoomLabel').textContent = cell.dataset.room + '号室';
+      document.getElementById('tenkenModal').classList.add('active');
+    }
+    function closeTenkenModal() {
+      document.getElementById('tenkenModal').classList.remove('active');
+      tenkenCell = null;
+    }
+    function finishTenken() {
+      if (!tenkenCell) return;
+      const cell = tenkenCell;
+      closeTenkenModal();
+      // 点検中クラスを外してサイン画面へ
+      cell.classList.remove('tenkenchuu');
+      openSign(cell);
     }
 
     function getSetsubiForRoom(room) {
@@ -2055,9 +2107,12 @@
       const hasFuryo = cell.dataset.furyo && cell.dataset.furyo.length > 0;
       const yoyakuTime = cell.dataset.yoyakuTime || cell.getAttribute('data-yoyaku-time') || '';
       // 予約系のクラスはここで一括管理する（呼び出し元での個別操作は不要）
-      cell.classList.remove('yoyaku', 'yoyaku-pass');
+      cell.classList.remove('yoyaku', 'yoyaku-pass', 'tenkenchuu');
       let html = '';
-      if (state === 'nyushitsu') {
+      if (state === 'tenkenchuu') {
+        cell.classList.add('tenkenchuu');
+        html += '点検中';
+      } else if (state === 'nyushitsu') {
         const sign = cell.dataset.sign || cell.getAttribute('data-sign');
         if (sign) {
           html += '<img class="sign-img" src="' + sign + '">';
