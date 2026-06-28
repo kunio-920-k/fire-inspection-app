@@ -1763,6 +1763,13 @@
 
       if (state.tableGenerated && state.tableFloorData && state.tableFloorData.length > 0) {
         renderTableFromState(state);
+        // 複製後の初回起動時は設定画面へ誘導
+        if (localStorage.getItem('mc_goto_setup') === '1') {
+          localStorage.removeItem('mc_goto_setup');
+          setTimeout(() => {
+            if (window.isJobOwner) backToSetupConfirmed();
+          }, 500);
+        }
       } else {
         buildNoteSelects();
       }
@@ -3244,6 +3251,12 @@
           notePatterns: state.notePatterns,
           schedule: [],
           yoyakuList: [],
+          // 物件名は引き継ぎ、日付・担当者はクリア
+          property: {
+            name: (state.property && state.property.name) || '',
+            date: '',
+            staff: ''
+          },
           // 部屋情報は引き継ぐが状態はリセット
           rooms: Object.fromEntries(
             Object.entries(state.rooms || {}).map(([room, rd]) => [room, { label: rd.label || '', hasshigo: rd.hasshigo || '0' }])
@@ -3259,8 +3272,9 @@
           window.saveInspectionToCloud(newState);
         }
         if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
+        localStorage.setItem('mc_goto_setup', '1');
         closeJobListModal();
-        alert('新しい現場を作成しました。画面を更新します。');
+        alert('新しい現場を作成しました。一括設定画面を開きます。');
         location.reload();
       });
     }
