@@ -3441,6 +3441,8 @@
           window.saveInspectionToCloud(newState);
         }
         if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
+        // 複製元を非表示（過去の物件）に移動
+        if (window.hideJob) window.hideJob(srcJobId);
         localStorage.setItem('mc_goto_setup', '1');
         closeJobListModal();
         alert('新しい現場を作成しました。一括設定画面を開きます。');
@@ -3518,6 +3520,8 @@
       if (!ok) return;
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
+          // 現場を過去の物件に移動
+          if (window.hideJob && window.currentJobId) window.hideJob(window.currentJobId);
           // 管理者側はdismissedフラグをすぐリセット（自分はログアウトしない）
           setTimeout(() => {
             if (window.clearDismissed) window.clearDismissed();
