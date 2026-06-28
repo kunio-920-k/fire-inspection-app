@@ -601,6 +601,19 @@
       }).catch((e) => dlog('メモ保存エラー / ' + e.message));
     };
 
+    // ---- 作業終了・子機リセット ----
+    window.dismissAllWorkers = function() {
+      if (!window.currentJobId) return Promise.resolve();
+      const ref = doc(db, 'inspections', window.currentJobId);
+      return setDoc(ref, { dismissed: true, dismissedAt: serverTimestamp() }, { merge: true });
+    };
+
+    window.clearDismissed = function() {
+      if (!window.currentJobId) return;
+      const ref = doc(db, 'inspections', window.currentJobId);
+      setDoc(ref, { dismissed: false }, { merge: true });
+    };
+
     window.startMemoWatch = function() {
       if (!window.currentUser || !window.currentJobId) return;
       const ref = collection(db, 'inspections', window.currentJobId, 'memos');
@@ -757,12 +770,21 @@
           onSnapshot(jobRef, (snap) => {
             // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
             if (Date.now() - window._lastLocalSaveAt < 2000) return;
-            if (!snap.exists() || !snap.data() || !snap.data().data) return;
+            if (!snap.exists() || !snap.data()) return;
+
+            // 作業終了フラグを検知 → 管理者以外はリセットしてログアウト
+            if (snap.data().dismissed === true && window.myRole !== 'admin') {
+              localStorage.removeItem('mc_job_id');
+              alert('本日の作業が終了しました。お疲れさまでした。');
+              location.reload();
+              return;
+            }
+
+            if (!snap.data().data) return;
             try {
               const state = JSON.parse(snap.data().data);
               if (state && window.restoreInspectionState) {
                 window.restoreInspectionState(state);
-                // テーブル復元後にサイン画像も必ず再反映する
                 applyCloudSigns();
               }
             } catch (e) {
@@ -1061,6 +1083,7 @@
     <button onclick="exportFuryoText()">📋 不良一覧テキストを表示</button>
     <button onclick="printFuryo()">🖨️ 不良一覧を印刷</button>
     <button onclick="deleteAllSigns()" style="background:#fff0f0;color:#cc0000;">🗑️ サイン画像を削除（印刷完了後）</button>
+    <button id="endWorkBtn" onclick="endWorkSession()" style="background:#c62828;color:white;font-weight:bold;">⏹ 本日の作業を終了する</button>
     <br>
     <textarea id="textOutput" readonly></textarea>
   </div>
@@ -1256,6 +1279,8 @@
       if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const endWorkBtn = document.getElementById('endWorkBtn');
+      if (endWorkBtn) endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
 
       // 管理者・サブ管理者：備考パターン編集
       const notePatternManage = document.getElementById('notePatternManage');
@@ -3069,6 +3094,27 @@
 
     function changeMemberRole(uid, newRole) {
       if (window.updateMemberRole) window.updateMemberRole(uid, newRole);
+    }
+
+    // 本日の作業終了（管理者のみ）
+    function endWorkSession() {
+      if (!window.isJobOwner) { alert('この操作は管理者のみ行えます。'); return; }
+      const ok = confirm(
+        '本日の作業を終了します。\n\n' +
+        '・管理者以外の全端末がログアウトされます\n' +
+        '・データはクラウドに保存されたまま残ります\n\n' +
+        'この操作は取り消せません。よろしいですか？'
+      );
+      if (!ok) return;
+      if (window.dismissAllWorkers) {
+        window.dismissAllWorkers().then(() => {
+          // 管理者側はdismissedフラグをすぐリセット（自分はログアウトしない）
+          setTimeout(() => {
+            if (window.clearDismissed) window.clearDismissed();
+          }, 3000);
+          alert('作業終了を通知しました。各端末がログアウトされます。');
+        });
+      }
     }
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
