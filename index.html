@@ -690,6 +690,32 @@
       }).catch(() => null);
     };
 
+    // 現場一覧から非表示にする（データ本体は残す）
+    window.removeJobFromList = function(jobId) {
+      if (!window.currentUser || !jobId) return Promise.resolve();
+      const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
+      return deleteDoc(ref);
+    };
+
+    // 現場データを完全削除する（サブコレクション含む）
+    window.deleteJobCompletely = function(jobId) {
+      if (!jobId) return Promise.resolve();
+      const subCols = ['signs', 'memos', 'logs', 'instructions', 'presence'];
+      const deleteSubCol = (name) => {
+        const ref = collection(db, 'inspections', jobId, name);
+        return getDocs(ref).then((snap) => {
+          return Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+        });
+      };
+      return Promise.all(subCols.map(deleteSubCol)).then(() => {
+        return deleteDoc(doc(db, 'inspections', jobId));
+      }).then(() => {
+        if (window.currentUser) {
+          return deleteDoc(doc(db, 'users', window.currentUser.uid, 'jobs', jobId));
+        }
+      });
+    };
+
     window.dismissAllWorkers = function() {
       if (!window.currentJobId) return Promise.resolve();
       const ref = doc(db, 'inspections', window.currentJobId);
@@ -1110,10 +1136,17 @@
 
   <!-- 現場一覧モーダル -->
   <div id="jobListModal" class="modal">
-    <div class="modal-box" style="max-width:520px;">
+    <div class="modal-box" style="max-width:560px;">
       <h2>📋 現場一覧</h2>
-      <div id="jobListContainer" style="max-height:400px;overflow-y:auto;"></div>
-      <div class="modal-buttons" style="margin-top:16px;">
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+        <input type="text" id="jobListSearch" placeholder="物件名で検索..." oninput="renderJobList()" style="flex:1;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;min-width:120px;">
+        <select id="jobListSort" onchange="renderJobList()" style="font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
+          <option value="desc">新しい順</option>
+          <option value="asc">古い順</option>
+        </select>
+      </div>
+      <div id="jobListContainer" style="max-height:420px;overflow-y:auto;"></div>
+      <div class="modal-buttons" style="margin-top:12px;">
         <button onclick="closeJobListModal()" style="background:#eee;">閉じる</button>
       </div>
     </div>
@@ -3191,32 +3224,70 @@
     }
 
     // ---- 現場一覧 ----
+    let _jobListCache = [];
+
     function openJobListModal() {
-      const container = document.getElementById('jobListContainer');
-      container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">読み込み中...</p>';
+      document.getElementById('jobListSearch').value = '';
+      document.getElementById('jobListSort').value = 'desc';
+      document.getElementById('jobListContainer').innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">読み込み中...</p>';
       document.getElementById('jobListModal').classList.add('active');
       if (!window.loadJobList) return;
       window.loadJobList().then((jobs) => {
-        if (jobs.length === 0) {
-          container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">現場データがありません</p>';
-          return;
-        }
-        container.innerHTML = jobs.map(j => {
-          const isCurrent = j.jobId === window.currentJobId;
-          const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
-          return `<div style="border:1px solid ${isCurrent ? '#336699' : '#ddd'};border-radius:6px;padding:10px;margin-bottom:10px;background:${isCurrent ? '#f0f7ff' : 'white'};">
-            <div style="font-weight:bold;font-size:14px;margin-bottom:4px;">${j.name}${isCurrent ? '　<span style="color:#336699;font-size:12px;">（現在の現場）</span>' : ''}</div>
-            <div style="font-size:12px;color:#888;margin-bottom:8px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              ${!isCurrent ? `<button onclick="switchJob('${j.jobId}')" style="font-size:13px;padding:5px 12px;background:#336699;color:white;border:none;border-radius:4px;cursor:pointer;">この現場に切り替え</button>` : ''}
-              <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:13px;padding:5px 12px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">この現場をもとに新規作成</button>
-            </div>
-          </div>`;
-        }).join('');
+        _jobListCache = jobs;
+        renderJobList();
       });
     }
+
+    function renderJobList() {
+      const container = document.getElementById('jobListContainer');
+      const query = (document.getElementById('jobListSearch').value || '').trim().toLowerCase();
+      const sort = document.getElementById('jobListSort').value;
+      let jobs = _jobListCache.filter(j => !query || (j.name || '').toLowerCase().includes(query));
+      if (sort === 'asc') jobs = [...jobs].reverse();
+      if (jobs.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">該当する現場がありません</p>';
+        return;
+      }
+      container.innerHTML = jobs.map(j => {
+        const isCurrent = j.jobId === window.currentJobId;
+        const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+        return `<div style="border:1px solid ${isCurrent ? '#336699' : '#ddd'};border-radius:6px;padding:8px 10px;margin-bottom:8px;background:${isCurrent ? '#f0f7ff' : 'white'};">
+          <div style="font-weight:bold;font-size:14px;margin-bottom:2px;">${j.name}${isCurrent ? '　<span style="color:#336699;font-size:11px;">（現在）</span>' : ''}</div>
+          <div style="font-size:11px;color:#999;margin-bottom:6px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            ${!isCurrent ? `<button onclick="switchJob('${j.jobId}')" style="font-size:12px;padding:4px 10px;background:#336699;color:white;border:none;border-radius:4px;cursor:pointer;">切り替え</button>` : ''}
+            <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">新規作成のもとに</button>
+            ${!isCurrent ? `<button onclick="removeJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff8e1;color:#f57f17;border:1px solid #ffe082;border-radius:4px;cursor:pointer;">一覧から削除</button>` : ''}
+            ${!isCurrent ? `<button onclick="deleteJobFully('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;cursor:pointer;">完全削除</button>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
     function closeJobListModal() {
       document.getElementById('jobListModal').classList.remove('active');
+    }
+
+    // 一覧から非表示にする
+    function removeJob(jobId, name) {
+      if (!confirm('「' + name + '」を一覧から削除します。\n点検データ本体はクラウドに残ります。\nよろしいですか？')) return;
+      if (!window.removeJobFromList) return;
+      window.removeJobFromList(jobId).then(() => {
+        _jobListCache = _jobListCache.filter(j => j.jobId !== jobId);
+        renderJobList();
+      });
+    }
+
+    // データごと完全削除する
+    function deleteJobFully(jobId, name) {
+      if (!confirm('「' + name + '」のデータを完全に削除します。\nこの操作は取り消せません。\nよろしいですか？')) return;
+      if (!confirm('本当に削除しますか？\n点検記録・ログ・サイン画像など全てのデータが消えます。')) return;
+      if (!window.deleteJobCompletely) return;
+      window.deleteJobCompletely(jobId).then(() => {
+        _jobListCache = _jobListCache.filter(j => j.jobId !== jobId);
+        renderJobList();
+        alert('削除しました。');
+      });
     }
 
     // 現場を切り替える
