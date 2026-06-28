@@ -643,6 +643,53 @@
     };
 
     // ---- 作業終了・子機リセット ----
+    // ---- 現場一覧管理 ----
+    // 保存先: users/{uid}/jobs/{jobId}
+
+    // 現場の概要情報を保存・更新する（物件名・作業日が設定された時に呼ぶ）
+    window.saveJobSummary = function(jobId, name, date) {
+      if (!window.currentUser || !jobId) return;
+      const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
+      setDoc(ref, {
+        jobId: jobId,
+        name: name || '（物件名未設定）',
+        date: date || '',
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch((e) => dlog('現場概要保存エラー / ' + e.message));
+    };
+
+    // 現場一覧を取得する
+    window.loadJobList = function() {
+      if (!window.currentUser) return Promise.resolve([]);
+      const ref = collection(db, 'users', window.currentUser.uid, 'jobs');
+      return getDocs(ref).then((snap) => {
+        const jobs = [];
+        snap.forEach(d => jobs.push(d.data()));
+        jobs.sort((a, b) => {
+          const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+          const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+          return tb - ta; // 新しい順
+        });
+        return jobs;
+      }).catch((e) => {
+        dlog('現場一覧取得エラー / ' + e.message);
+        return [];
+      });
+    };
+
+    // 現場データを取得する（複製用）
+    window.loadJobData = function(jobId) {
+      if (!jobId) return Promise.resolve(null);
+      const ref = doc(db, 'inspections', jobId);
+      return getDoc(ref).then((snap) => {
+        if (!snap.exists()) return null;
+        const d = snap.data();
+        if (!d || !d.data) return null;
+        try { return JSON.parse(d.data); }
+        catch (e) { return null; }
+      }).catch(() => null);
+    };
+
     window.dismissAllWorkers = function() {
       if (!window.currentJobId) return Promise.resolve();
       const ref = doc(db, 'inspections', window.currentJobId);
@@ -1001,6 +1048,7 @@
     <button id="qrInviteBtn" onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
     <button id="scheduleBtn" onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
     <button id="memberBtn" onclick="openMemberModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#fff8e1;">👥 メンバー管理</button>
+    <button id="jobListBtn" onclick="openJobListModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#e8f5e9;">📋 現場一覧</button>
   </div>
 
   <!-- 点検終了モーダル -->
@@ -1056,6 +1104,17 @@
       <div class="modal-buttons">
         <button onclick="closeReplyModal()" style="background:#eee;">閉じる</button>
         <button onclick="openAssignModalFromReply()" id="reassignBtn" style="display:none;background:#336699;color:white;">別の担当者を指名</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 現場一覧モーダル -->
+  <div id="jobListModal" class="modal">
+    <div class="modal-box" style="max-width:520px;">
+      <h2>📋 現場一覧</h2>
+      <div id="jobListContainer" style="max-height:400px;overflow-y:auto;"></div>
+      <div class="modal-buttons" style="margin-top:16px;">
+        <button onclick="closeJobListModal()" style="background:#eee;">閉じる</button>
       </div>
     </div>
   </div>
@@ -1320,6 +1379,8 @@
       if (scheduleBtn) scheduleBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const memberBtn = document.getElementById('memberBtn');
       if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const jobListBtn = document.getElementById('jobListBtn');
+      if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
@@ -2727,6 +2788,9 @@
       document.getElementById('propDisplayName').textContent = prop.name;
       document.getElementById('propDisplayDate').textContent = prop.date;
       document.getElementById('propDisplayStaff').textContent = prop.staff;
+      if (window.saveJobSummary && window.currentJobId) {
+        window.saveJobSummary(window.currentJobId, prop.name, prop.date);
+      }
     }
 
     function getCounts() {
@@ -3117,6 +3181,88 @@
     };
     function closeReplyModal() {
       document.getElementById('replyModal').classList.remove('active');
+    }
+
+    // ---- 現場一覧 ----
+    function openJobListModal() {
+      const container = document.getElementById('jobListContainer');
+      container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">読み込み中...</p>';
+      document.getElementById('jobListModal').classList.add('active');
+      if (!window.loadJobList) return;
+      window.loadJobList().then((jobs) => {
+        if (jobs.length === 0) {
+          container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">現場データがありません</p>';
+          return;
+        }
+        container.innerHTML = jobs.map(j => {
+          const isCurrent = j.jobId === window.currentJobId;
+          const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+          return `<div style="border:1px solid ${isCurrent ? '#336699' : '#ddd'};border-radius:6px;padding:10px;margin-bottom:10px;background:${isCurrent ? '#f0f7ff' : 'white'};">
+            <div style="font-weight:bold;font-size:14px;margin-bottom:4px;">${j.name}${isCurrent ? '　<span style="color:#336699;font-size:12px;">（現在の現場）</span>' : ''}</div>
+            <div style="font-size:12px;color:#888;margin-bottom:8px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              ${!isCurrent ? `<button onclick="switchJob('${j.jobId}')" style="font-size:13px;padding:5px 12px;background:#336699;color:white;border:none;border-radius:4px;cursor:pointer;">この現場に切り替え</button>` : ''}
+              <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:13px;padding:5px 12px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">この現場をもとに新規作成</button>
+            </div>
+          </div>`;
+        }).join('');
+      });
+    }
+    function closeJobListModal() {
+      document.getElementById('jobListModal').classList.remove('active');
+    }
+
+    // 現場を切り替える
+    function switchJob(jobId) {
+      if (!jobId || jobId === window.currentJobId) return;
+      const ok = confirm('現場を切り替えます。\n現在の現場はクラウドに保存済みです。\nよろしいですか？');
+      if (!ok) return;
+      localStorage.setItem('mc_job_id', jobId);
+      location.reload();
+    }
+
+    // 前回の現場をもとに新規作成（設備情報を引き継ぎ、状態をリセット）
+    function cloneJob(srcJobId, srcName) {
+      const ok = confirm('「' + srcName + '」をもとに新しい現場を作成します。\n設備情報・備考パターン・住戸構成を引き継ぎ、全室を「未」にリセットします。\nよろしいですか？');
+      if (!ok) return;
+      if (!window.loadJobData) return;
+      window.loadJobData(srcJobId).then((state) => {
+        if (!state) { alert('元の現場データが読み込めませんでした。'); return; }
+        // 新しいjobIdを発行
+        const newJobId = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+        // 引き継ぐデータを組み立てる（状態・サイン・予約・ログはリセット）
+        const newState = {
+          setup: state.setup,
+          tableFloorData: state.tableFloorData,
+          tableGenerated: state.tableGenerated,
+          tableHasshigoInput: state.tableHasshigoInput,
+          tableSuffixes: state.tableSuffixes,
+          setsubiDefaults: state.setsubiDefaults,
+          setsubiCustom: state.setsubiCustom,
+          notePatterns: state.notePatterns,
+          schedule: [],
+          yoyakuList: [],
+          // 部屋情報は引き継ぐが状態はリセット
+          rooms: Object.fromEntries(
+            Object.entries(state.rooms || {}).map(([room, rd]) => [room, { label: rd.label || '', hasshigo: rd.hasshigo || '0' }])
+          ),
+          cells: Object.fromEntries(
+            Object.entries(state.cells || {}).map(([room]) => [room, { state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '' }])
+          )
+        };
+        localStorage.setItem('mc_job_id', newJobId);
+        window.currentJobId = newJobId;
+        // Firestoreに保存
+        if (window.saveInspectionToCloud) {
+          window.saveInspectionToCloud(newState);
+        }
+        if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
+        closeJobListModal();
+        alert('新しい現場を作成しました。画面を更新します。');
+        location.reload();
+      });
     }
 
     // ---- メンバー管理 ----
