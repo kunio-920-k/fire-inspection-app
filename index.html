@@ -650,12 +650,16 @@
     window.saveJobSummary = function(jobId, name, date) {
       if (!window.currentUser || !jobId) return;
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
-      setDoc(ref, {
-        jobId: jobId,
-        name: name || '（物件名未設定）',
-        date: date || '',
-        updatedAt: serverTimestamp()
-      }, { merge: true }).catch((e) => dlog('現場概要保存エラー / ' + e.message));
+      getDoc(ref).then((snap) => {
+        const existing = snap.exists() ? snap.data() : {};
+        setDoc(ref, {
+          jobId: jobId,
+          name: name || '（物件名未設定）',
+          date: date || '',
+          hidden: existing.hidden || false,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }).catch((e) => dlog('現場概要保存エラー / ' + e.message));
     };
 
     // 現場一覧を取得する
@@ -690,11 +694,18 @@
       }).catch(() => null);
     };
 
-    // 現場一覧から非表示にする（データ本体は残す）
-    window.removeJobFromList = function(jobId) {
+    // 現場を非表示にする（hidden:trueに更新するだけ、データは消さない）
+    window.hideJob = function(jobId) {
       if (!window.currentUser || !jobId) return Promise.resolve();
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
-      return deleteDoc(ref);
+      return setDoc(ref, { hidden: true }, { merge: true });
+    };
+
+    // 非表示の現場を復活させる
+    window.unhideJob = function(jobId) {
+      if (!window.currentUser || !jobId) return Promise.resolve();
+      const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
+      return setDoc(ref, { hidden: false }, { merge: true });
     };
 
     // 現場データを完全削除する（サブコレクション含む）
@@ -1138,14 +1149,28 @@
   <div id="jobListModal" class="modal">
     <div class="modal-box" style="max-width:560px;">
       <h2>📋 現場一覧</h2>
-      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-        <input type="text" id="jobListSearch" placeholder="物件名で検索..." oninput="renderJobList()" style="flex:1;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;min-width:120px;">
+
+      <!-- 進行中の物件 -->
+      <div style="font-weight:bold;font-size:13px;color:#555;margin-bottom:6px;">進行中の物件</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <input type="text" id="jobListSearch" placeholder="物件名で検索..." oninput="renderJobList()" style="flex:1;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
         <select id="jobListSort" onchange="renderJobList()" style="font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
           <option value="desc">新しい順</option>
           <option value="asc">古い順</option>
         </select>
       </div>
-      <div id="jobListContainer" style="max-height:420px;overflow-y:auto;"></div>
+      <div id="jobListContainer" style="max-height:280px;overflow-y:auto;margin-bottom:12px;"></div>
+
+      <!-- 過去の物件 -->
+      <div style="border-top:1px solid #ddd;padding-top:10px;">
+        <button onclick="togglePastJobs()" style="font-size:13px;padding:6px 14px;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;width:100%;">🗂 過去の物件を検索</button>
+        <div id="pastJobArea" style="display:none;margin-top:8px;">
+          <input type="text" id="pastJobSearch" placeholder="物件名で検索..." oninput="renderPastJobNames()" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px;">
+          <div id="pastJobNames" style="max-height:150px;overflow-y:auto;margin-bottom:8px;"></div>
+          <div id="pastJobDetail" style="max-height:200px;overflow-y:auto;"></div>
+        </div>
+      </div>
+
       <div class="modal-buttons" style="margin-top:12px;">
         <button onclick="closeJobListModal()" style="background:#eee;">閉じる</button>
       </div>
@@ -3225,10 +3250,15 @@
 
     // ---- 現場一覧 ----
     let _jobListCache = [];
+    let _pastJobsVisible = false;
 
     function openJobListModal() {
       document.getElementById('jobListSearch').value = '';
       document.getElementById('jobListSort').value = 'desc';
+      document.getElementById('pastJobArea').style.display = 'none';
+      document.getElementById('pastJobNames').innerHTML = '';
+      document.getElementById('pastJobDetail').innerHTML = '';
+      _pastJobsVisible = false;
       document.getElementById('jobListContainer').innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">読み込み中...</p>';
       document.getElementById('jobListModal').classList.add('active');
       if (!window.loadJobList) return;
@@ -3242,23 +3272,23 @@
       const container = document.getElementById('jobListContainer');
       const query = (document.getElementById('jobListSearch').value || '').trim().toLowerCase();
       const sort = document.getElementById('jobListSort').value;
-      let jobs = _jobListCache.filter(j => !query || (j.name || '').toLowerCase().includes(query));
+      let jobs = _jobListCache.filter(j => !j.hidden && (!query || (j.name || '').toLowerCase().includes(query)));
       if (sort === 'asc') jobs = [...jobs].reverse();
       if (jobs.length === 0) {
-        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">該当する現場がありません</p>';
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">進行中の物件がありません</p>';
         return;
       }
       container.innerHTML = jobs.map(j => {
         const isCurrent = j.jobId === window.currentJobId;
         const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
-        return `<div style="border:1px solid ${isCurrent ? '#336699' : '#ddd'};border-radius:6px;padding:8px 10px;margin-bottom:8px;background:${isCurrent ? '#f0f7ff' : 'white'};">
+        return `<div style="border:1px solid ${isCurrent ? '#336699' : '#ddd'};border-radius:6px;padding:8px 10px;margin-bottom:6px;background:${isCurrent ? '#f0f7ff' : 'white'};">
           <div style="font-weight:bold;font-size:14px;margin-bottom:2px;">${j.name}${isCurrent ? '　<span style="color:#336699;font-size:11px;">（現在）</span>' : ''}</div>
           <div style="font-size:11px;color:#999;margin-bottom:6px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
             ${!isCurrent ? `<button onclick="switchJob('${j.jobId}')" style="font-size:12px;padding:4px 10px;background:#336699;color:white;border:none;border-radius:4px;cursor:pointer;">切り替え</button>` : ''}
-            <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">新規作成のもとに</button>
-            ${!isCurrent ? `<button onclick="removeJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff8e1;color:#f57f17;border:1px solid #ffe082;border-radius:4px;cursor:pointer;">一覧から削除</button>` : ''}
-            ${!isCurrent ? `<button onclick="deleteJobFully('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;cursor:pointer;">完全削除</button>` : ''}
+            <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">このデータをもとに新規作成</button>
+            ${!isCurrent ? `<button onclick="hideJobItem('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff8e1;color:#f57f17;border:1px solid #ffe082;border-radius:4px;cursor:pointer;">非表示</button>` : ''}
+            ${!isCurrent ? `<button onclick="deleteJobFully('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;cursor:pointer;">この日のデータを完全削除</button>` : ''}
           </div>
         </div>`;
       }).join('');
@@ -3268,17 +3298,17 @@
       document.getElementById('jobListModal').classList.remove('active');
     }
 
-    // 一覧から非表示にする
-    function removeJob(jobId, name) {
-      if (!confirm('「' + name + '」を一覧から削除します。\n点検データ本体はクラウドに残ります。\nよろしいですか？')) return;
-      if (!window.removeJobFromList) return;
-      window.removeJobFromList(jobId).then(() => {
-        _jobListCache = _jobListCache.filter(j => j.jobId !== jobId);
+    // 非表示にする
+    function hideJobItem(jobId, name) {
+      if (!confirm('「' + name + '」を非表示にします。\n「過去の物件を検索」から再表示できます。\nよろしいですか？')) return;
+      if (!window.hideJob) return;
+      window.hideJob(jobId).then(() => {
+        _jobListCache = _jobListCache.map(j => j.jobId === jobId ? { ...j, hidden: true } : j);
         renderJobList();
       });
     }
 
-    // データごと完全削除する
+    // この日のデータを完全削除する
     function deleteJobFully(jobId, name) {
       if (!confirm('「' + name + '」のデータを完全に削除します。\nこの操作は取り消せません。\nよろしいですか？')) return;
       if (!confirm('本当に削除しますか？\n点検記録・ログ・サイン画像など全てのデータが消えます。')) return;
@@ -3287,6 +3317,74 @@
         _jobListCache = _jobListCache.filter(j => j.jobId !== jobId);
         renderJobList();
         alert('削除しました。');
+      });
+    }
+
+    // 過去の物件エリアの表示切り替え
+    function togglePastJobs() {
+      _pastJobsVisible = !_pastJobsVisible;
+      document.getElementById('pastJobArea').style.display = _pastJobsVisible ? 'block' : 'none';
+      if (_pastJobsVisible) renderPastJobNames();
+    }
+
+    // 過去の物件名一覧（非表示のものをユニークな物件名でまとめる）
+    function renderPastJobNames() {
+      const query = (document.getElementById('pastJobSearch').value || '').trim().toLowerCase();
+      const hidden = _jobListCache.filter(j => j.hidden && (!query || (j.name || '').toLowerCase().includes(query)));
+      // 物件名でグループ化
+      const nameMap = {};
+      hidden.forEach(j => {
+        const name = j.name || '（名称未設定）';
+        if (!nameMap[name]) nameMap[name] = [];
+        nameMap[name].push(j);
+      });
+      const names = Object.keys(nameMap);
+      const container = document.getElementById('pastJobNames');
+      document.getElementById('pastJobDetail').innerHTML = '';
+      if (names.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;">非表示の物件がありません</p>';
+        return;
+      }
+      container.innerHTML = names.map(name =>
+        `<div onclick="showPastJobDetail('${name.replace(/'/g,'\\\'')}')" style="padding:8px 10px;border:1px solid #ddd;border-radius:4px;margin-bottom:4px;cursor:pointer;font-size:13px;background:white;"
+          onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+          ${name}（${nameMap[name].length}件）
+        </div>`
+      ).join('');
+    }
+
+    // 選択した物件名の過去データ一覧を表示
+    function showPastJobDetail(name) {
+      const jobs = _jobListCache.filter(j => j.hidden && j.name === name);
+      jobs.sort((a, b) => {
+        const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+        const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+        return tb - ta;
+      });
+      const container = document.getElementById('pastJobDetail');
+      container.innerHTML = `<div style="font-weight:bold;font-size:13px;margin-bottom:6px;color:#333;">「${name}」の過去データ</div>` +
+        jobs.map(j => {
+          const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+          return `<div style="border:1px solid #ddd;border-radius:6px;padding:8px 10px;margin-bottom:6px;background:#fafafa;">
+            <div style="font-size:12px;color:#666;margin-bottom:6px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button onclick="cloneJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;cursor:pointer;">このデータをもとに新規作成</button>
+              <button onclick="restoreJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#e3f2fd;color:#1565c0;border:1px solid #90caf9;border-radius:4px;cursor:pointer;">進行中に戻す</button>
+              <button onclick="deleteJobFully('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')" style="font-size:12px;padding:4px 10px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;cursor:pointer;">この日のデータを完全削除</button>
+            </div>
+          </div>`;
+        }).join('');
+    }
+
+    // 非表示から進行中に戻す
+    function restoreJob(jobId, name) {
+      if (!window.unhideJob) return;
+      window.unhideJob(jobId).then(() => {
+        _jobListCache = _jobListCache.map(j => j.jobId === jobId ? { ...j, hidden: false } : j);
+        renderJobList();
+        renderPastJobNames();
+        document.getElementById('pastJobDetail').innerHTML = '';
+        alert('「' + name + '」を進行中に戻しました。');
       });
     }
 
