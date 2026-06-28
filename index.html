@@ -2511,8 +2511,6 @@
     }
 
     function openFuryo(cell) {
-      const role = window.myRole || 'worker';
-      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
       furyoCell = cell;
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
