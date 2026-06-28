@@ -826,14 +826,32 @@
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email;
 
-        // 現場IDがまだ無ければ（初めて使う親機、または現場未開始）新規発行する
+        // jobIdが無い場合（初回・子機として参加する前）は選択画面を表示
         if (!window.currentJobId) {
-          window.currentJobId = (window.crypto && window.crypto.randomUUID)
-            ? window.crypto.randomUUID()
-            : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
-          localStorage.setItem('mc_job_id', window.currentJobId);
-          dlog('現場IDを新規発行 / job=' + window.currentJobId);
-          window.setJobOwnerIfNew(window.currentJobId);
+          // 子機参加コード（?join=）がある場合はそちらを優先
+          const urlParams = new URLSearchParams(location.search);
+          const joinId = urlParams.get('join');
+          if (joinId) {
+            window.currentJobId = joinId;
+            localStorage.setItem('mc_job_id', joinId);
+            dlog('子機参加 / job=' + joinId);
+          } else {
+            // 選択画面を表示（過去データがあるか確認）
+            if (window.loadJobList) {
+              window.loadJobList().then((jobs) => {
+                const hasExisting = jobs.length > 0;
+                const existBtn = document.getElementById('startExistingBtn');
+                const note = document.getElementById('noExistingNote');
+                if (existBtn) existBtn.disabled = !hasExisting;
+                if (existBtn) existBtn.style.opacity = hasExisting ? '1' : '0.5';
+                if (existBtn) existBtn.style.cursor = hasExisting ? 'pointer' : 'not-allowed';
+                if (note) note.style.display = hasExisting ? 'none' : 'block';
+                window._allJobsCache = jobs;
+              });
+            }
+            document.getElementById('startScreen').style.display = 'block';
+            return;
+          }
         }
 
         // このセッションでのオーナー確認（1回だけ）。終わったらpresence登録→画面更新
@@ -1013,6 +1031,42 @@
       </button>
       <div class="login-loading" id="loginLoading"></div>
       <div class="login-error" id="loginError"></div>
+    </div>
+  </div>
+
+  <!-- ログイン後の新規/既存選択画面 -->
+  <div id="startScreen" style="display:none;position:fixed;inset:0;background:#f4f6f8;z-index:100;overflow-y:auto;">
+    <div style="max-width:420px;margin:0 auto;padding:40px 24px;">
+      <div class="mc-logo-v" style="margin-bottom:32px;">
+        <span class="mc-main" style="font-size:28px;">Man<span class="mc-accent">CHE</span>Star</span>
+        <span class="mc-sub">FIRE SAFETY <span class="mc-accent">CHECK</span></span>
+      </div>
+      <p style="text-align:center;font-size:14px;color:#666;margin-bottom:32px;">ようこそ。本日の点検を始めましょう。</p>
+      <button onclick="startNewProperty()" style="display:block;width:100%;padding:20px;margin-bottom:16px;background:#2d6a4f;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        🆕 新規物件の登録設定
+        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">初めての物件・設備情報を最初から入力する</div>
+      </button>
+      <button id="startExistingBtn" onclick="startExistingProperty()" style="display:block;width:100%;padding:20px;background:#336699;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        📋 既存物件から登録開始
+        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">過去の設備情報を引き継いで開始する</div>
+      </button>
+      <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#aaa;margin-top:8px;">（過去データがありません）</p>
+      <div style="margin-top:32px;text-align:center;font-size:12px;color:#aaa;">
+        <a onclick="confirmLogout()" style="color:#aaa;cursor:pointer;text-decoration:underline;">ログアウト</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 既存物件選択モーダル -->
+  <div id="existingPropertyModal" class="modal">
+    <div class="modal-box" style="max-width:480px;">
+      <h2>📋 既存物件から選択</h2>
+      <input type="text" id="existingSearch" placeholder="物件名で検索..." oninput="renderExistingNames()" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">
+      <div id="existingNameList" style="max-height:200px;overflow-y:auto;margin-bottom:10px;"></div>
+      <div id="existingDateList" style="max-height:200px;overflow-y:auto;"></div>
+      <div class="modal-buttons" style="margin-top:12px;">
+        <button onclick="closeExistingModal()" style="background:#eee;">キャンセル</button>
+      </div>
     </div>
   </div>
 
@@ -1504,6 +1558,132 @@
     }
 
     // 新しい現場を始める（現在の現場とは別の、新しいデータとして開始する）
+    // ---- 開始選択画面 ----
+
+    // 新規物件の登録設定
+    function startNewProperty() {
+      document.getElementById('startScreen').style.display = 'none';
+      // 新しいjobIdを発行してそのまま設定画面へ
+      window.currentJobId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+      localStorage.setItem('mc_job_id', window.currentJobId);
+      if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(window.currentJobId);
+      window.ownerCheckDone = true;
+      window.isJobOwner = true;
+      window.myRole = 'admin';
+      if (window.registerPresence) window.registerPresence();
+      if (window.startPresenceWatch) window.startPresenceWatch();
+      if (window.startMemoWatch) window.startMemoWatch();
+      if (window.startInstructionWatch) window.startInstructionWatch();
+      if (window.applyOwnerUI) window.applyOwnerUI();
+      buildNoteSelects();
+      buildTimeSelects();
+      document.getElementById('setup').style.display = 'block';
+    }
+
+    // 既存物件から登録開始
+    function startExistingProperty() {
+      const existBtn = document.getElementById('startExistingBtn');
+      if (existBtn && existBtn.disabled) return;
+      renderExistingNames();
+      document.getElementById('existingPropertyModal').classList.add('active');
+    }
+    function closeExistingModal() {
+      document.getElementById('existingPropertyModal').classList.remove('active');
+      document.getElementById('existingDateList').innerHTML = '';
+    }
+
+    // 物件名の一覧を表示（古い順）
+    function renderExistingNames() {
+      const query = (document.getElementById('existingSearch').value || '').trim().toLowerCase();
+      const jobs = (window._allJobsCache || []);
+      // 古い順にして物件名でグループ化
+      const sorted = [...jobs].reverse();
+      const nameMap = {};
+      sorted.forEach(j => {
+        const name = j.name || '（名称未設定）';
+        if (!nameMap[name]) nameMap[name] = [];
+        nameMap[name].push(j);
+      });
+      const names = Object.keys(nameMap).filter(n => !query || n.toLowerCase().includes(query));
+      const container = document.getElementById('existingNameList');
+      document.getElementById('existingDateList').innerHTML = '';
+      if (names.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">該当する物件がありません</p>';
+        return;
+      }
+      container.innerHTML = names.map(name =>
+        `<div onclick="showExistingDates('${name.replace(/'/g,'\\\'')}')"
+          style="padding:10px 12px;border:1px solid #ddd;border-radius:4px;margin-bottom:6px;cursor:pointer;font-size:14px;font-weight:bold;background:white;"
+          onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+          ${name}
+        </div>`
+      ).join('');
+    }
+
+    // 選択した物件の過去データ一覧を表示
+    function showExistingDates(name) {
+      const jobs = (window._allJobsCache || []).filter(j => j.name === name);
+      jobs.sort((a, b) => {
+        const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+        const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+        return tb - ta;
+      });
+      const container = document.getElementById('existingDateList');
+      container.innerHTML = `<div style="font-weight:bold;font-size:13px;color:#333;margin-bottom:8px;padding-top:8px;border-top:1px solid #eee;">「${name}」の過去データ</div>` +
+        jobs.map(j => {
+          const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+          return `<div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa;">
+            <div style="font-size:13px;color:#666;margin-bottom:8px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+            <button onclick="startFromExisting('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')"
+              style="width:100%;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+              このデータをもとに新規登録
+            </button>
+          </div>`;
+        }).join('');
+    }
+
+    // 既存データをもとに新規登録開始
+    function startFromExisting(srcJobId, srcName) {
+      if (!confirm('「' + srcName + '」のデータをもとに新規登録を開始します。\n設備情報・住戸構成・備考パターンを引き継ぎ、全室を「未」にリセットします。\nよろしいですか？')) return;
+      closeExistingModal();
+      if (!window.loadJobData) return;
+      window.loadJobData(srcJobId).then((state) => {
+        if (!state) { alert('データの読み込みに失敗しました。'); return; }
+        const newJobId = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+        const newState = {
+          setup: state.setup,
+          tableFloorData: state.tableFloorData,
+          tableGenerated: state.tableGenerated,
+          tableHasshigoInput: state.tableHasshigoInput,
+          tableSuffixes: state.tableSuffixes,
+          setsubiDefaults: state.setsubiDefaults,
+          setsubiCustom: state.setsubiCustom,
+          notePatterns: state.notePatterns,
+          schedule: [],
+          yoyakuList: [],
+          property: { name: (state.property && state.property.name) || srcName, date: '', staff: '' },
+          rooms: Object.fromEntries(
+            Object.entries(state.rooms || {}).map(([room, rd]) => [room, { label: rd.label || '', hasshigo: rd.hasshigo || '0' }])
+          ),
+          cells: Object.fromEntries(
+            Object.entries(state.cells || {}).map(([room]) => [room, { state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '' }])
+          )
+        };
+        localStorage.setItem('mc_job_id', newJobId);
+        localStorage.setItem('mc_goto_setup', '1');
+        window.currentJobId = newJobId;
+        if (window.saveInspectionToCloud) window.saveInspectionToCloud(newState);
+        if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
+        document.getElementById('startScreen').style.display = 'none';
+        alert('新規登録を開始します。一括設定画面を開きます。');
+        location.reload();
+      });
+    }
+
     function confirmStartNewJob() {
       if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       const ok = confirm('新しい現場を始めますか？\n今のデータはクラウドに保存済みなので消えませんが、画面は新しい現場用にまっさらな状態になります。');
