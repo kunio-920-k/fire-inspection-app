@@ -364,6 +364,8 @@
     };
 
     window.logoutUser = function() {
+      localStorage.removeItem('mc_job_id');
+      window.currentJobId = null;
       signOut(auth).catch((error) => {
         console.error('ログアウトエラー:', error);
       });
@@ -839,13 +841,21 @@
             // 選択画面を表示（過去データがあるか確認）
             if (window.loadJobList) {
               window.loadJobList().then((jobs) => {
+                const activeJobs = jobs.filter(j => !j.hidden);
+                const pastJobs = jobs;
+                const hasContinue = activeJobs.length > 0;
                 const hasExisting = jobs.length > 0;
+
+                const continueBtn = document.getElementById('startContinueBtn');
+                const continueNote = document.getElementById('noContinueNote');
+                if (continueBtn) { continueBtn.disabled = !hasContinue; continueBtn.style.opacity = hasContinue ? '1' : '0.5'; continueBtn.style.cursor = hasContinue ? 'pointer' : 'not-allowed'; }
+                if (continueNote) continueNote.style.display = hasContinue ? 'none' : 'block';
+
                 const existBtn = document.getElementById('startExistingBtn');
                 const note = document.getElementById('noExistingNote');
-                if (existBtn) existBtn.disabled = !hasExisting;
-                if (existBtn) existBtn.style.opacity = hasExisting ? '1' : '0.5';
-                if (existBtn) existBtn.style.cursor = hasExisting ? 'pointer' : 'not-allowed';
+                if (existBtn) { existBtn.disabled = !hasExisting; existBtn.style.opacity = hasExisting ? '1' : '0.5'; existBtn.style.cursor = hasExisting ? 'pointer' : 'not-allowed'; }
                 if (note) note.style.display = hasExisting ? 'none' : 'block';
+
                 window._allJobsCache = jobs;
               });
             }
@@ -1046,13 +1056,30 @@
         🆕 新規物件の登録設定
         <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">初めての物件・設備情報を最初から入力する</div>
       </button>
-      <button id="startExistingBtn" onclick="startExistingProperty()" style="display:block;width:100%;padding:20px;background:#336699;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-        📋 既存物件から登録開始
-        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">過去の設備情報を引き継いで開始する</div>
+      <button id="startContinueBtn" onclick="startContinueProperty()" style="display:block;width:100%;padding:20px;margin-bottom:16px;background:#336699;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        📋 継続中の物件を選択
+        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">前回の続きから点検を再開する</div>
+      </button>
+      <p id="noContinueNote" style="display:none;text-align:center;font-size:12px;color:#aaa;margin-top:-10px;margin-bottom:12px;">（継続中の物件がありません）</p>
+      <button id="startExistingBtn" onclick="startExistingProperty()" style="display:block;width:100%;padding:20px;background:#5d7a8a;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        🗂 既存物件から新規登録
+        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">過去の設備情報を引き継いで新規登録する</div>
       </button>
       <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#aaa;margin-top:8px;">（過去データがありません）</p>
       <div style="margin-top:32px;text-align:center;font-size:12px;color:#aaa;">
         <a onclick="confirmLogout()" style="color:#aaa;cursor:pointer;text-decoration:underline;">ログアウト</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 継続中の物件選択モーダル -->
+  <div id="continuePropertyModal" class="modal">
+    <div class="modal-box" style="max-width:480px;">
+      <h2>📋 継続中の物件</h2>
+      <input type="text" id="continueSearch" placeholder="物件名で検索..." oninput="renderContinueList()" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">
+      <div id="continueList" style="max-height:360px;overflow-y:auto;"></div>
+      <div class="modal-buttons" style="margin-top:12px;">
+        <button onclick="closeContinueModal()" style="background:#eee;">キャンセル</button>
       </div>
     </div>
   </div>
@@ -1559,6 +1586,51 @@
 
     // 新しい現場を始める（現在の現場とは別の、新しいデータとして開始する）
     // ---- 開始選択画面 ----
+
+    // 継続中の物件を選択
+    function startContinueProperty() {
+      const continueBtn = document.getElementById('startContinueBtn');
+      if (continueBtn && continueBtn.disabled) return;
+      renderContinueList();
+      document.getElementById('continuePropertyModal').classList.add('active');
+    }
+    function closeContinueModal() {
+      document.getElementById('continuePropertyModal').classList.remove('active');
+    }
+    function renderContinueList() {
+      const query = (document.getElementById('continueSearch').value || '').trim().toLowerCase();
+      const jobs = (window._allJobsCache || []).filter(j => !j.hidden && (!query || (j.name || '').toLowerCase().includes(query)));
+      jobs.sort((a, b) => {
+        const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+        const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+        return tb - ta;
+      });
+      const container = document.getElementById('continueList');
+      if (jobs.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">継続中の物件がありません</p>';
+        return;
+      }
+      container.innerHTML = jobs.map(j => {
+        const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+        return `<div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:8px;background:white;">
+          <div style="font-weight:bold;font-size:15px;margin-bottom:4px;">${j.name}</div>
+          <div style="font-size:12px;color:#888;margin-bottom:10px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+          <button onclick="resumeJob('${j.jobId}')"
+            style="width:100%;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+            この物件の続きを開始
+          </button>
+        </div>`;
+      }).join('');
+    }
+
+    // 継続中の物件を選択して開始
+    function resumeJob(jobId) {
+      localStorage.setItem('mc_job_id', jobId);
+      window.currentJobId = jobId;
+      closeContinueModal();
+      document.getElementById('startScreen').style.display = 'none';
+      location.reload();
+    }
 
     // 新規物件の登録設定
     function startNewProperty() {
@@ -3702,11 +3774,13 @@
         window.dismissAllWorkers().then(() => {
           // 現場を過去の物件に移動
           if (window.hideJob && window.currentJobId) window.hideJob(window.currentJobId);
-          // 管理者側はdismissedフラグをすぐリセット（自分はログアウトしない）
+          // 3秒後にdismissedフラグをリセット
           setTimeout(() => {
             if (window.clearDismissed) window.clearDismissed();
           }, 3000);
-          alert('作業終了を通知しました。各端末がログアウトされます。');
+          // 管理者自身もlocalStorageをクリアしてログアウト
+          alert('作業終了を通知しました。お疲れさまでした。');
+          if (window.logoutUser) window.logoutUser();
         });
       }
     }
