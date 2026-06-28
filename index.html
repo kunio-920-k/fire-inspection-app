@@ -621,6 +621,7 @@
           const t = l.createdAt ? new Date(l.createdAt.toMillis()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '--:--';
           let line = '[' + t + '] ' + (l.displayName || '') + ' / ' + l.eventType + ' / ' + (l.room || '') + '号室';
           if (l.yoyakuTime) line += '（予約時間：' + l.yoyakuTime + '）';
+          if (l.detail) line += '　内容：' + l.detail;
           if (l.before && l.after) line += ' 変更前：' + l.before + ' → 変更後：' + l.after;
           return line;
         });
@@ -2528,6 +2529,7 @@
       updateCellDisplay(furyoCell);
       document.getElementById('furyoModal').classList.remove('active');
       const furyoRoom = furyoCell.dataset.room;
+      if (window.addLog) window.addLog('不良記録', { room: furyoRoom, detail: text });
       furyoCell = null;
       syncToCloud();
       if (window.updatePresence) window.updatePresence(furyoRoom);
