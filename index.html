@@ -591,6 +591,46 @@
     };
 
     // ---- 現場メモ管理 ----
+    // ---- 操作ログ ----
+    // 保存先: inspections/{jobId}/logs/{autoId}
+    window.addLog = function(eventType, data) {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'logs');
+      addDoc(ref, {
+        eventType: eventType,
+        uid: window.currentUser.uid,
+        displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
+        createdAt: serverTimestamp(),
+        ...data
+      }).catch((e) => dlog('ログ記録エラー / ' + e.message));
+    };
+
+    // ログを取得してメール本文を生成する
+    window.buildLogEmail = function(toEmail) {
+      if (!window.currentJobId) return Promise.resolve('');
+      const ref = collection(db, 'inspections', window.currentJobId, 'logs');
+      return getDocs(ref).then((snap) => {
+        const logs = [];
+        snap.forEach(d => logs.push({ ...d.data(), id: d.id }));
+        logs.sort((a, b) => {
+          const ta = a.createdAt ? a.createdAt.toMillis() : 0;
+          const tb = b.createdAt ? b.createdAt.toMillis() : 0;
+          return ta - tb;
+        });
+        const lines = logs.map(l => {
+          const t = l.createdAt ? new Date(l.createdAt.toMillis()).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+          let line = '[' + t + '] ' + (l.displayName || '') + ' / ' + l.eventType + ' / ' + (l.room || '') + '号室';
+          if (l.yoyakuTime) line += '（予約時間：' + l.yoyakuTime + '）';
+          if (l.before && l.after) line += ' 変更前：' + l.before + ' → 変更後：' + l.after;
+          return line;
+        });
+        return lines.join('\n');
+      }).catch((e) => {
+        dlog('ログ取得エラー / ' + e.message);
+        return '';
+      });
+    };
+
     window.addMemoToCloud = function(text) {
       if (!window.currentUser || !window.currentJobId || !text) return;
       const ref = collection(db, 'inspections', window.currentJobId, 'memos');
@@ -1083,6 +1123,7 @@
     <button onclick="exportFuryoText()">📋 不良一覧テキストを表示</button>
     <button onclick="printFuryo()">🖨️ 不良一覧を印刷</button>
     <button onclick="deleteAllSigns()" style="background:#fff0f0;color:#cc0000;">🗑️ サイン画像を削除（印刷完了後）</button>
+    <button id="sendLogBtn" onclick="sendLogByEmail()" style="background:#f3e5f5;color:#6a1b9a;">📧 ログをメールで送る</button>
     <button id="endWorkBtn" onclick="endWorkSession()" style="background:#c62828;color:white;font-weight:bold;">⏹ 本日の作業を終了する</button>
     <br>
     <textarea id="textOutput" readonly></textarea>
@@ -1281,6 +1322,8 @@
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
       if (endWorkBtn) endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const sendLogBtn = document.getElementById('sendLogBtn');
+      if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
 
       // 管理者・サブ管理者：備考パターン編集
       const notePatternManage = document.getElementById('notePatternManage');
@@ -2173,6 +2216,7 @@
         syncToCloud();
         if (window.updatePresence) window.updatePresence(cell.dataset.room);
         applyScheduleDim();
+        if (window.addLog) window.addLog('点検中', { room: cell.dataset.room });
         openTenkenModal(cell);
         return;
       } else if (action === 'fuzai') {
@@ -2183,17 +2227,13 @@
         times.push(getTime());
         cell.dataset.times = JSON.stringify(times);
         updateCellDisplay(cell);
+        if (window.addLog) window.addLog('不在', { room: cell.dataset.room });
       } else if (action === 'furyo') {
         openFuryo(cell);
       } else if (action === 'yoyaku') {
         openYoyaku(cell);
       } else if (action === 'setsubi') {
         openSetsubiView(cell);
-      } else if (action === 'tenkenchuu') {
-        cell.dataset.state = 'tenkenchuu';
-        cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'yoyaku', 'furyo');
-        cell.classList.add('tenkenchuu');
-        updateCellDisplay(cell);
       } else if (action === 'kushitsu') {
         cell.dataset.state = 'kushitsu';
         cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'yoyaku');
@@ -2207,13 +2247,13 @@
         cell.dataset.times = '[]';
         cell.dataset.sign = '';
         cell.dataset.furyo = '';
-        
         cell.dataset.yoyakuTime = '';
         cell.dataset.yoyakuNote = '';
         cell.classList.remove('nyushitsu', 'fuzai', 'furyo', 'kushitsu', 'yoyaku', 'tenkenchuu');
         updateCellDisplay(cell);
         removeYoyakuByRoom(cell.dataset.room);
         updateYoyakuRowState(cell.dataset.room, false);
+        if (window.addLog) window.addLog('点検キャンセル', { room: cell.dataset.room });
       }
       syncToCloud();
       if (window.updatePresence) window.updatePresence(cell.dataset.room);
@@ -2258,6 +2298,7 @@
       if (!tenkenCell) return;
       const cell = tenkenCell;
       closeTenkenModal();
+      if (window.addLog) window.addLog('点検キャンセル', { room: cell.dataset.room });
       cell.dataset.state = 'mi';
       cell.classList.remove('tenkenchuu');
       updateCellDisplay(cell);
@@ -2312,10 +2353,16 @@
     function confirmSetsubi() {
       if (!setsubiCell) return;
       const room = setsubiCell.dataset.room;
+      const prev = getSetsubiForRoom(room);
       const tei = parseInt(document.getElementById('editTei')?.value) || 0;
       const sa = parseInt(document.getElementById('editSa')?.value) || 0;
       const ke = parseInt(document.getElementById('editKe')?.value) || 0;
       setsubiCustom[room] = { tei, sa, ke };
+      if (window.addLog) window.addLog('設備編集', {
+        room: room,
+        before: '定温' + prev.tei + '・差動' + prev.sa + '・煙' + prev.ke,
+        after: '定温' + tei + '・差動' + sa + '・煙' + ke
+      });
       document.getElementById('setsubiModal').classList.remove('active');
       setsubiCell = null;
       syncToCloud();
@@ -2412,6 +2459,7 @@
       }
       // サイン画像をクラウドに個別保存
       if (window.saveSignToCloud) window.saveSignToCloud(signCell.dataset.room, signData);
+      if (window.addLog) window.addLog('入室済', { room: signCell.dataset.room });
       const signedRoom = signCell.dataset.room;
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
@@ -2535,6 +2583,7 @@
       removeYoyakuByRoom(room);
       yoyakuList.push({ time, room, note });
       renderYoyakuTable();
+      if (window.addLog) window.addLog('予約設定', { room: room, yoyakuTime: time });
       document.getElementById('yoyakuModal').classList.remove('active');
       document.getElementById('yoyakuModalNoteOther').style.display = 'none';
       yoyakuCell = null;
@@ -3094,6 +3143,21 @@
 
     function changeMemberRole(uid, newRole) {
       if (window.updateMemberRole) window.updateMemberRole(uid, newRole);
+    }
+
+    // 作業終了時にログをメールで送信する
+    function sendLogByEmail() {
+      const toEmail = prompt('送信先のメールアドレスを入力してください（管理者宛）');
+      if (!toEmail) return;
+      if (!window.buildLogEmail) { alert('まだログインが完了していません。'); return; }
+      const prop = getProperty();
+      window.buildLogEmail().then((body) => {
+        const subject = encodeURIComponent('【点検ログ】' + prop.name + ' ' + prop.date);
+        const mailBody = encodeURIComponent(
+          prop.name + '　点検作業ログ\n作業日：' + prop.date + '\n\n' + (body || 'ログがありません')
+        );
+        window.location.href = 'mailto:' + toEmail + '?subject=' + subject + '&body=' + mailBody;
+      });
     }
 
     // 本日の作業終了（管理者のみ）
