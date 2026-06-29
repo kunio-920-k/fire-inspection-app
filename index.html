@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
   <meta name="screen-orientation" content="portrait">
   <title>消防設備点検アプリ</title>
   <style>
@@ -68,7 +69,21 @@
     #propertyInputArea input { width: 250px; margin-left: 8px; }
     #propertyInputArea input[type="date"] { width: auto; }
 
-    #setup { padding: 0 20px; }
+    #setup { padding: 0; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); min-height: 100vh; }
+    #setup #backToSetupBtn { display:none; }
+    #setup #propertyInputArea { padding: 16px 16px 0; }
+    #setup #propertyInputArea p { display:none; }
+    #setup .setup-new-header { background:#182C3A; border-bottom:3px solid #ff8c42; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; }
+    #setup .setup-section { font-size:20px; color:#2a2520; letter-spacing:1px; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+    #setup .setup-section::after { content:''; flex:1; height:1px; background:rgba(0,0,0,0.2); }
+    #setup .setup-body { padding:14px 16px; }
+    #setup input[type=text], #setup input[type=date] { width:100%; background:rgba(255,255,255,0.7); border:1px solid rgba(0,0,0,0.15); border-radius:6px; padding:10px 12px; color:#1a1a1a; font-size:13px; outline:none; box-sizing:border-box; }
+    #setup input[type=text]:focus, #setup input[type=date]:focus { border-color:#e07020; }
+    #setup input[type=text]::placeholder { color:#9a9088; }
+    #setup input.count-input { background:rgba(255,255,255,0.7); border:1px solid rgba(0,0,0,0.15); border-radius:6px; padding:10px 12px; color:#1a1a1a; font-size:15px; text-align:center; outline:none; width:100%; box-sizing:border-box; }
+    #setup .mc-label-new { font-size:14px; color:#1a1a1a; margin-bottom:5px; }
+    #setup .checkbox-area { color:#1a1a1a; font-size:13px; margin:6px 0; }
+    #setup .setup-generate-btn { width:100%; margin-top:16px; background:#e07020; color:white; font-weight:700; border:none; border-radius:6px; padding:12px; font-size:14px; cursor:pointer; box-shadow:4px 4px 10px rgba(0,0,0,0.3); }
     #backToSetupBtn { display: none; margin-bottom: 10px; background: #eee; }
 
     #setsubiSetupArea { margin-top: 12px; padding: 10px; border: 1px solid #aad; background: #f0f4ff; border-radius: 6px; display: none; }
@@ -185,23 +200,23 @@
     #patternAddRow button { margin: 0; font-size: 14px; padding: 6px 12px; background: #ccffcc; }
     #patternCloseBtn { background: #eee; }
 
-    #welcomeScreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; justify-content: center; align-items: center; text-align: center; padding: 40px; }
+    #welcomeScreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); z-index: 9999; justify-content: center; align-items: center; text-align: center; padding: 40px; }
     #welcomeScreen.active { display: flex; }
     #welcomeScreen .welcome-box { max-width: 320px; }
-    #welcomeScreen h2 { font-size: 20px; margin-bottom: 20px; color: #333; }
-    #welcomeScreen p { font-size: 15px; line-height: 1.8; color: #555; margin-bottom: 30px; }
-    #welcomeScreen button { font-size: 16px; padding: 12px 32px; background: #4a90d9; color: white; border: none; border-radius: 8px; cursor: pointer; }
+    #welcomeScreen h2 { font-size: 20px; margin-bottom: 20px; color: #1a1a1a; }
+    #welcomeScreen p { font-size: 15px; line-height: 1.8; color: #3a3530; margin-bottom: 30px; }
+    #welcomeScreen button { font-size: 16px; padding: 14px; width: 100%; background: #e07020; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; box-shadow: 4px 4px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1); }
 
-    #loginScreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 9999; justify-content: center; align-items: center; text-align: center; padding: 40px; }
+    #loginScreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #182C3A; z-index: 9999; justify-content: center; align-items: center; text-align: center; padding: 40px; }
     #loginScreen.active { display: flex; }
-    #loginScreen .login-box { max-width: 320px; }
+    #loginScreen .login-box { max-width: 340px; width: 100%; }
     #loginScreen h2 { font-size: 20px; margin-bottom: 16px; color: #333; }
-    #loginScreen p { font-size: 14px; line-height: 1.7; color: #666; margin-bottom: 30px; }
-    #loginScreen .google-login-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; font-size: 15px; padding: 12px 24px; background: #fff; color: #3c4043; border: 1px solid #dadce0; border-radius: 8px; cursor: pointer; font-weight: 500; }
-    #loginScreen .google-login-btn:hover { background: #f7f8f8; }
-    #loginScreen .google-login-btn svg { width: 18px; height: 18px; }
-    #loginScreen .login-error { color: #c0392b; font-size: 13px; margin-top: 16px; min-height: 18px; }
-    #loginScreen .login-loading { color: #888; font-size: 13px; margin-top: 16px; min-height: 18px; }
+    #loginScreen p { font-size: 16.25px; line-height: 1.7; color: #6a7280; margin-bottom: 28px; }
+    #loginScreen .google-login-btn { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; font-size: 14px; padding: 14px; background: #fff; color: #1a1a1a; border: 1px solid #ddd; border-radius: 8px; cursor: pointer; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-family: 'Noto Sans JP', sans-serif; }
+    #loginScreen .google-login-btn:hover { background: #f5f5f5; }
+    #loginScreen .google-login-btn svg { width: 20px; height: 20px; }
+    #loginScreen .login-error { color: #ff6060; font-size: 13px; margin-top: 16px; min-height: 18px; }
+    #loginScreen .login-loading { color: #6a7280; font-size: 13px; margin-top: 16px; min-height: 18px; }
 
     #debugPanel { position: fixed; top: 0; left: 0; width: 100%; max-height: 50vh; overflow-y: auto; background: rgba(0,0,0,0.88); color: #0f0; font-size: 10px; font-family: monospace; z-index: 99999; padding: 8px; box-sizing: border-box; white-space: pre-wrap; word-break: break-all; }
 
@@ -860,6 +875,20 @@
               });
             }
             document.getElementById('startScreen').style.display = 'block';
+            // ③選択画面：ユーザー名と時計を設定
+            if (user && user.displayName) {
+              const el = document.getElementById('startUserName');
+              if (el) el.textContent = user.displayName;
+            }
+            (function tickStartClock() {
+              const now = new Date();
+              const days = ['日','月','火','水','木','金','土'];
+              const cl = document.getElementById('startClockDisp');
+              const dl = document.getElementById('startDateDisp');
+              if (cl) cl.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+              if (dl) dl.textContent = now.getFullYear() + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + String(now.getDate()).padStart(2,'0') + '（' + days[now.getDay()] + '）';
+              if (document.getElementById('startScreen').style.display !== 'none') setTimeout(tickStartClock, 1000);
+            })();
             return;
           }
         }
@@ -991,83 +1020,96 @@
 
   <div id="welcomeScreen">
     <div class="welcome-box">
-      <div class="mc-logo-v">
-        <svg class="mc-icon" viewBox="0 0 52 52" fill="none">
-          <rect x="9" y="5" width="34" height="42" rx="3" fill="#2d6a4f"/>
-          <rect x="15" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="25" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="35" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="15" y="21" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="35" y="21" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="15" y="31" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <path d="M22 47 L22 38 L30 38 L30 47" fill="#143527"/>
-          <circle cx="35" cy="28" r="8.3" fill="#ff8c42"/>
-          <path d="M31.7 28.2 L34.2 30.7 L38.8 25.3" stroke="white" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="mc-eyebrow">共同住宅点検支援のマンチェスター</span>
-        <span class="mc-main">Man<span class="mc-accent">CHE</span>Star</span>
-        <span class="mc-sub">FIRE SAFETY <span class="mc-accent">CHECK</span></span>
+      <div style="font-family:'Inter',sans-serif;font-size:32.5px;font-weight:800;margin-bottom:24px;text-shadow:2px 2px 6px rgba(0,0,0,0.25);"><span style="color:#182C3A">Man</span><span style="color:#e07020">CHE</span><span style="color:#182C3A">Star</span></div>
+      <div style="margin-bottom:48px;">
+        <div style="display:inline-flex;align-items:center;justify-content:center;width:80px;height:140px;border:2px solid #e07020;border-radius:12px;position:relative;background:#182C3A;">
+          <span style="font-size:28px;color:#e07020;">↻</span>
+          <span style="position:absolute;bottom:-34px;font-size:15px;color:#e07020;white-space:nowrap;text-shadow:1px 1px 4px rgba(0,0,0,0.4);">縦向きで使用</span>
+        </div>
       </div>
-      <h2>📱 ご利用の前に</h2>
-      <p>このアプリは<br><strong>縦画面専用設計</strong>です。<br><br>スマホの画面回転を<strong>固定</strong>してから<br>ご使用ください。<br><br>設定後、下のボタンを<br>タップしてください。</p>
-      <button onclick="closeWelcome()">確認しました</button>
+      <h2>縦向きでご使用ください</h2>
+      <p>このアプリは縦向き（ポートレート）に<br>最適化されています。<br>端末を縦向きに固定してから<br>お使いください。</p>
+      <button onclick="closeWelcome()">OK・縦向きで始める</button>
     </div>
   </div>
 
   <div id="loginScreen">
     <div class="login-box">
-      <div class="mc-logo-v">
-        <svg class="mc-icon" viewBox="0 0 52 52" fill="none">
-          <rect x="9" y="5" width="34" height="42" rx="3" fill="#2d6a4f"/>
-          <rect x="15" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="25" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="35" y="11" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="15" y="21" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="35" y="21" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <rect x="15" y="31" width="6" height="6" rx="1" fill="#eafaf1"/>
-          <path d="M22 47 L22 38 L30 38 L30 47" fill="#143527"/>
-          <circle cx="35" cy="28" r="8.3" fill="#ff8c42"/>
-          <path d="M31.7 28.2 L34.2 30.7 L38.8 25.3" stroke="white" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="mc-eyebrow">共同住宅点検支援のマンチェスター</span>
-        <span class="mc-main">Man<span class="mc-accent">CHE</span>Star</span>
-        <span class="mc-sub">FIRE SAFETY <span class="mc-accent">CHECK</span></span>
+      <div style="margin-bottom:36px;">
+        <span style="display:block;font-size:9px;color:white;letter-spacing:3px;margin-bottom:2px;">共同住宅消防設備点検支援</span>
+        <div style="font-size:11.05px;color:white;letter-spacing:3px;margin-bottom:2px;">マンチェスター</div>
+        <div style="font-family:'Inter',sans-serif;font-size:37.5px;font-weight:800;letter-spacing:-1px;margin-bottom:4px;"><span style="color:white;">Man</span><span style="color:#e07020;">CHE</span><span style="color:white;">Star</span></div>
+        <span style="font-size:11.25px;letter-spacing:3px;"><span style="color:white;">FIRE SAFETY</span> <span style="color:#e07020;">CHECK</span></span>
+        <div style="width:40px;height:2px;background:#ff8c42;margin:14px auto 0;"></div>
       </div>
-      <h2>ログイン</h2>
-      <p>Googleアカウントで<br>ログインしてください。</p>
+      <p>Googleアカウントでログインして<br>点検を開始してください</p>
       <button class="google-login-btn" onclick="loginWithGoogle()">
         <svg viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/><path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/><path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/><path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/></svg>
         Googleでログイン
       </button>
+      <div style="margin-top:20px;font-size:11px;color:rgba(255,255,255,0.4);">※ 初回ログイン時はアクセス許可が必要です</div>
       <div class="login-loading" id="loginLoading"></div>
       <div class="login-error" id="loginError"></div>
     </div>
   </div>
 
   <!-- ログイン後の新規/既存選択画面 -->
-  <div id="startScreen" style="display:none;position:fixed;inset:0;background:#f4f6f8;z-index:100;overflow-y:auto;">
-    <div style="max-width:420px;margin:0 auto;padding:40px 24px;">
-      <div class="mc-logo-v" style="margin-bottom:32px;">
-        <span class="mc-main" style="font-size:28px;">Man<span class="mc-accent">CHE</span>Star</span>
-        <span class="mc-sub">FIRE SAFETY <span class="mc-accent">CHECK</span></span>
+  <div id="startScreen" style="display:none;position:fixed;inset:0;background:linear-gradient(180deg,#716B66 0%,#BCB8AD 100%);z-index:100;overflow-y:auto;">
+    <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
+      <!-- ヘッダー -->
+      <div style="background:#182C3A;border-bottom:3px solid #ff8c42;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;margin:-20px -16px 20px;border-radius:0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">消防設備</span>
+          <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
+        </div>
+        <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
+          <div id="startClockDisp" style="font-size:13px;color:white;font-family:'Inter',sans-serif;font-weight:600;"></div>
+          <div id="startDateDisp"></div>
+        </div>
       </div>
-      <p style="text-align:center;font-size:14px;color:#666;margin-bottom:32px;">ようこそ。本日の点検を始めましょう。</p>
-      <button onclick="startNewProperty()" style="display:block;width:100%;padding:20px;margin-bottom:16px;background:#2d6a4f;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-        🆕 新規物件の登録設定
-        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">初めての物件・設備情報を最初から入力する</div>
-      </button>
-      <button id="startContinueBtn" onclick="startContinueProperty()" style="display:block;width:100%;padding:20px;margin-bottom:16px;background:#336699;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-        📋 継続中の物件を選択
-        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">前回の続きから点検を再開する</div>
-      </button>
-      <p id="noContinueNote" style="display:none;text-align:center;font-size:12px;color:#aaa;margin-top:-10px;margin-bottom:12px;">（継続中の物件がありません）</p>
-      <button id="startExistingBtn" onclick="startExistingProperty()" style="display:block;width:100%;padding:20px;background:#5d7a8a;color:white;border:none;border-radius:10px;font-size:17px;font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-        🗂 既存物件から新規登録
-        <div style="font-size:12px;font-weight:normal;margin-top:4px;opacity:0.85;">過去の設備情報を引き継いで新規登録する</div>
-      </button>
-      <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#aaa;margin-top:8px;">（過去データがありません）</p>
-      <div style="margin-top:32px;text-align:center;font-size:12px;color:#aaa;">
-        <a onclick="confirmLogout()" style="color:#aaa;cursor:pointer;text-decoration:underline;">ログアウト</a>
+      <!-- ステータス -->
+      <div style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+        <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
+        <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中</div>
+        <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
+      </div>
+      <!-- メニューラベル -->
+      <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
+      <!-- 新規物件 -->
+      <div onclick="startNewProperty()" style="background:linear-gradient(150deg,#1c5534,#0f3d22);border-radius:8px;padding:16px 20px;margin-bottom:10px;position:relative;overflow:hidden;cursor:pointer;border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);">
+        <div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#2ecc71;border-radius:8px 0 0 8px;"></div>
+        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(46,204,113,0.2);color:#2ecc71;">NEW</div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="font-size:24px;width:40px;text-align:center;flex-shrink:0;">🏢</div>
+          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">新規物件の登録設定</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">初めての物件・設備情報を最初から入力する</div></div>
+          <div style="color:rgba(255,255,255,0.3);font-size:20px;margin-left:auto;">›</div>
+        </div>
+      </div>
+      <!-- 継続中の物件 -->
+      <div id="startContinueBtn" onclick="startContinueProperty()" style="background:linear-gradient(150deg,#18366a,#0f2450);border-radius:8px;padding:16px 20px;margin-bottom:10px;position:relative;overflow:hidden;cursor:pointer;border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);">
+        <div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#3a9bdc;border-radius:8px 0 0 8px;"></div>
+        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(58,155,220,0.2);color:#3a9bdc;">CONT</div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="font-size:24px;width:40px;text-align:center;flex-shrink:0;">▶</div>
+          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">継続中の物件を選択</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">前回の続きから点検を再開する</div></div>
+          <div style="color:rgba(255,255,255,0.3);font-size:20px;margin-left:auto;">›</div>
+        </div>
+      </div>
+      <p id="noContinueNote" style="display:none;text-align:center;font-size:12px;color:#2a2520;margin-top:-4px;margin-bottom:8px;">（継続中の物件がありません）</p>
+      <!-- 既存物件から新規 -->
+      <div id="startExistingBtn" onclick="startExistingProperty()" style="background:linear-gradient(150deg,#5e3310,#3d2008);border-radius:8px;padding:16px 20px;margin-bottom:10px;position:relative;overflow:hidden;cursor:pointer;border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);">
+        <div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#ff8c42;border-radius:8px 0 0 8px;"></div>
+        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">COPY</div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="font-size:24px;width:40px;text-align:center;flex-shrink:0;">🗂</div>
+          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">既存物件から新規登録</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">過去の設備情報を引き継いで新規登録する</div></div>
+          <div style="color:rgba(255,255,255,0.3);font-size:20px;margin-left:auto;">›</div>
+        </div>
+      </div>
+      <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#2a2520;margin-top:4px;">（過去データがありません）</p>
+      <!-- フッター -->
+      <div style="margin-top:24px;text-align:center;font-size:11px;">
+        <a onclick="confirmLogout()" style="color:#3a5060;cursor:pointer;">ログアウト</a>
       </div>
     </div>
   </div>
@@ -1124,38 +1166,72 @@
   </div>
 
   <div id="setup">
-    <button id="backToSetupBtn" onclick="backToSetupConfirmed()">← 立面図に戻る（編集を続ける）</button>
-
-    <div id="propertyInputArea">
-      <p><strong>物件・作業情報</strong></p>
-      <p>物件名：<input type="text" id="propName" placeholder="例：〇〇マンション"></p>
-      <p>作業日：<input type="date" id="propDate"></p>
-      <p>担当者：<input type="text" id="propStaff" placeholder="例：山田 太郎"></p>
+    <!-- ヘッダー -->
+    <div class="setup-new-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">設定</span>
+        <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
+      </div>
+      <div style="text-align:right;font-size:13px;color:white;font-weight:700;">一括設定</div>
     </div>
+    <div class="setup-body">
+      <button id="backToSetupBtn" onclick="backToSetupConfirmed()" style="display:none;">← 立面図に戻る（編集を続ける）</button>
 
-    <p>階数を入力してください</p>
-    <input type="text" inputmode="numeric" id="floorCount" class="count-input zenkaku-ok" value="3">
-    <p>各階の号室数を入力してください</p>
-    <input type="text" inputmode="numeric" id="roomCount" class="count-input zenkaku-ok" value="6">
-    <div class="checkbox-area"><label><input type="checkbox" id="cut4Room"> 4号室をカットする（104・204等）</label></div>
-    <div class="checkbox-area"><label><input type="checkbox" id="cut4Floor"> 4階をカットする</label></div>
-    <div class="checkbox-area"><label><input type="checkbox" id="useSetsubiInfo" onchange="toggleSetsubiSetup()"> 住戸内設備情報を利用する</label></div>
+      <div id="propertyInputArea">
+        <div class="setup-section">物件情報</div>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <div class="mc-label-new">物件名</div>
+            <input type="text" id="propName" placeholder="例：〇〇マンション">
+          </div>
+          <div style="display:flex;gap:10px;">
+            <div style="flex:1;">
+              <div class="mc-label-new">作業日</div>
+              <input type="date" id="propDate">
+            </div>
+            <div style="flex:1;">
+              <div class="mc-label-new">担当者</div>
+              <input type="text" id="propStaff" placeholder="例：山田 太郎">
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <div id="setsubiSetupArea">
-      <h3>号室系統ごとの設備数を入力してください</h3>
-      <p style="font-size:12px;color:#666;">表作成後に号室ごとの個別編集も可能です</p>
-      <div id="setsubiSetupList"></div>
-    </div>
+      <div class="setup-section" style="margin-top:20px;">住戸構成</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;">
+            <div class="mc-label-new">階数</div>
+            <input type="text" inputmode="numeric" id="floorCount" class="count-input zenkaku-ok" value="3">
+          </div>
+          <div style="flex:1;">
+            <div class="mc-label-new">号室数／階</div>
+            <input type="text" inputmode="numeric" id="roomCount" class="count-input zenkaku-ok" value="6">
+          </div>
+        </div>
+        <div class="checkbox-area"><label><input type="checkbox" id="cut4Room"> 4号室をカットする（104・204等）</label></div>
+        <div class="checkbox-area"><label><input type="checkbox" id="cut4Floor"> 4階をカットする</label></div>
+        <div class="checkbox-area"><label><input type="checkbox" id="useSetsubiInfo" onchange="toggleSetsubiSetup()"> 住戸内設備情報を使用する</label></div>
+      </div>
 
-    <br>
-    <button onclick="prepareEdit()">号室を確認・編集する</button>
-    <div id="editArea">
-      <p>各階の号室を確認・編集してください（カンマ区切り）</p>
-      <div id="floorEditList"></div>
-      <p style="margin-top:12px;">避難はしご設置の号室列番号を入力してください<br><span style="font-size:12px;color:#666;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</span></p>
-      <input type="text" id="hasshigoInput" class="zenkaku-ok" placeholder="例：3,5" style="width:200px;">
+      <div id="setsubiSetupArea">
+        <h3 style="font-size:14px;color:#2a2520;margin:16px 0 4px;">号室系統ごとの設備数を入力してください</h3>
+        <p style="font-size:12px;color:#4a4040;margin-bottom:8px;">表作成後に号室ごとの個別編集も可能です</p>
+        <div id="setsubiSetupList"></div>
+      </div>
+
       <br>
-      <button onclick="generateTable()">表を作成する</button>
+      <button onclick="prepareEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:10px;font-size:13px;cursor:pointer;margin-bottom:8px;">号室を確認・編集する</button>
+      <div id="editArea">
+        <p style="font-size:13px;color:#2a2520;margin:8px 0 4px;">各階の号室を確認・編集してください（カンマ区切り）</p>
+        <div id="floorEditList"></div>
+        <div style="margin-top:12px;">
+          <div class="mc-label-new">避難はしご設置（号室末尾）</div>
+          <p style="font-size:12px;color:#4a4040;margin:2px 0 6px;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</p>
+          <input type="text" id="hasshigoInput" class="zenkaku-ok" placeholder="例：3,5">
+        </div>
+        <button onclick="generateTable()" class="setup-generate-btn">立面図を作成</button>
+      </div>
     </div>
   </div>
 
