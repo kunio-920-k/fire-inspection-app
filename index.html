@@ -69,7 +69,7 @@
     #propertyInputArea input { width: 250px; margin-left: 8px; }
     #propertyInputArea input[type="date"] { width: auto; }
 
-    #setup { padding: 0; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); min-height: 100vh; }
+    #setup { padding: 0; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); position: fixed; inset: 0; z-index: 50; overflow-y: auto; display: none; }
     .mc-logo-h { display: none !important; }
     #propertyArea { display: none; }
     .table-wrap { display: none; }
@@ -1175,7 +1175,12 @@
         <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">設定</span>
         <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
       </div>
-      <div style="text-align:right;font-size:13px;color:white;font-weight:700;">一括設定</div>
+      <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
+        <div id="userEmailLabel" style="color:#7a9ab0;"></div>
+        <a id="newJobLink" onclick="confirmStartNewJob()" style="color:#7a9ab0;cursor:pointer;">新しい現場を始める</a>
+        ／
+        <a onclick="confirmLogout()" style="color:#e07020;cursor:pointer;">ログアウト</a>
+      </div>
     </div>
     <div class="setup-body">
       <button id="backToSetupBtn" onclick="backToSetupConfirmed()" style="display:none;">← 立面図に戻る（編集を続ける）</button>
