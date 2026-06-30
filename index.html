@@ -202,13 +202,14 @@
       box-shadow:0 0 30px rgba(255,140,66,0.3);
     }
     #tenkenModal .tenken-header-area {
-      background:#1a1e25; border-bottom:2px solid #ff8c42; padding:12px 18px; text-align:center;
+      background:#1e88e5; border-bottom:2px solid #ff8c42; padding:12px 18px; text-align:center;
+      animation: tenkenchuu-blink 1s ease-in-out infinite;
     }
-    #tenkenModal .tenken-header-area p:first-child {
-      font-size:54px; font-weight:900; color:#e53935; margin:0;
+    #tenkenModal #tenkenRoomLabel { font-size:27px; color:#fff; font-weight:700; margin:0; }
+    #tenkenModal .tenken-header-area p.tenken-title-text {
+      font-size:54px; font-weight:900; color:#fff; margin:4px 0 0;
       font-family:'Inter',sans-serif; animation:tenkenchuu-text-blink 1s ease-in-out infinite;
     }
-    #tenkenModal #tenkenRoomLabel { font-size:27px; color:#fff; font-weight:700; margin-top:4px; }
     #tenkenModal .tenken-content-area { padding:16px 18px; }
     #tenkenModal #tenkenSetsubiInfo {
       background:#1a1e25 !important; border:1px solid #2a3040; border-radius:6px;
@@ -1339,8 +1340,8 @@
   <div id="tenkenModal" class="modal">
     <div class="modal-box">
       <div class="tenken-header-area">
-        <p>点検中</p>
         <p id="tenkenRoomLabel"></p>
+        <p class="tenken-title-text">点検中</p>
       </div>
       <div class="tenken-content-area">
         <div id="tenkenSetsubiInfo" style="display:none;"></div>
