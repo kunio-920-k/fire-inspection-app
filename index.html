@@ -64,7 +64,7 @@
     .yoyaku-time { font-size: 10px; color: #333; display: block; }
     .sign-img { width: 76px; height: 40px; object-fit: contain; display: block; margin: 0 auto; pointer-events: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
-    #propertyArea { margin-top: 20px; padding: 12px 20px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; display: none; }
+    #propertyArea { display: none; }
     #propertyArea p { margin: 4px 0; }
     #propertyInputArea { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #ddd; }
     #propertyInputArea p { margin: 6px 0; font-size: 14px; }
@@ -99,7 +99,7 @@
     .setsubi-inputs span { font-size: 13px; }
     .setsubi-inputs input { width: 50px; font-size: 14px; margin: 0; }
 
-    #yoyakuArea { margin-top: 0; padding: 16px 20px; display: none; }
+    #yoyakuArea { margin-top: 0; padding: 16px 20px; display: none; border-top: 3px solid #ff8c42; }
     #yoyakuArea h2 { font-size: 16px; margin-bottom: 8px; }
     #yoyakuTable { border-collapse: collapse; width: 100%; margin-top: 8px; table-layout: fixed; }
     #yoyakuTable th { border: 1px solid #333; background: #ddd; padding: 4px 2px; font-size: 12px; text-align: center; }
@@ -1266,10 +1266,10 @@
       </div>
       <!-- アクションボタン -->
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📱 子機を招待（QR）</button>
-        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📅 スケジュール設定</button>
-        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">👥 メンバー管理</button>
-        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📋 現場一覧</button>
+        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📱 子機を招待（QR）</button>
+        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📅 スケジュール設定</button>
+        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">👥 メンバー管理</button>
+        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📋 現場一覧</button>
       </div>
     </div>
   </div>
@@ -1913,10 +1913,6 @@
         const sel = document.getElementById(id);
         const currentVal = sel.value;
         sel.innerHTML = '';
-        const passOpt = document.createElement('option');
-        passOpt.value = '';
-        passOpt.textContent = 'パス';
-        sel.appendChild(passOpt);
         notePatterns.forEach(p => {
           const opt = document.createElement('option');
           opt.value = p;
@@ -3224,7 +3220,7 @@
       const list = document.getElementById('memoList');
       if (!list) return;
       if (memos.length === 0) {
-        list.innerHTML = '<span style="color:#aaa;">まだメモはありません</span>';
+        list.innerHTML = '<span style="color:#555;">まだメモはありません</span>';
         return;
       }
       list.innerHTML = memos.map(m => {
