@@ -25,7 +25,7 @@
     .floor-edit { margin: 5px 0; font-size: 14px; }
     .floor-edit input[type="text"] { width: 300px; margin-left: 5px; }
 
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 0 20px 10px; overscroll-behavior-x: contain; }
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 10px; overscroll-behavior-x: contain; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); }
     .table-wrap table { border-collapse: collapse; margin-top: 20px; table-layout: fixed; }
 
     th { border: 1px solid #333; width: 80px; min-width: 80px; height: 40px; text-align: center; font-size: 13px; background-color: #ddd; }
@@ -97,7 +97,7 @@
     .setsubi-inputs span { font-size: 13px; }
     .setsubi-inputs input { width: 50px; font-size: 14px; margin: 0; }
 
-    #yoyakuArea { margin-top: 24px; padding: 0 20px; display: none; }
+    #yoyakuArea { margin-top: 0; padding: 16px 20px; display: none; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); }
     #yoyakuArea h2 { font-size: 16px; margin-bottom: 8px; }
     #yoyakuTable { border-collapse: collapse; width: 100%; margin-top: 8px; table-layout: fixed; }
     #yoyakuTable th { border: 1px solid #333; background: #ddd; padding: 4px 2px; font-size: 12px; text-align: center; }
@@ -120,7 +120,7 @@
     #notePatternManage { margin-top: 8px; font-size: 13px; }
     #notePatternManage a { cursor: pointer; color: #336699; text-decoration: underline; }
 
-    #outputArea { margin-top: 20px; padding: 0 20px 20px; display: none; }
+    #outputArea { margin-top: 0; padding: 16px 20px 20px; display: none; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); }
     #outputArea button { margin-right: 8px; margin-bottom: 8px; font-size: 14px; padding: 8px 14px; }
     #textOutput { margin-top: 12px; width: 100%; height: 150px; font-size: 13px; display: none; }
 
@@ -1245,14 +1245,31 @@
     </div>
   </div>
 
-  <div id="propertyArea">
-    <p><strong id="propDisplayName">（物件名未入力）</strong></p>
-    <p style="font-size:13px;color:#555;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></p>
-    <p style="font-size:13px;"><span id="myRoleLabel" style="font-weight:bold;color:#336699;"></span></p>
-    <button id="qrInviteBtn" onclick="openQrModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#eef5ff;">📱 子機を招待（QR）</button>
-    <button id="scheduleBtn" onclick="openScheduleModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#f0fff0;">📅 スケジュール設定</button>
-    <button id="memberBtn" onclick="openMemberModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#fff8e1;">👥 メンバー管理</button>
-    <button id="jobListBtn" onclick="openJobListModal()" style="font-size:13px;padding:6px 14px;margin-top:4px;background:#e8f5e9;">📋 現場一覧</button>
+  <div id="propertyArea" style="display:none;">
+    <!-- ヘッダー -->
+    <div style="background:#182C3A;border-bottom:3px solid #ff8c42;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">立面図</span>
+        <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.4;">
+        <span id="myRoleLabel" style="font-weight:bold;color:#ff8c42;"></span>
+      </div>
+    </div>
+    <div style="padding:14px 16px 0;background:linear-gradient(180deg,#716B66 0%,#BCB8AD 100%);">
+      <!-- 物件情報バー -->
+      <div style="background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:10px 14px;margin-bottom:14px;">
+        <div style="font-size:15px;font-weight:700;color:#1a1a1a;" id="propDisplayName">（物件名未入力）</div>
+        <div style="font-size:11px;color:#4a4a4a;margin-top:2px;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></div>
+      </div>
+      <!-- アクションボタン -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📱 子機を招待（QR）</button>
+        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📅 スケジュール設定</button>
+        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">👥 メンバー管理</button>
+        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;cursor:pointer;">📋 現場一覧</button>
+      </div>
+    </div>
   </div>
 
   <!-- 点検終了モーダル -->
@@ -1395,7 +1412,7 @@
     <textarea id="textOutput" readonly></textarea>
   </div>
 
-  <div id="memoArea" style="display:none;margin-top:16px;padding:12px;border-top:2px solid #ccc;">
+  <div id="memoArea" style="display:none;margin-top:0;padding:16px 20px;border-top:none;background:linear-gradient(180deg,#716B66 0%,#BCB8AD 100%);">
     <div style="font-weight:bold;font-size:14px;margin-bottom:8px;">📝 現場メモ</div>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <input type="text" id="memoInput" placeholder="メモを入力..." style="flex:1;font-size:14px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
