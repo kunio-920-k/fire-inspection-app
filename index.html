@@ -212,7 +212,7 @@
     #tenkenModal .tenken-content-area { padding:16px 18px; background:#1e88e5; }
     #tenkenModal #tenkenSetsubiInfo {
       background:transparent !important; border:none; border-radius:0;
-      padding:0 0 14px 0 !important; margin-bottom:0 !important; font-size:13px; color:#000 !important;
+      padding:8px 0 0 0 !important; margin:0 !important; font-size:13px; color:#000 !important;
     }
     #tenkenModal .modal-buttons { display:flex; flex-direction:column; gap:8px; margin-top:0; }
     #tenkenModal .modal-buttons button {
@@ -1341,9 +1341,9 @@
       <div class="tenken-header-area">
         <p id="tenkenRoomLabel"></p>
         <p class="tenken-title-text">点検中</p>
+        <div id="tenkenSetsubiInfo" style="display:none;"></div>
       </div>
       <div class="tenken-content-area">
-        <div id="tenkenSetsubiInfo" style="display:none;"></div>
         <div class="modal-buttons">
           <button id="tenkenFinishBtn" onclick="finishTenken()">点検終了（サインへ）</button>
           <button id="tenkenFuryoBtn" onclick="furyoFromTenken()">不良内容を追加・編集</button>
