@@ -166,6 +166,66 @@
     .modal-buttons { display: flex; gap: 10px; margin-top: 12px; justify-content: center; flex-wrap: wrap; }
     .modal-buttons button { font-size: 14px; padding: 8px 16px; }
 
+    /* ⑥ メンバー管理モーダル（D案デザイン） */
+    #memberModal .modal-box {
+      background: #182C3A; border: 1px solid #2a3040; border-radius: 12px;
+      max-width: 400px; text-align: left; padding: 0; overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    }
+    #memberModal h2 {
+      background: #1a1e25; border-bottom: 2px solid #ff8c42; color: white;
+      margin: 0; padding: 14px 18px; font-size: 15px; text-align: left;
+    }
+    #memberModal .member-desc { padding: 14px 18px 0; font-size: 12px; color: #6a7280; margin-bottom: 4px; }
+    #memberModal #memberList { padding: 4px 18px 0; }
+    #memberModal .member-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #2a3040; }
+    #memberModal .member-row:last-child { border-bottom: none; }
+    #memberModal .member-name { font-size:13px; color:white; }
+    #memberModal .member-email { font-size:11px; color:#6a7280; margin-top:2px; }
+    #memberModal .mc-role { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:3px; }
+    #memberModal .mc-role.admin { background:rgba(255,140,66,0.2); color:#ff8c42; }
+    #memberModal .mc-role.sub   { background:rgba(58,155,220,0.2); color:#3a9bdc; }
+    #memberModal .mc-role.worker{ background:rgba(100,110,130,0.3); color:#8a9ab0; }
+    #memberModal select.member-role-select {
+      background:#1a1e25; border:1px solid #2a3040; border-radius:4px;
+      padding:5px 8px; color:white; font-size:12px;
+    }
+    #memberModal .modal-buttons { margin: 0; padding: 14px 18px; border-top: 1px solid #2a3040; justify-content: flex-end; }
+    #memberModal .modal-buttons button {
+      background:#2a3040; color:#e8eaf0; border:1px solid #2a3040; border-radius:6px; font-weight:700;
+    }
+
+    /* ⑦ 点検中モーダル（D案デザイン） */
+    #tenkenModal .modal-box {
+      background:#182C3A; border:1px solid #3a9bdc; border-radius:12px;
+      max-width:360px; padding:0; overflow:hidden;
+      box-shadow:0 0 30px rgba(58,155,220,0.3);
+    }
+    #tenkenModal .tenken-header-area {
+      background:#1a1e25; border-bottom:2px solid #3a9bdc; padding:12px 18px; text-align:center;
+    }
+    #tenkenModal .tenken-header-area p:first-child {
+      font-size:36px; font-weight:900; color:#e53935; margin:0;
+      font-family:'Inter',sans-serif; animation:tenkenchuu-text-blink 1s ease-in-out infinite;
+    }
+    #tenkenModal #tenkenRoomLabel { font-size:18px; color:#3a9bdc; font-weight:700; margin-top:4px; }
+    #tenkenModal .tenken-content-area { padding:16px 18px; }
+    #tenkenModal #tenkenSetsubiInfo {
+      background:#1a1e25 !important; border:1px solid #2a3040; border-radius:6px;
+      padding:10px 14px !important; margin-bottom:14px !important; font-size:13px; color:#e8eaf0 !important;
+    }
+    #tenkenModal .modal-buttons { display:flex; flex-direction:column; gap:8px; margin-top:0; }
+    #tenkenModal .modal-buttons button { width:100%; box-sizing:border-box; font-size:15px; padding:12px; border-radius:6px; border:none; font-weight:700; cursor:pointer; }
+    #tenkenModal #tenkenFinishBtn { background:#1a4a2a; color:#2ecc71; border:1px solid #2a6a3a; }
+    #tenkenModal #tenkenFuryoBtn {
+      background:linear-gradient(150deg,#5e3310,#3d2008); color:#ff8c42;
+      box-shadow:4px 4px 10px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.07);
+    }
+    #tenkenModal .tenken-btn-row { display:flex; gap:8px; }
+    #tenkenModal .tenken-btn-row button { flex:1; }
+    #tenkenModal #tenkenBackBtn { background:white; color:#1a1a1a; border:1px solid #ccc; }
+    #tenkenModal #tenkenCancelBtn { background:#5a1a1a; color:#ff6060; border:1px solid #7a2a2a; }
+
     #signCanvas { border: 2px solid #333; border-radius: 4px; width: 100%; touch-action: none; background: white; }
     #signClear { background: #eee; }
     #signOk { background: #90ee90; }
@@ -1276,15 +1336,21 @@
 
   <!-- 点検終了モーダル -->
   <div id="tenkenModal" class="modal">
-    <div class="modal-box" style="text-align:center;">
-      <p style="font-size:36px;font-weight:bold;color:#e53935;margin:16px 0;animation:tenkenchuu-text-blink 1s ease-in-out infinite;">点検中</p>
-      <p id="tenkenRoomLabel" style="font-size:18px;color:#555;margin-bottom:12px;"></p>
-      <div id="tenkenSetsubiInfo" style="display:none;background:#f5f5f5;border-radius:6px;padding:10px;margin-bottom:16px;font-size:14px;color:#333;text-align:left;"></div>
-      <div class="modal-buttons">
-        <button onclick="finishTenken()" style="background:#1e88e5;color:white;font-size:16px;padding:10px 24px;">点検終了（サインへ）</button>
-        <button onclick="furyoFromTenken()" style="background:#fff3e0;color:#e65100;font-size:15px;padding:10px 16px;">不良内容を編集</button>
-        <button onclick="closeTenkenModal()" style="background:#eee;">表に戻る</button>
-        <button onclick="cancelTenken()" style="background:#fff0f0;color:#c00;">キャンセル</button>
+    <div class="modal-box">
+      <div class="tenken-header-area">
+        <p>点検中</p>
+        <p id="tenkenRoomLabel"></p>
+      </div>
+      <div class="tenken-content-area">
+        <div id="tenkenSetsubiInfo" style="display:none;"></div>
+        <div class="modal-buttons">
+          <button id="tenkenFinishBtn" onclick="finishTenken()">点検終了（サインへ）</button>
+          <button id="tenkenFuryoBtn" onclick="furyoFromTenken()">不良内容を編集</button>
+          <div class="tenken-btn-row">
+            <button id="tenkenBackBtn" onclick="closeTenkenModal()">表に戻る</button>
+            <button id="tenkenCancelBtn" onclick="cancelTenken()">キャンセル</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1345,12 +1411,12 @@
 
   <!-- メンバー管理モーダル -->
   <div id="memberModal" class="modal">
-    <div class="modal-box" style="max-width:480px;">
+    <div class="modal-box">
       <h2>👥 メンバー管理</h2>
-      <p style="font-size:13px;color:#666;margin-bottom:12px;">参加メンバーの権限を設定します。</p>
+      <p class="member-desc">参加メンバーの権限を設定します。</p>
       <div id="memberList"></div>
-      <div class="modal-buttons" style="margin-top:16px;">
-        <button onclick="closeMemberModal()" style="background:#eee;">閉じる</button>
+      <div class="modal-buttons">
+        <button onclick="closeMemberModal()">閉じる</button>
       </div>
     </div>
   </div>
@@ -3702,25 +3768,26 @@
       const role = window.myRole || 'worker';
       const isAdmin = role === 'admin';
       if (docs.length === 0) {
-        list.innerHTML = '<p style="color:#aaa;font-size:13px;">まだ参加メンバーがいません</p>';
+        list.innerHTML = '<p style="color:#6a7280;font-size:13px;padding:10px 0;">まだ参加メンバーがいません</p>';
         return;
       }
       list.innerHTML = docs.map(d => {
         const isMe = window.currentUser && d.uid === window.currentUser.uid;
         const roleLabel = window.ROLE_LABELS ? window.ROLE_LABELS[d.role] || '一般' : d.role;
+        const roleClass = d.role === 'admin' ? 'admin' : (d.role === 'sub' ? 'sub' : 'worker');
         if (isAdmin && !isMe) {
-          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
-            <span style="font-size:14px;">${d.displayName || d.uid}</span>
-            <select onchange="changeMemberRole('${d.uid}', this.value)" style="font-size:13px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;">
+          return `<div class="member-row">
+            <div class="member-name">${d.displayName || d.uid}</div>
+            <select class="member-role-select" onchange="changeMemberRole('${d.uid}', this.value)">
               <option value="admin" ${d.role === 'admin' ? 'selected' : ''}>管理者</option>
               <option value="sub" ${d.role === 'sub' ? 'selected' : ''}>サブ管理者</option>
               <option value="worker" ${(!d.role || d.role === 'worker') ? 'selected' : ''}>一般</option>
             </select>
           </div>`;
         } else {
-          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
-            <span style="font-size:14px;">${d.displayName || d.uid}${isMe ? '（自分）' : ''}</span>
-            <span style="font-size:13px;color:#666;">${roleLabel}</span>
+          return `<div class="member-row">
+            <div class="member-name">${d.displayName || d.uid}${isMe ? '（自分）' : ''}</div>
+            <span class="mc-role ${roleClass}">${roleLabel}</span>
           </div>`;
         }
       }).join('');
