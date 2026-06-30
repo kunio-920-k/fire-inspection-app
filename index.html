@@ -99,8 +99,8 @@
     .setsubi-inputs span { font-size: 13px; }
     .setsubi-inputs input { width: 50px; font-size: 14px; margin: 0; }
 
-    #yoyakuArea { margin-top: 0; padding: 16px 20px; display: none; border-top: 3px solid #ff8c42; }
-    #yoyakuArea h2 { font-size: 16px; margin-bottom: 8px; }
+    #yoyakuArea { margin-top: 0; padding: 16px 20px; display: none; border-top: 3px solid #ff8c42; background: #182C3A; }
+    #yoyakuArea h2 { font-size: 16px; margin-bottom: 8px; color: #fff; }
     #yoyakuTable { border-collapse: collapse; width: 100%; margin-top: 8px; table-layout: fixed; }
     #yoyakuTable th { border: 1px solid #333; background: #ddd; padding: 4px 2px; font-size: 12px; text-align: center; }
     #yoyakuTable td { border: 1px solid #333; padding: 4px 2px; font-size: 12px; text-align: center; vertical-align: middle; overflow: hidden; }
@@ -120,9 +120,9 @@
     .yoyaku-add button { font-size: 14px; padding: 6px 14px; margin-top: 0; }
     .yoyaku-delete { font-size: 12px; padding: 2px 8px; background: #ffcccc; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; }
     #notePatternManage { margin-top: 8px; font-size: 13px; }
-    #notePatternManage a { cursor: pointer; color: #336699; text-decoration: underline; }
+    #notePatternManage a { cursor: pointer; color: #ff8c42; text-decoration: underline; }
 
-    #outputArea { margin-top: 0; padding: 16px 20px 20px; display: none; }
+    #outputArea { margin-top: 0; padding: 16px 20px 20px; display: none; background: #182C3A; }
     #outputArea button { margin-right: 8px; margin-bottom: 8px; font-size: 14px; padding: 8px 14px; }
     #textOutput { margin-top: 12px; width: 100%; height: 150px; font-size: 13px; display: none; }
 
@@ -1404,18 +1404,18 @@
   </div>
 
   <div id="outputArea">
-    <button onclick="printRyomenzu()">📄 立面図を印刷</button>
-    <button onclick="exportFuryoText()">📋 不良一覧テキストを表示</button>
-    <button onclick="printFuryo()">🖨️ 不良一覧を印刷</button>
+    <button onclick="printRyomenzu()" style="background:#f0f0f0;color:#1a1a1a;">📄 立面図を印刷</button>
+    <button onclick="exportFuryoText()" style="background:#f0f0f0;color:#1a1a1a;">📋 不良一覧テキストを表示</button>
+    <button onclick="printFuryo()" style="background:#f0f0f0;color:#1a1a1a;">🖨️ 不良一覧を印刷</button>
     <button onclick="deleteAllSigns()" style="background:#fff0f0;color:#cc0000;">🗑️ サイン画像を削除（印刷完了後）</button>
     <button id="sendLogBtn" onclick="sendLogByEmail()" style="background:#f3e5f5;color:#6a1b9a;">📧 ログをメールで送る</button>
     <button id="endWorkBtn" onclick="endWorkSession()" style="background:#c62828;color:white;font-weight:bold;">⏹ 本日の作業を終了する</button>
     <br>
-    <textarea id="textOutput" readonly></textarea>
+    <textarea id="textOutput" readonly style="background:#fff;color:#1a1a1a;"></textarea>
   </div>
 
-  <div id="memoArea" style="display:none;margin-top:0;padding:16px 20px;border-top:none;">
-    <div style="font-weight:bold;font-size:14px;margin-bottom:8px;">📝 現場メモ</div>
+  <div id="memoArea" style="display:none;margin-top:0;padding:16px 20px;border-top:none;background:#182C3A;">
+    <div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#fff;">📝 現場メモ</div>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <input type="text" id="memoInput" placeholder="メモを入力..." style="flex:1;font-size:14px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
       <button id="memoVoiceBtn" onclick="toggleVoiceMemo()" style="padding:6px 12px;font-size:18px;background:#eef5ff;">🎤</button>
@@ -3220,13 +3220,13 @@
       const list = document.getElementById('memoList');
       if (!list) return;
       if (memos.length === 0) {
-        list.innerHTML = '<span style="color:#555;">まだメモはありません</span>';
+        list.innerHTML = '<span style="color:#9aa5b0;">まだメモはありません</span>';
         return;
       }
       list.innerHTML = memos.map(m => {
         const time = m.createdAt ? new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
-        return '<div style="padding:5px 0;border-bottom:1px solid #eee;">' +
-          '<span style="color:#888;font-size:11px;">' + time + ' ' + m.author + '　</span>' +
+        return '<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.15);color:#e8ecef;">' +
+          '<span style="color:#9aa5b0;font-size:11px;">' + time + ' ' + m.author + '　</span>' +
           '<span>' + m.text.replace(/</g, '&lt;') + '</span></div>';
       }).join('');
       list.scrollTop = list.scrollHeight;
