@@ -1058,18 +1058,19 @@
 
   <!-- ログイン後の新規/既存選択画面 -->
   <div id="startScreen" style="display:none;position:fixed;inset:0;background:linear-gradient(180deg,#716B66 0%,#BCB8AD 100%);z-index:100;overflow-y:auto;">
-    <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
-      <!-- ヘッダー -->
-      <div style="background:#182C3A;border-bottom:3px solid #ff8c42;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;margin:-20px -16px 20px;border-radius:0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">消防設備</span>
-          <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
-        </div>
-        <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
-          <div id="startClockDisp" style="font-size:13px;color:white;font-family:'Inter',sans-serif;font-weight:600;"></div>
-          <div id="startDateDisp"></div>
-        </div>
+    <!-- ヘッダー（画面幅いっぱい） -->
+    <div style="background:#182C3A;border-bottom:3px solid #ff8c42;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:#ff8c42;color:white;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;">消防設備</span>
+        <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
       </div>
+      <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
+        <div id="startClockDisp" style="font-size:13px;color:white;font-family:'Inter',sans-serif;font-weight:600;"></div>
+        <div id="startDateDisp"></div>
+      </div>
+    </div>
+    <!-- 本文（中央寄せ） -->
+    <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
       <!-- ステータス -->
       <div style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;">
         <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
@@ -1115,6 +1116,7 @@
         <a onclick="confirmLogout()" style="color:#3a5060;cursor:pointer;">ログアウト</a>
       </div>
     </div>
+  </div>
   </div>
 
   <!-- 継続中の物件選択モーダル -->
