@@ -620,6 +620,8 @@
           }, { merge: true }).then(() => {
             window.myRole = initialRole;
             if (window.applyRoleUI) window.applyRoleUI();
+            // 管理者ならdismissedをリセット
+            if (initialRole === 'admin' && window.clearDismissed) window.clearDismissed();
           });
         }
       }).catch((e) => dlog('presence初期登録エラー / ' + e.message));
@@ -1021,11 +1023,16 @@
             if (!snap.exists() || !snap.data()) return;
 
             // 作業終了フラグを検知 → 管理者以外はリセットしてログアウト
-            if (snap.data().dismissed === true && window.myRole !== 'admin') {
-              localStorage.removeItem('mc_job_id');
-              alert('本日の作業が終了しました。お疲れさまでした。');
-              location.reload();
-              return;
+            if (snap.data().dismissed === true) {
+              if (window.myRole === 'admin') {
+                // 管理者は自動でリセット
+                if (window.clearDismissed) window.clearDismissed();
+              } else {
+                localStorage.removeItem('mc_job_id');
+                alert('本日の作業が終了しました。お疲れさまでした。');
+                location.reload();
+                return;
+              }
             }
 
             if (!snap.data().data) return;
