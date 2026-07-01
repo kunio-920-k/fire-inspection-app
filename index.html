@@ -490,6 +490,24 @@
       }, 800);
     };
 
+    // 即時保存版（デバウンスなし）。この後すぐlocation.reload()する場面で、
+    // 保存が終わる前にリロードされてデータが消える事故を防ぐために使う。
+    window.saveInspectionToCloudNow = function (stateObj) {
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve();
+      clearTimeout(saveTimer);
+      const ref = doc(db, 'inspections', window.currentJobId);
+      return setDoc(ref, {
+        data: JSON.stringify(stateObj),
+        updatedAt: serverTimestamp(),
+        lastEditedBy: window.currentUser.email || ''
+      }, { merge: true }).then(() => {
+        dlog('クラウド即時保存OK / job=' + window.currentJobId);
+      }).catch((e) => {
+        dlog('クラウド即時保存エラー / ' + e.message);
+        console.error('クラウド即時保存エラー:', e);
+      });
+    };
+
     // 前回保存された点検データを読み込む。データが無ければnullを返す。
     window.loadInspectionFromCloud = function () {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve(null);
@@ -1947,11 +1965,17 @@
         localStorage.setItem('mc_job_id', newJobId);
         localStorage.setItem('mc_goto_setup', '1');
         window.currentJobId = newJobId;
-        if (window.saveInspectionToCloud) window.saveInspectionToCloud(newState);
         if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
         document.getElementById('startScreen').style.display = 'none';
-        alert('新規登録を開始します。一括設定画面を開きます。');
-        location.reload();
+        const proceedToSetup = () => {
+          alert('新規登録を開始します。一括設定画面を開きます。');
+          location.reload();
+        };
+        if (window.saveInspectionToCloudNow) {
+          window.saveInspectionToCloudNow(newState).then(proceedToSetup);
+        } else {
+          proceedToSetup();
+        }
       });
     }
 
@@ -3796,17 +3820,20 @@
         };
         localStorage.setItem('mc_job_id', newJobId);
         window.currentJobId = newJobId;
-        // Firestoreに保存
-        if (window.saveInspectionToCloud) {
-          window.saveInspectionToCloud(newState);
-        }
         if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
         // 複製元を非表示（過去の物件）に移動
         if (window.hideJob) window.hideJob(srcJobId);
         localStorage.setItem('mc_goto_setup', '1');
         closeJobListModal();
-        alert('新しい現場を作成しました。一括設定画面を開きます。');
-        location.reload();
+        const proceedToSetup = () => {
+          alert('新しい現場を作成しました。一括設定画面を開きます。');
+          location.reload();
+        };
+        if (window.saveInspectionToCloudNow) {
+          window.saveInspectionToCloudNow(newState).then(proceedToSetup);
+        } else {
+          proceedToSetup();
+        }
       });
     }
 
