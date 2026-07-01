@@ -527,6 +527,10 @@
         } else {
           window.isJobOwner = true;
         }
+        // オーナー（管理者）ならdismissedを自動リセット
+        if (window.isJobOwner && snap.exists() && snap.data() && snap.data().dismissed === true) {
+          setDoc(ref, { dismissed: false }, { merge: true });
+        }
         return window.isJobOwner;
       }).catch((e) => {
         dlog('オーナー確認エラー / ' + e.message);
@@ -773,6 +777,10 @@
       return getDoc(ref).then((snap) => {
         if (!snap.exists()) return null;
         const d = snap.data();
+        // 管理者（オーナー）ならdismissedを自動リセット
+        if (d && d.dismissed === true && window.isJobOwner) {
+          setDoc(ref, { dismissed: false }, { merge: true });
+        }
         if (!d || !d.data) return null;
         try { return JSON.parse(d.data); }
         catch (e) { return null; }
@@ -1790,6 +1798,8 @@
     function resumeJob(jobId) {
       localStorage.setItem('mc_job_id', jobId);
       window.currentJobId = jobId;
+      // dismissedフラグを念のためリセット（管理者が次回入れなくなるのを防ぐ）
+      if (window.clearDismissed) window.clearDismissed();
       closeContinueModal();
       document.getElementById('startScreen').style.display = 'none';
       location.reload();
