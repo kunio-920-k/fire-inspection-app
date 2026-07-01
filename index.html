@@ -1482,9 +1482,9 @@
 
   <div id="outputArea">
     <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      <button onclick="printRyomenzu()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">立面図を印刷</button>
+      <button id="printRyomenzuBtn" onclick="printRyomenzu()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">立面図を印刷</button>
       <button onclick="exportFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
-      <button onclick="printFuryo()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧を印刷</button>
+      <button id="printFuryoBtn" onclick="printFuryo()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧を印刷</button>
       <button onclick="deleteAllSigns()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#ff8080;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">サイン画像を削除（印刷完了後）</button>
       <button id="sendLogBtn" onclick="sendLogByEmail()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#d8a8ff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">ログをメールで送る</button>
       <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#c62828;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">本日の作業を終了する</button>
@@ -1679,6 +1679,10 @@
       if (endWorkBtn) endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const sendLogBtn = document.getElementById('sendLogBtn');
       if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const printRyomenzuBtn = document.getElementById('printRyomenzuBtn');
+      if (printRyomenzuBtn) printRyomenzuBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
+      const printFuryoBtn = document.getElementById('printFuryoBtn');
+      if (printFuryoBtn) printFuryoBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
 
       // 管理者・サブ管理者：備考パターン編集
       const notePatternManage = document.getElementById('notePatternManage');
