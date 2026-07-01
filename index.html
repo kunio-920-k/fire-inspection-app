@@ -89,6 +89,8 @@
     #setup .mc-label-new { font-size:14px; color:#1a1a1a; margin-bottom:5px; }
     #setup .checkbox-area { color:#1a1a1a; font-size:13px; margin:6px 0; }
     #setup .setup-generate-btn { width:100%; margin-top:16px; background:#e07020; color:white; font-weight:700; border:none; border-radius:6px; padding:12px; font-size:14px; cursor:pointer; box-shadow:4px 4px 10px rgba(0,0,0,0.3); }
+    #setup #scheduleDayList .schedule-day-row { background: rgba(255,255,255,0.55); }
+    #setup #scheduleDayList input[type=date] { width: auto; }
     #backToSetupBtn { display: none; margin-bottom: 10px; background: #eee; }
 
     #setsubiSetupArea { margin-top: 12px; padding: 10px; border: 1px solid #aad; background: #f0f4ff; border-radius: 6px; display: none; }
@@ -1314,6 +1316,16 @@
         <div id="setsubiSetupList"></div>
       </div>
 
+      <div class="setup-section" style="margin-top:20px;">スケジュール設定</div>
+      <p style="font-size:12px;color:#4a4040;margin:-6px 0 10px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
+      <div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.5);border:1px solid rgba(0,0,0,0.12);border-radius:6px;">
+        <label style="font-size:13px;color:#1a1a1a;">予約の事前通知タイミング：
+          <input type="number" id="noticeMinutes" min="1" max="60" value="5" style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;margin:0 4px;">分前
+        </label>
+      </div>
+      <div id="scheduleDayList"></div>
+      <button onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
+
       <br>
       <button onclick="prepareEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:10px;font-size:13px;cursor:pointer;margin-bottom:8px;">号室を確認・編集する</button>
       <div id="editArea">
@@ -1457,20 +1469,12 @@
     </div>
   </div>
 
-  <!-- スケジュール設定モーダル -->
+  <!-- スケジュール設定モーダル（暫定：編集UIは一括設定画面へ移動。②③で「スケジュール確認」＝閲覧専用に作り変え予定） -->
   <div id="scheduleModal" class="modal">
     <div class="modal-box" style="max-width:520px;">
       <h2>📅 スケジュール設定</h2>
-      <p style="font-size:13px;color:#666;margin-bottom:8px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
-      <div style="margin-bottom:14px;padding:10px;background:#f5f5f5;border-radius:6px;">
-        <label style="font-size:13px;">予約の事前通知タイミング：
-          <input type="number" id="noticeMinutes" min="1" max="60" value="5" style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;margin:0 4px;">分前
-        </label>
-      </div>
-      <div id="scheduleDayList"></div>
-      <button onclick="addScheduleDay()" style="margin-top:8px;width:100%;padding:8px;background:#eef5ff;border:1px dashed #336699;border-radius:4px;font-size:13px;cursor:pointer;">＋ 作業日を追加</button>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">スケジュールの入力欄は「一括設定画面」に移動しました。編集は一括設定画面から行ってください。</p>
       <div class="modal-buttons" style="margin-top:16px;">
-        <button onclick="saveSchedule()" style="background:#336699;color:white;">保存</button>
         <button onclick="closeScheduleModal()" style="background:#eee;">閉じる</button>
       </div>
     </div>
@@ -1845,6 +1849,7 @@
       if (window.applyOwnerUI) window.applyOwnerUI();
       buildNoteSelects();
       buildTimeSelects();
+      renderScheduleDayList();
       document.getElementById('setup').style.display = 'block';
     }
 
@@ -2416,6 +2421,7 @@
       document.getElementById('backToSetupBtn').style.display = 'none';
       // 現在の入力中フォーム値を保持するため、号室確認画面を開いた状態にする
       prepareEdit();
+      renderScheduleDayList();
     }
 
     function generateTable() {
@@ -2610,6 +2616,7 @@
 
       tableGenerated = true;
       applyOwnerUI();
+      flushScheduleDOM();
       applyScheduleDim();
       syncToCloud();
     }
@@ -3472,11 +3479,19 @@
 
     function addScheduleDay() {
       flushScheduleDOM();
-      const today = new Date();
-      const yyyy = today.getFullYear();
-      const mm = String(today.getMonth()+1).padStart(2,'0');
-      const dd = String(today.getDate()).padStart(2,'0');
-      scheduleData.push({ date: yyyy+'-'+mm+'-'+dd, reserveOnly: false, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1 }] });
+      const propDateEl = document.getElementById('propDate');
+      let defaultDate;
+      if (scheduleData.length === 0 && propDateEl && propDateEl.value) {
+        // 最初の1件目は、物件情報の「作業日」に合わせる（単日現場での二重入力・表記ゆれを防ぐ）
+        defaultDate = propDateEl.value;
+      } else {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth()+1).padStart(2,'0');
+        const dd = String(today.getDate()).padStart(2,'0');
+        defaultDate = yyyy+'-'+mm+'-'+dd;
+      }
+      scheduleData.push({ date: defaultDate, reserveOnly: false, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1 }] });
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
