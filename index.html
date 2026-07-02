@@ -41,7 +41,7 @@
     td.cell.furyo { outline: 3px solid red; outline-offset: -3px; }
     td.cell.yoyaku { background-color: #ffb347; }
     td.room-number.schedule-dim { background-color: #b0b0b0 !important; color: #000; }
-    td.room-number.hasshigo.schedule-dim { background-color: #b0c2d0 !important; color: #000; }
+    td.room-number.hasshigo.schedule-dim { background-color: #4B5B7F !important; color: #fff; }
     td.room-number.yoyaku-dim { background-color: inherit !important; }
     td.empty-number { height: 35px; background-color: #eee; }
     td.empty-state { height: 55px; background-color: #eee; }
@@ -1303,7 +1303,7 @@
     </div>
     <div class="setup-body">
       <button id="backToSetupBtn" onclick="backToSetupConfirmed()" style="display:none;">← 立面図に戻る（編集を続ける）</button>
-      <button id="homeScreenBtn" onclick="confirmGoHomeScreen()" style="margin-bottom:10px;background:#eee;">← ホーム画面に戻る</button>
+      <button id="homeScreenBtn" onclick="confirmGoHomeScreen()" style="margin-bottom:10px;background:#eee;">🏠 ホーム画面に戻る</button>
 
       <div id="propertyInputArea">
         <div class="setup-section">物件情報</div>
@@ -1392,11 +1392,11 @@
       </div>
       <!-- アクションボタン -->
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">子機を招待（QR）</button>
-        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">スケジュール確認</button>
-        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">メンバー管理</button>
-        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">現場一覧</button>
-        <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">一括設定画面へ</button>
+        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📱 子機を招待（QR）</button>
+        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📅 スケジュール確認</button>
+        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">👥 メンバー管理</button>
+        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📋 現場一覧</button>
+        <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">⚙️ 一括設定画面へ</button>
       </div>
     </div>
   </div>
