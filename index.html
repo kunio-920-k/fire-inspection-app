@@ -1379,7 +1379,7 @@
       <!-- アクションボタン -->
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
         <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📱 子機を招待（QR）</button>
-        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📅 スケジュール設定</button>
+        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📅 スケジュール確認</button>
         <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">👥 メンバー管理</button>
         <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">📋 現場一覧</button>
         <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:12px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">⚙️ 一括設定画面へ</button>
@@ -1488,11 +1488,12 @@
     </div>
   </div>
 
-  <!-- スケジュール設定モーダル（暫定：編集UIは一括設定画面へ移動。②③で「スケジュール確認」＝閲覧専用に作り変え予定） -->
+  <!-- スケジュール確認モーダル（閲覧専用。編集は一括設定画面から行う） -->
   <div id="scheduleModal" class="modal">
     <div class="modal-box" style="max-width:520px;">
-      <h2>📅 スケジュール設定</h2>
-      <p style="font-size:13px;color:#666;margin-bottom:8px;">スケジュールの入力欄は「一括設定画面」に移動しました。編集は一括設定画面から行ってください。</p>
+      <h2>📅 スケジュール確認</h2>
+      <p style="font-size:13px;color:#666;margin-bottom:8px;">編集は一括設定画面から行ってください。</p>
+      <div id="scheduleReadOnlyList" style="max-height:50vh;overflow-y:auto;"></div>
       <div class="modal-buttons" style="margin-top:16px;">
         <button onclick="closeScheduleModal()" style="background:#eee;">閉じる</button>
       </div>
@@ -3431,11 +3432,38 @@
     let scheduleData = [];
 
     function openScheduleModal() {
-      renderScheduleDayList();
+      renderScheduleReadOnly();
       document.getElementById('scheduleModal').classList.add('active');
     }
     function closeScheduleModal() {
       document.getElementById('scheduleModal').classList.remove('active');
+    }
+
+    // スケジュール確認モーダル用：閲覧専用描画（入力欄・削除ボタンなし）
+    function renderScheduleReadOnly() {
+      const container = document.getElementById('scheduleReadOnlyList');
+      if (!scheduleData || scheduleData.length === 0) {
+        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">まだ作業日が登録されていません</p>';
+        return;
+      }
+      container.innerHTML = scheduleData.map(day => {
+        if (day.reserveOnly) {
+          return `
+          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
+            <div style="font-size:14px;font-weight:bold;">${formatDateJP(day.date)}</div>
+            <div style="font-size:13px;color:#555;margin-top:4px;">予備日（予約部屋のみ）</div>
+          </div>`;
+        }
+        const sessions = (day.sessions || []).map(s => `
+            <div style="font-size:13px;color:#333;padding-left:12px;margin-top:4px;">
+              ${s.label ? s.label + '　' : ''}${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階
+            </div>`).join('');
+        return `
+          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
+            <div style="font-size:14px;font-weight:bold;">${formatDateJP(day.date)}</div>
+            ${sessions || '<div style="font-size:13px;color:#aaa;padding-left:12px;margin-top:4px;">セッション未登録</div>'}
+          </div>`;
+      }).join('');
     }
 
     function renderScheduleDayList() {
