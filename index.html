@@ -764,7 +764,12 @@
 
     // 現場の概要情報を保存・更新する（物件名・作業日が設定された時に呼ぶ）
     window.saveJobSummary = function(jobId, name, date) {
-      if (!window.currentUser || !jobId) return;
+      if (!jobId) return;
+      if (!window.currentUser) {
+        // 認証がまだ整っていない → 保留しておき、認証確立後に自動リトライする
+        window._pendingJobSummary = { jobId, name, date };
+        return;
+      }
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
       getDoc(ref).then((snap) => {
         const existing = snap.exists() ? snap.data() : {};
@@ -937,6 +942,13 @@
     onAuthStateChanged(auth, (user) => {
       window.currentUser = user || null;
       dlog('onAuthStateChanged発火 / user=' + (user ? user.email : 'null') + ' / authReady=' + window.authReady);
+
+      // 認証未確立で保留されていたsaveJobSummaryがあれば、ここで再試行する
+      if (user && window._pendingJobSummary) {
+        const pending = window._pendingJobSummary;
+        window._pendingJobSummary = null;
+        window.saveJobSummary(pending.jobId, pending.name, pending.date);
+      }
 
       const emailLabel = document.getElementById('userEmailLabel');
 
@@ -2633,6 +2645,12 @@
       }
 
       updatePropertyDisplay();
+
+      // 一括設定完了時、現場一覧（継続中の物件）への反映を確実にするため明示的に呼ぶ
+      if (window.saveJobSummary && window.currentJobId) {
+        const prop = getProperty();
+        window.saveJobSummary(window.currentJobId, prop.name, prop.date);
+      }
 
       attachCellEvents();
 
