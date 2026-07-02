@@ -1825,6 +1825,24 @@
     function closeContinueModal() {
       document.getElementById('continuePropertyModal').classList.remove('active');
     }
+
+    // 継続中一覧から現場を完全削除する（他社に移った等、もう使わない現場用）
+    function confirmDeleteContinueJob(jobId, name) {
+      const ok = confirm('「' + name + '」を完全に削除します。\nこの操作は取り消せません。点検データ・サイン画像・ログなど、すべて削除されます。\n\n本当によろしいですか？');
+      if (!ok) return;
+      if (!window.deleteJobCompletely) return;
+      window.deleteJobCompletely(jobId).then(() => {
+        alert('削除しました。');
+        if (window.loadJobList) {
+          window.loadJobList().then((jobs) => {
+            window._allJobsCache = jobs;
+            renderContinueList();
+          });
+        }
+      }).catch((e) => {
+        alert('削除に失敗しました：' + e.message);
+      });
+    }
     function renderContinueList() {
       const query = (document.getElementById('continueSearch').value || '').trim().toLowerCase();
       const jobs = (window._allJobsCache || []).filter(j => !j.hidden && (!query || (j.name || '').toLowerCase().includes(query)));
@@ -1843,10 +1861,16 @@
         return `<div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:8px;background:white;">
           <div style="font-weight:bold;font-size:15px;margin-bottom:4px;">${j.name}</div>
           <div style="font-size:12px;color:#888;margin-bottom:10px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
-          <button onclick="resumeJob('${j.jobId}')"
-            style="width:100%;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
-            この物件の続きを開始
-          </button>
+          <div style="display:flex;gap:8px;">
+            <button onclick="resumeJob('${j.jobId}')"
+              style="flex:1;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+              この物件の続きを開始
+            </button>
+            <button onclick="confirmDeleteContinueJob('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}')"
+              style="padding:10px 14px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:6px;font-size:13px;cursor:pointer;">
+              🗑 削除
+            </button>
+          </div>
         </div>`;
       }).join('');
     }
@@ -3955,8 +3979,6 @@
       if (!ok) return;
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
-          // 現場を過去の物件に移動
-          if (window.hideJob && window.currentJobId) window.hideJob(window.currentJobId);
           // 3秒後にdismissedフラグをリセット
           setTimeout(() => {
             if (window.clearDismissed) window.clearDismissed();
