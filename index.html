@@ -1523,12 +1523,7 @@
   <div id="yoyakuArea">
     <h2>予約一覧</h2>
     <div class="yoyaku-add">
-      <input type="text" id="addRoom" class="room-input" placeholder="号室">
-      <select id="addTimeH" style="width:52px;"></select><span style="color:#fff;">時</span>
-      <select id="addTimeM" style="width:52px;"></select><span style="color:#fff;">分</span>
-      <select id="addNote" onchange="toggleNoteOther('addNote','addNoteOther')"></select>
-      <input type="text" id="addNoteOther" class="note-input" placeholder="備考を入力" style="display:none;">
-      <button onclick="addYoyaku()">追加</button>
+      <button onclick="openAddYoyakuModal()">＋ 予約を登録</button>
     </div>
     <div id="notePatternManage"><a onclick="openPatternModal()">備考パターンを編集する</a></div>
     <table id="yoyakuTable">
@@ -1620,7 +1615,9 @@
   <div id="yoyakuModal" class="modal">
     <div class="modal-box">
       <h2 id="yoyakuTitle">予約を設定</h2>
-      <p style="font-size:13px;color:#666;">時間を選択してください</p>
+      <p style="font-size:13px;color:#666;">日付</p>
+      <select id="yoyakuModalDate" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <p style="font-size:13px;color:#666;margin-top:8px;">時間を選択してください</p>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
         <select id="yoyakuModalTimeH" style="flex:1;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
         <span style="font-size:14px;">時</span>
@@ -1634,6 +1631,35 @@
         <button id="yoyakuCancel" onclick="cancelYoyaku()">キャンセル</button>
         <button id="yoyakuDelete" onclick="deleteYoyaku()">予約削除</button>
         <button id="yoyakuOk" onclick="confirmYoyaku()">設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 予約を新規登録するモーダル（号室を指定して手入力） -->
+  <div id="yoyakuAddModal" class="modal">
+    <div class="modal-box">
+      <h2>予約を登録</h2>
+      <div id="addModalBuildingRow" style="display:none;">
+        <p style="font-size:13px;color:#666;">対象号棟</p>
+        <select id="addModalBuilding" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      </div>
+      <p style="font-size:13px;color:#666;margin-top:8px;">日付</p>
+      <select id="addModalDate" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <p style="font-size:13px;color:#666;margin-top:8px;">号室</p>
+      <input type="text" id="addModalRoom" placeholder="号室" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;">
+      <p style="font-size:13px;color:#666;margin-top:8px;">時間</p>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <select id="addModalTimeH" style="flex:1;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+        <span style="font-size:14px;">時</span>
+        <select id="addModalTimeM" style="flex:1;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+        <span style="font-size:14px;">分</span>
+      </div>
+      <p style="font-size:13px;color:#666;">備考</p>
+      <select id="addModalNote" onchange="toggleNoteOther('addModalNote','addModalNoteOther')" style="width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;"></select>
+      <input type="text" id="addModalNoteOther" placeholder="備考を入力" style="display:none;margin-top:8px;width:100%;font-size:14px;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;">
+      <div class="modal-buttons">
+        <button onclick="document.getElementById('yoyakuAddModal').classList.remove('active')">キャンセル</button>
+        <button onclick="confirmAddYoyakuModal()">登録</button>
       </div>
     </div>
   </div>
@@ -1747,7 +1773,8 @@
             furyo: cell.dataset.furyo || '',
             times: cell.dataset.times || '[]',
             yoyakuTime: cell.dataset.yoyakuTime || '',
-            yoyakuNote: cell.dataset.yoyakuNote || ''
+            yoyakuNote: cell.dataset.yoyakuNote || '',
+            yoyakuDate: cell.dataset.yoyakuDate || ''
           };
         });
         const rooms = {};
@@ -1840,9 +1867,10 @@
       let html = '';
       buildings.forEach((b, i) => {
         const active = i === currentBuildingIdx;
+        const color = buildingColor(i);
         const label = b.name ? b.name : ('号棟' + (i + 1));
         html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;padding:6px 12px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;' +
-          (active ? 'background:#ff8c42;color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;') + '">' + label +
+          (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label +
           (buildings.length > 1 ? ' <span onclick="event.stopPropagation();deleteBuildingTab(' + i + ')" style="margin-left:4px;opacity:0.7;">×</span>' : '') +
           '</span>';
       });
@@ -2183,7 +2211,7 @@
 
     function buildTimeSelects() {
       // 時セレクト（パス＋8〜18時）
-      const hourIds = ['addTimeH', 'yoyakuModalTimeH'];
+      const hourIds = ['addModalTimeH', 'yoyakuModalTimeH'];
       hourIds.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
@@ -2200,7 +2228,7 @@
         }
       });
       // 分セレクト（00〜59の1分刻み）
-      const minIds = ['addTimeM', 'yoyakuModalTimeM'];
+      const minIds = ['addModalTimeM', 'yoyakuModalTimeM'];
       minIds.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
@@ -2236,7 +2264,7 @@
     const NOTE_OTHER_VALUE = '__other__';
 
     function buildNoteSelects() {
-      const ids = ['addNote', 'yoyakuModalNote'];
+      const ids = ['addModalNote', 'yoyakuModalNote'];
       ids.forEach(id => {
         const sel = document.getElementById(id);
         const currentVal = sel.value;
@@ -2255,6 +2283,29 @@
       });
     }
     buildNoteSelects();
+
+    // スケジュール設定で登録した作業日を選択肢にした日付セレクトを組み立てる
+    function buildScheduleDateOptions(selectEl, selectedValue) {
+      if (!selectEl) return;
+      selectEl.innerHTML = '';
+      const blankOpt = document.createElement('option');
+      blankOpt.value = '';
+      blankOpt.textContent = scheduleData.length ? '（日付未選択）' : '（作業日が未登録です）';
+      selectEl.appendChild(blankOpt);
+      scheduleData.forEach(day => {
+        const opt = document.createElement('option');
+        opt.value = day.date;
+        opt.textContent = formatDateJP(day.date) + (day.reserveOnly ? '（予備日）' : '');
+        selectEl.appendChild(opt);
+      });
+      selectEl.value = selectedValue || '';
+    }
+
+    // 号棟ごとの目印カラー（タブ・予約一覧のラベルで共通して使う）
+    const BUILDING_COLOR_PALETTE = ['#ff8c42', '#4B5B7F', '#3a8f5b', '#b0405a', '#7a5cc4', '#c48a2e', '#2b8fa8', '#8a5a3c'];
+    function buildingColor(idx) {
+      return BUILDING_COLOR_PALETTE[idx % BUILDING_COLOR_PALETTE.length];
+    }
 
     // 「その他」選択時、テキスト入力欄の表示・非表示を切り替える
     function toggleNoteOther(selectId, inputId) {
@@ -2545,6 +2596,7 @@
               (cd && cd.times ? ' data-times=\'' + cd.times + '\'' : '') +
               (cd && cd.yoyakuTime ? ' data-yoyaku-time="' + cd.yoyakuTime + '"' : '') +
               (cd && cd.yoyakuNote ? ' data-yoyaku-note="' + cd.yoyakuNote + '"' : '') +
+              (cd && cd.yoyakuDate ? ' data-yoyaku-date="' + cd.yoyakuDate + '"' : '') +
               '>未</td>';
           } else {
             html += '<td class="empty-state"></td>';
@@ -2713,7 +2765,8 @@
             
             times: cell.dataset.times,
             yoyakuTime: cell.dataset.yoyakuTime,
-            yoyakuNote: cell.dataset.yoyakuNote
+            yoyakuNote: cell.dataset.yoyakuNote,
+            yoyakuDate: cell.dataset.yoyakuDate
           };
         });
       }
@@ -2780,6 +2833,7 @@
               (prev && prev.times ? ' data-times=\'' + prev.times + '\'' : '') +
               (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
               (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
+              (prev && prev.yoyakuDate ? ' data-yoyaku-date="' + prev.yoyakuDate + '"' : '') +
               '>未</td>';
           } else {
             html += '<td class="empty-state"></td>';
@@ -3360,6 +3414,7 @@
       yoyakuCell = cell;
       buildNoteSelects();
       document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
+      buildScheduleDateOptions(document.getElementById('yoyakuModalDate'), cell.dataset.yoyakuDate || '');
       const existingTime = cell.dataset.yoyakuTime || '';
       const parts = existingTime.split(':');
       const selH = document.getElementById('yoyakuModalTimeH');
@@ -3394,15 +3449,17 @@
       const time = getTimeFromSelects('yoyakuModalTimeH', 'yoyakuModalTimeM');
       const note = resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
       if (note === null) return;
+      const date = document.getElementById('yoyakuModalDate').value;
       const room = yoyakuCell.dataset.room;
       yoyakuCell.dataset.state = 'yoyaku';
       yoyakuCell.dataset.yoyakuTime = time;
       yoyakuCell.dataset.yoyakuNote = note;
+      yoyakuCell.dataset.yoyakuDate = date;
       yoyakuCell.classList.add('yoyaku');
       yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'furyo');
       updateCellDisplay(yoyakuCell);
       removeYoyakuByRoom(room);
-      yoyakuList.push({ time, room, note, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
+      yoyakuList.push({ time, room, note, date, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
       renderYoyakuTable();
       if (window.addLog) window.addLog('予約設定', { room: room, yoyakuTime: time });
       document.getElementById('yoyakuModal').classList.remove('active');
@@ -3418,6 +3475,7 @@
       yoyakuCell.dataset.state = 'mi';
       yoyakuCell.dataset.yoyakuTime = '';
       yoyakuCell.dataset.yoyakuNote = '';
+      yoyakuCell.dataset.yoyakuDate = '';
       yoyakuCell.classList.remove('yoyaku');
       updateCellDisplay(yoyakuCell);
       removeYoyakuByRoom(room);
@@ -3430,10 +3488,10 @@
       applyScheduleDim();
     }
 
-    function removeYoyakuByRoom(room) {
+    function removeYoyakuByRoom(room, buildingId) {
       // 同じ号室番号でも号棟が違えば別物件として扱う（他号棟の予約を誤って消さない）
-      const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
-      yoyakuList = yoyakuList.filter(y => !(y.room === room && (!y.buildingId || y.buildingId === curBuildingId)));
+      const targetId = buildingId !== undefined ? buildingId : (buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null);
+      yoyakuList = yoyakuList.filter(y => !(y.room === room && (!y.buildingId || y.buildingId === targetId)));
     }
 
     function buildingLabelForId(id) {
@@ -3442,33 +3500,78 @@
       return buildings[idx].name || ('号棟' + (idx + 1));
     }
 
-    function addYoyaku() {
+    // 現在表示中でない号棟については、DOMではなくbuildings配列の保存データを直接更新する
+    function markRoomAsYoyakuInBuilding(buildingIdx, room, time, note, date) {
+      if (buildingIdx === currentBuildingIdx) {
+        const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+        if (cell) {
+          cell.dataset.state = 'yoyaku';
+          cell.dataset.yoyakuTime = time;
+          cell.dataset.yoyakuNote = note;
+          cell.dataset.yoyakuDate = date;
+          cell.classList.add('yoyaku');
+          cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu');
+          updateCellDisplay(cell);
+        }
+        return;
+      }
+      const b = buildings[buildingIdx];
+      if (b && b.cells && b.cells[room]) {
+        b.cells[room].state = 'yoyaku';
+        b.cells[room].yoyakuTime = time;
+        b.cells[room].yoyakuNote = note;
+        b.cells[room].yoyakuDate = date;
+      }
+    }
+
+    // 予約登録モーダル（号室を指定して手入力）を開く
+    function openAddYoyakuModal() {
       const role = window.myRole || 'worker';
       if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
-      const room = toHankaku(document.getElementById('addRoom').value.trim());
-      const time = getTimeFromSelects('addTimeH', 'addTimeM');
-      const note = resolveNoteValue('addNote', 'addNoteOther');
+      buildNoteSelects();
+      const buildingRow = document.getElementById('addModalBuildingRow');
+      const buildingSel = document.getElementById('addModalBuilding');
+      if (buildings.length > 1) {
+        buildingRow.style.display = 'block';
+        buildingSel.innerHTML = '';
+        buildings.forEach((b, i) => {
+          const opt = document.createElement('option');
+          opt.value = b.id;
+          opt.textContent = b.name ? b.name : ('号棟' + (i + 1));
+          buildingSel.appendChild(opt);
+        });
+        buildingSel.value = buildings[currentBuildingIdx].id;
+      } else {
+        buildingRow.style.display = 'none';
+      }
+      buildScheduleDateOptions(document.getElementById('addModalDate'), '');
+      document.getElementById('addModalRoom').value = '';
+      document.getElementById('addModalTimeH').value = '';
+      document.getElementById('addModalNote').value = '';
+      document.getElementById('addModalNoteOther').style.display = 'none';
+      document.getElementById('addModalNoteOther').value = '';
+      document.getElementById('yoyakuAddModal').classList.add('active');
+    }
+
+    function confirmAddYoyakuModal() {
+      const room = toHankaku(document.getElementById('addModalRoom').value.trim());
+      const time = getTimeFromSelects('addModalTimeH', 'addModalTimeM');
+      const note = resolveNoteValue('addModalNote', 'addModalNoteOther');
       if (note === null) return;
       if (!room) { alert('号室を入力してください'); return; }
-      removeYoyakuByRoom(room);
-      yoyakuList.push({ time, room, note, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
+      const date = document.getElementById('addModalDate').value;
+      const buildingSel = document.getElementById('addModalBuilding');
+      const buildingId = (buildings.length > 1 && buildingSel) ? buildingSel.value : (buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null);
+      const buildingIdx = buildings.findIndex(b => b.id === buildingId);
+
+      removeYoyakuByRoom(room, buildingId);
+      yoyakuList.push({ time, room, note, date, buildingId });
       renderYoyakuTable();
-      const cell = document.querySelector('td.cell[data-room="' + room + '"]');
-      if (cell) {
-        cell.dataset.state = 'yoyaku';
-        cell.dataset.yoyakuTime = time;
-        cell.dataset.yoyakuNote = note;
-        cell.classList.add('yoyaku');
-        cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu');
-        updateCellDisplay(cell);
-      }
-      document.getElementById('addRoom').value = '';
-      document.getElementById('addNoteOther').style.display = 'none';
-      document.getElementById('addNoteOther').value = '';
+      if (buildingIdx >= 0) markRoomAsYoyakuInBuilding(buildingIdx, room, time, note, date);
+
       buildNoteSelects();
-      // 次の予約入力に備えてセレクトを「パス」に戻す
-      document.getElementById('addNote').value = '';
       syncToCloud();
+      document.getElementById('yoyakuAddModal').classList.remove('active');
     }
 
     function renderYoyakuTable() {
@@ -3477,14 +3580,18 @@
       const role = window.myRole || 'worker';
       const isAdmin = role === 'admin';
       const multiBuilding = buildings.length > 1;
+      const multiDay = scheduleData.length > 1;
       const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
 
       let list; // [{y, realIdx}]
       let sortedMode = false;
       if (isAdmin && multiBuilding) {
-        // 管理者（親機）：全号棟の予約をまとめて時間順に表示
+        // 管理者（親機）：全号棟の予約をまとめて日付→時間順に表示
         list = yoyakuList.map((y, realIdx) => ({ y, realIdx }));
         list.sort((a, b) => {
+          const da = a.y.date || '';
+          const db = b.y.date || '';
+          if (da !== db) return da.localeCompare(db);
           const ta = a.y.time === '' ? '99:99' : (a.y.time || '99:99');
           const tb = b.y.time === '' ? '99:99' : (b.y.time || '99:99');
           return ta.localeCompare(tb);
@@ -3506,8 +3613,12 @@
         if ((cell && cell.dataset.state === 'nyushitsu') || isPass) {
           tr.classList.add('done');
         }
-        const timeLabel = isPass ? 'パス' : y.time;
-        const roomLabel = (multiBuilding ? '<span style="color:#4B5B7F;font-size:11px;">[' + buildingLabelForId(y.buildingId) + ']</span> ' : '') + y.room;
+        const timeLabel = (multiDay && y.date ? formatDateJP(y.date) + ' ' : '') + (isPass ? 'パス' : y.time);
+        const bIdx = buildings.findIndex(b => b.id === y.buildingId);
+        const badge = multiBuilding
+          ? '<span style="display:inline-block;background:' + buildingColor(bIdx >= 0 ? bIdx : 0) + ';color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;">' + buildingLabelForId(y.buildingId) + '</span>'
+          : '';
+        const roomLabel = badge + y.room;
         let sortCell = '';
         if (!sortedMode && displayIdx < list.length - 1) {
           const nextRealIdx = list[displayIdx + 1].realIdx;
@@ -3768,15 +3879,17 @@
       const buildingPills = (ids, toggleCall, allCall) => {
         if (buildings.length <= 1) return '';
         const isAll = !ids || ids === 'ALL';
-        let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding-left:12px;margin:2px 0 8px;">';
-        html += '<span style="font-size:11px;color:#777;">対象号棟：</span>';
-        html += '<span onclick="' + allCall + '" style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' + (isAll ? 'background:#4B5B7F;color:#fff;' : 'background:#eee;color:#555;') + '">全号棟</span>';
+        let html = '<div style="padding-left:12px;margin:2px 0 8px;">';
+        html += '<div style="font-size:11px;color:#777;margin-bottom:3px;">対象号棟（タップして選ぶ／外す。色が付いているのが対象）</div>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">';
+        html += '<span onclick="' + allCall + '" style="font-size:12px;padding:3px 10px;border-radius:12px;cursor:pointer;border:2px solid ' + (isAll ? '#4B5B7F' : '#ccc') + ';' + (isAll ? 'background:#4B5B7F;color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#999;') + '">' + (isAll ? '✓ ' : '') + '全号棟</span>';
         buildings.forEach((b, i) => {
           const label = b.name ? b.name : ('号棟' + (i + 1));
           const checked = isAll || (Array.isArray(ids) && ids.includes(b.id));
-          html += '<span onclick="' + toggleCall + "('" + b.id + "')" + '" style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' + (checked ? 'background:#ff8c42;color:#fff;' : 'background:#eee;color:#999;') + '">' + label + '</span>';
+          const color = buildingColor(i);
+          html += '<span onclick="' + toggleCall + "('" + b.id + "')" + '" style="font-size:12px;padding:3px 10px;border-radius:12px;cursor:pointer;border:2px solid ' + (checked ? color : '#ccc') + ';' + (checked ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#999;') + '">' + (checked ? '✓ ' : '') + label + '</span>';
         });
-        html += '</div>';
+        html += '</div></div>';
         return html;
       };
       container.innerHTML = scheduleData.map((day, di) => {
@@ -4011,9 +4124,11 @@
     window.checkYoyakuNotifications = function() {
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
+      const todayStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
       const notice = getNoticeMinutes();
       yoyakuList.forEach(y => {
         if (!y.time || notifiedRooms.has(y.room)) return;
+        if (y.date && y.date !== todayStr) return; // 日付指定があり、今日でなければ対象外
         const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
         if (!cell || cell.dataset.state !== 'yoyaku') return;
         const parts = y.time.split(':');
