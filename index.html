@@ -3402,7 +3402,7 @@
       yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'furyo');
       updateCellDisplay(yoyakuCell);
       removeYoyakuByRoom(room);
-      yoyakuList.push({ time, room, note });
+      yoyakuList.push({ time, room, note, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
       renderYoyakuTable();
       if (window.addLog) window.addLog('予約設定', { room: room, yoyakuTime: time });
       document.getElementById('yoyakuModal').classList.remove('active');
@@ -3431,7 +3431,15 @@
     }
 
     function removeYoyakuByRoom(room) {
-      yoyakuList = yoyakuList.filter(y => y.room !== room);
+      // 同じ号室番号でも号棟が違えば別物件として扱う（他号棟の予約を誤って消さない）
+      const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
+      yoyakuList = yoyakuList.filter(y => !(y.room === room && (!y.buildingId || y.buildingId === curBuildingId)));
+    }
+
+    function buildingLabelForId(id) {
+      const idx = buildings.findIndex(b => b.id === id);
+      if (idx < 0) return '?';
+      return buildings[idx].name || ('号棟' + (idx + 1));
     }
 
     function addYoyaku() {
@@ -3443,7 +3451,7 @@
       if (note === null) return;
       if (!room) { alert('号室を入力してください'); return; }
       removeYoyakuByRoom(room);
-      yoyakuList.push({ time, room, note });
+      yoyakuList.push({ time, room, note, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
       renderYoyakuTable();
       const cell = document.querySelector('td.cell[data-room="' + room + '"]');
       if (cell) {
@@ -3466,7 +3474,31 @@
     function renderYoyakuTable() {
       const tbody = document.getElementById('yoyakuBody');
       tbody.innerHTML = '';
-      yoyakuList.forEach((y, idx) => {
+      const role = window.myRole || 'worker';
+      const isAdmin = role === 'admin';
+      const multiBuilding = buildings.length > 1;
+      const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
+
+      let list; // [{y, realIdx}]
+      let sortedMode = false;
+      if (isAdmin && multiBuilding) {
+        // 管理者（親機）：全号棟の予約をまとめて時間順に表示
+        list = yoyakuList.map((y, realIdx) => ({ y, realIdx }));
+        list.sort((a, b) => {
+          const ta = a.y.time === '' ? '99:99' : (a.y.time || '99:99');
+          const tb = b.y.time === '' ? '99:99' : (b.y.time || '99:99');
+          return ta.localeCompare(tb);
+        });
+        sortedMode = true;
+      } else {
+        // 一般権限（子機）、または号棟が1つだけの現場：今表示中の号棟の予約のみ、従来通りの並び順
+        list = [];
+        yoyakuList.forEach((y, realIdx) => {
+          if (!multiBuilding || !y.buildingId || y.buildingId === curBuildingId) list.push({ y, realIdx });
+        });
+      }
+
+      list.forEach(({ y, realIdx }, displayIdx) => {
         const tr = document.createElement('tr');
         const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
         const isPass = y.time === '';
@@ -3475,37 +3507,49 @@
           tr.classList.add('done');
         }
         const timeLabel = isPass ? 'パス' : y.time;
+        const roomLabel = (multiBuilding ? '<span style="color:#4B5B7F;font-size:11px;">[' + buildingLabelForId(y.buildingId) + ']</span> ' : '') + y.room;
+        let sortCell = '';
+        if (!sortedMode && displayIdx < list.length - 1) {
+          const nextRealIdx = list[displayIdx + 1].realIdx;
+          sortCell = '<button onclick="moveYoyaku(' + realIdx + ',' + nextRealIdx + ')">↓</button>';
+        }
         tr.innerHTML =
-          '<td>' + y.room + '</td>' +
+          '<td>' + roomLabel + '</td>' +
           '<td>' + timeLabel + '</td>' +
           '<td>' + y.note + '</td>' +
-          '<td class="sort-btn"><button onclick="moveYoyaku(' + idx + ',1)">↓</button></td>' +
-          '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + idx + ')">削除</button></td>';
+          '<td class="sort-btn">' + sortCell + '</td>' +
+          '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + realIdx + ')">削除</button></td>';
         tbody.appendChild(tr);
       });
     }
 
-    function moveYoyaku(idx, dir) {
-      const newIdx = idx + dir;
-      if (newIdx < 0 || newIdx >= yoyakuList.length) return;
-      const tmp = yoyakuList[idx];
-      yoyakuList[idx] = yoyakuList[newIdx];
-      yoyakuList[newIdx] = tmp;
+    function moveYoyaku(idxA, idxB) {
+      if (idxA == null || idxB == null || !yoyakuList[idxA] || !yoyakuList[idxB]) return;
+      const tmp = yoyakuList[idxA];
+      yoyakuList[idxA] = yoyakuList[idxB];
+      yoyakuList[idxB] = tmp;
       renderYoyakuTable();
+      syncToCloud();
     }
 
     function removeYoyaku(idx) {
-      const room = yoyakuList[idx].room;
+      const target = yoyakuList[idx];
+      const room = target.room;
+      const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
+      const belongsToCurrentView = !target.buildingId || target.buildingId === curBuildingId;
       yoyakuList.splice(idx, 1);
       renderYoyakuTable();
-      const cell = document.querySelector('td.cell[data-room="' + room + '"]');
-      if (cell && cell.dataset.state === 'yoyaku') {
-        cell.dataset.state = 'mi';
-        cell.dataset.yoyakuTime = '';
-        cell.dataset.yoyakuNote = '';
-        cell.classList.remove('yoyaku');
-        updateCellDisplay(cell);
+      if (belongsToCurrentView) {
+        const cell = document.querySelector('td.cell[data-room="' + room + '"]');
+        if (cell && cell.dataset.state === 'yoyaku') {
+          cell.dataset.state = 'mi';
+          cell.dataset.yoyakuTime = '';
+          cell.dataset.yoyakuNote = '';
+          cell.classList.remove('yoyaku');
+          updateCellDisplay(cell);
+        }
       }
+      syncToCloud();
     }
 
     function formatDateJP(dateStr) {
@@ -3691,17 +3735,21 @@
         return;
       }
       container.innerHTML = scheduleData.map(day => {
+        const dayBuildingLabel = buildingLabelsForIds(day.buildingIds);
         if (day.reserveOnly) {
           return `
           <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
             <div style="font-size:14px;font-weight:bold;">${formatDateJP(day.date)}</div>
-            <div style="font-size:13px;color:#555;margin-top:4px;">予備日（予約部屋のみ）</div>
+            <div style="font-size:13px;color:#555;margin-top:4px;">予備日（予約部屋のみ）${dayBuildingLabel ? '　【' + dayBuildingLabel + '】' : ''}</div>
           </div>`;
         }
-        const sessions = (day.sessions || []).map(s => `
+        const sessions = (day.sessions || []).map(s => {
+          const bLabel = buildingLabelsForIds(s.buildingIds);
+          return `
             <div style="font-size:13px;color:#333;padding-left:12px;margin-top:4px;">
-              ${s.label ? s.label + '　' : ''}${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階
-            </div>`).join('');
+              ${s.label ? s.label + '　' : ''}${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階${bLabel ? '　【' + bLabel + '】' : ''}
+            </div>`;
+        }).join('');
         return `
           <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
             <div style="font-size:14px;font-weight:bold;">${formatDateJP(day.date)}</div>
@@ -3716,9 +3764,24 @@
         container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">まだ作業日が登録されていません</p>';
         return;
       }
+      // 対象号棟の選択ピルを作る（号棟が1つしかない現場では表示しない＝今まで通りシンプルなまま）
+      const buildingPills = (ids, toggleCall, allCall) => {
+        if (buildings.length <= 1) return '';
+        const isAll = !ids || ids === 'ALL';
+        let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding-left:12px;margin:2px 0 8px;">';
+        html += '<span style="font-size:11px;color:#777;">対象号棟：</span>';
+        html += '<span onclick="' + allCall + '" style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' + (isAll ? 'background:#4B5B7F;color:#fff;' : 'background:#eee;color:#555;') + '">全号棟</span>';
+        buildings.forEach((b, i) => {
+          const label = b.name ? b.name : ('号棟' + (i + 1));
+          const checked = isAll || (Array.isArray(ids) && ids.includes(b.id));
+          html += '<span onclick="' + toggleCall + "('" + b.id + "')" + '" style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' + (checked ? 'background:#ff8c42;color:#fff;' : 'background:#eee;color:#999;') + '">' + label + '</span>';
+        });
+        html += '</div>';
+        return html;
+      };
       container.innerHTML = scheduleData.map((day, di) => {
         const sessions = (day.sessions || []).map((s, si) => `
-          <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;padding-left:12px;">
+          <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
             <input type="text" class="ss-label" value="${s.label || ''}" placeholder="午前・午後など"
               style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <input type="time" class="ss-timeFrom" value="${s.timeFrom || '09:00'}"
@@ -3734,7 +3797,7 @@
               style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
             <span style="font-size:13px;color:#555;">階</span>
             <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
-          </div>`).join('');
+          </div>${buildingPills(s.buildingIds, 'toggleSessionBuilding(' + di + ',' + si + ',', 'setSessionBuildingsAll(' + di + ',' + si + ')')}`).join('');
         const isReserveOnly = day.reserveOnly ? 'checked' : '';
         return `
           <div class="schedule-day-row" data-di="${di}" style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
@@ -3747,6 +3810,7 @@
               </label>
               <button onclick="removeScheduleDay(${di})" style="margin-left:auto;font-size:12px;padding:2px 8px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">削除</button>
             </div>
+            ${day.reserveOnly ? buildingPills(day.buildingIds, 'toggleDayBuilding(' + di + ',', 'setDayBuildingsAll(' + di + ')') : ''}
             <div id="sessions-${di}">${day.reserveOnly ? '' : sessions}</div>
             ${day.reserveOnly ? '' : `<button onclick="addSession(${di})" style="font-size:12px;padding:4px 10px;background:#f5f5f5;border:1px dashed #999;border-radius:4px;margin-left:12px;">＋ セッションを追加</button>`}
           </div>`;
@@ -3788,7 +3852,7 @@
         const dd = String(today.getDate()).padStart(2,'0');
         defaultDate = yyyy+'-'+mm+'-'+dd;
       }
-      scheduleData.push({ date: defaultDate, reserveOnly: false, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1 }] });
+      scheduleData.push({ date: defaultDate, reserveOnly: false, buildingIds: 'ALL', sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' }] });
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
@@ -3805,7 +3869,7 @@
     function addSession(di) {
       flushScheduleDOM();
       scheduleData[di].sessions = scheduleData[di].sessions || [];
-      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1 });
+      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' });
       renderScheduleDayList();
     }
     function removeSession(di, si) {
@@ -3818,6 +3882,51 @@
       scheduleData[di].sessions[si][key] = numKeys.includes(key) ? (parseInt(val) || 1) : val;
     }
 
+    // 対象号棟の判定・切り替え
+    function isBuildingIncluded(ids, buildingId) {
+      if (!ids || ids === 'ALL') return true;
+      if (Array.isArray(ids)) return ids.includes(buildingId);
+      return true;
+    }
+    function buildingLabelsForIds(ids) {
+      if (buildings.length <= 1) return '';
+      if (!ids || ids === 'ALL') return '全号棟';
+      const names = ids.map(id => {
+        const idx = buildings.findIndex(b => b.id === id);
+        if (idx < 0) return null;
+        return buildings[idx].name || ('号棟' + (idx + 1));
+      }).filter(Boolean);
+      return names.length ? names.join('・') : '（対象号棟なし）';
+    }
+    function toggleDayBuilding(di, buildingId) {
+      flushScheduleDOM();
+      const day = scheduleData[di];
+      let current = (day.buildingIds && day.buildingIds !== 'ALL') ? day.buildingIds.slice() : buildings.map(b => b.id);
+      const idx = current.indexOf(buildingId);
+      if (idx >= 0) current.splice(idx, 1); else current.push(buildingId);
+      day.buildingIds = current;
+      renderScheduleDayList();
+    }
+    function setDayBuildingsAll(di) {
+      flushScheduleDOM();
+      scheduleData[di].buildingIds = 'ALL';
+      renderScheduleDayList();
+    }
+    function toggleSessionBuilding(di, si, buildingId) {
+      flushScheduleDOM();
+      const s = scheduleData[di].sessions[si];
+      let current = (s.buildingIds && s.buildingIds !== 'ALL') ? s.buildingIds.slice() : buildings.map(b => b.id);
+      const idx = current.indexOf(buildingId);
+      if (idx >= 0) current.splice(idx, 1); else current.push(buildingId);
+      s.buildingIds = current;
+      renderScheduleDayList();
+    }
+    function setSessionBuildingsAll(di, si) {
+      flushScheduleDOM();
+      scheduleData[di].sessions[si].buildingIds = 'ALL';
+      renderScheduleDayList();
+    }
+
     function getActiveFloorRange() {
       const now = new Date();
       const todayStr = now.getFullYear() + '-' +
@@ -3825,13 +3934,23 @@
         String(now.getDate()).padStart(2,'0');
       const todaySchedule = scheduleData.find(d => d.date === todayStr);
       if (!todaySchedule) return null;
-      if (todaySchedule.reserveOnly) return { reserveOnly: true };
+      const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
+
+      if (todaySchedule.reserveOnly) {
+        if (!isBuildingIncluded(todaySchedule.buildingIds, curBuildingId)) return { none: true };
+        return { reserveOnly: true };
+      }
+      const sessionsForBuilding = (todaySchedule.sessions || []).filter(s => isBuildingIncluded(s.buildingIds, curBuildingId));
+      if (sessionsForBuilding.length === 0) {
+        // 今日は他の号棟だけが対象で、この号棟は今日の予定に入っていない
+        return { none: true };
+      }
       const nowHHMM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-      const active = (todaySchedule.sessions || []).find(s => s.timeFrom && s.timeTo && nowHHMM >= s.timeFrom && nowHHMM < s.timeTo);
+      const active = sessionsForBuilding.find(s => s.timeFrom && s.timeTo && nowHHMM >= s.timeFrom && nowHHMM < s.timeTo);
       if (active) return { floorFrom: active.floorFrom, floorTo: active.floorTo };
-      const upcoming = (todaySchedule.sessions || []).filter(s => s.timeFrom && nowHHMM < s.timeFrom).sort((a,b) => a.timeFrom.localeCompare(b.timeFrom))[0];
+      const upcoming = sessionsForBuilding.filter(s => s.timeFrom && nowHHMM < s.timeFrom).sort((a,b) => a.timeFrom.localeCompare(b.timeFrom))[0];
       if (upcoming) return { floorFrom: upcoming.floorFrom, floorTo: upcoming.floorTo };
-      const last = (todaySchedule.sessions || []).filter(s => s.timeTo).sort((a,b) => b.timeTo.localeCompare(a.timeTo))[0];
+      const last = sessionsForBuilding.filter(s => s.timeTo).sort((a,b) => b.timeTo.localeCompare(a.timeTo))[0];
       if (last) return { floorFrom: last.floorFrom, floorTo: last.floorTo };
       return null;
     }
@@ -3843,7 +3962,7 @@
         const roomCell = document.querySelector('td.cell[data-room="' + cell.dataset.room + '"]');
         const isYoyaku = roomCell && roomCell.dataset.state === 'yoyaku';
         if (!range || isYoyaku) { cell.classList.remove('schedule-dim'); return; }
-        if (range.reserveOnly) { cell.classList.toggle('schedule-dim', !isYoyaku); return; }
+        if (range.reserveOnly || range.none) { cell.classList.toggle('schedule-dim', !isYoyaku); return; }
         const minFloor = Math.min(range.floorFrom, range.floorTo);
         const maxFloor = Math.max(range.floorFrom, range.floorTo);
         cell.classList.toggle('schedule-dim', !(floor >= minFloor && floor <= maxFloor));
