@@ -1287,6 +1287,8 @@
     </div>
   </div>
 
+  <div id="buildingTabsBar" style="padding:8px 16px 0;"></div>
+
   <div id="setup">
     <!-- ヘッダー -->
     <div class="setup-new-header">
@@ -1705,6 +1707,149 @@
     // 備考パターンのデフォルト
     let notePatterns = ['以降', '5分以内', '立会い希望', '鍵預かり'];
 
+    // ---- 号棟（複数棟）管理 ----
+    // 1つの号棟＝これまでの「setup＋tableFloorData＋tableGenerated＋cells＋rooms＋setsubiDefaults＋setsubiCustom」の1セット。
+    // 画面には「今アクティブな号棟」の内容だけを表示する。タブ切り替え時に、表示中の内容をbuildings配列へ保存してから、
+    // 切り替え先の内容を読み込み直す（既存のgenerateTable/renderTableFromStateの仕組みをそのまま使い回す）。
+    function makeEmptyBuilding(name) {
+      return {
+        id: 'b' + Date.now() + Math.floor(Math.random() * 1000),
+        name: name || '',
+        setup: { floorCount: '3', roomCount: '6', cut4Room: false, cut4Floor: false, useSetsubiInfo: false, hasshigoInput: '', pendingFloorValues: {} },
+        tableFloorData: [], tableGenerated: false, cells: {}, rooms: {}, setsubiDefaults: {}, setsubiCustom: {}
+      };
+    }
+    let buildings = [ makeEmptyBuilding('') ];
+    let currentBuildingIdx = 0;
+
+    // 現在画面に表示中の内容を buildings[currentBuildingIdx] へ保存
+    function snapshotCurrentBuilding() {
+      const b = buildings[currentBuildingIdx];
+      if (!b) return;
+      b.setup = {
+        floorCount: document.getElementById('floorCount').value,
+        roomCount: document.getElementById('roomCount').value,
+        cut4Room: document.getElementById('cut4Room').checked,
+        cut4Floor: document.getElementById('cut4Floor').checked,
+        useSetsubiInfo: document.getElementById('useSetsubiInfo').checked,
+        hasshigoInput: document.getElementById('hasshigoInput').value,
+        pendingFloorValues: pendingFloorValues
+      };
+      b.tableFloorData = tableFloorData;
+      b.tableGenerated = tableGenerated;
+      b.setsubiDefaults = setsubiDefaults;
+      b.setsubiCustom = setsubiCustom;
+      if (tableGenerated) {
+        const cells = {};
+        document.querySelectorAll('td.cell').forEach(cell => {
+          cells[cell.dataset.room] = {
+            state: cell.dataset.state || 'mi',
+            furyo: cell.dataset.furyo || '',
+            times: cell.dataset.times || '[]',
+            yoyakuTime: cell.dataset.yoyakuTime || '',
+            yoyakuNote: cell.dataset.yoyakuNote || ''
+          };
+        });
+        const rooms = {};
+        document.querySelectorAll('td.room-number').forEach(cell => {
+          rooms[cell.dataset.room] = { label: cell.dataset.label || '', hasshigo: cell.dataset.hasshigo || '0' };
+        });
+        b.cells = cells;
+        b.rooms = rooms;
+      }
+    }
+
+    // buildings[idx] の内容を画面に反映する
+    function loadBuildingToView(idx) {
+      const b = buildings[idx];
+      if (!b) return;
+      document.getElementById('floorCount').value = b.setup.floorCount || '3';
+      document.getElementById('roomCount').value = b.setup.roomCount || '6';
+      document.getElementById('cut4Room').checked = !!b.setup.cut4Room;
+      document.getElementById('cut4Floor').checked = !!b.setup.cut4Floor;
+      document.getElementById('useSetsubiInfo').checked = !!b.setup.useSetsubiInfo;
+      document.getElementById('hasshigoInput').value = b.setup.hasshigoInput || '';
+      pendingFloorValues = b.setup.pendingFloorValues || {};
+      setsubiDefaults = b.setsubiDefaults || {};
+      setsubiCustom = b.setsubiCustom || {};
+      useSetsubiFlag = !!b.setup.useSetsubiInfo;
+      tableGenerated = false;
+      const editArea = document.getElementById('editArea');
+      if (editArea) editArea.style.display = 'none';
+      const setsubiList = document.getElementById('setsubiSetupList');
+      if (setsubiList) setsubiList.innerHTML = '';
+
+      if (b.tableGenerated && b.tableFloorData && b.tableFloorData.length > 0) {
+        renderTableFromState({ tableFloorData: b.tableFloorData, cells: b.cells, rooms: b.rooms });
+      } else {
+        document.getElementById('setup').style.display = 'block';
+        document.getElementById('propertyArea').style.display = 'none';
+        document.getElementById('yoyakuArea').style.display = 'none';
+        document.getElementById('outputArea').style.display = 'none';
+        document.querySelector('.table-wrap').style.display = 'none';
+        document.getElementById('tableArea').innerHTML = '';
+        buildNoteSelects();
+      }
+      renderBuildingTabs();
+    }
+
+    function switchBuildingTab(idx) {
+      if (idx === currentBuildingIdx) return;
+      if (!window.isJobOwner) { alert('号棟の切り替えは現場を開始した人（親機）のみ行えます。'); return; }
+      snapshotCurrentBuilding();
+      currentBuildingIdx = idx;
+      loadBuildingToView(idx);
+      syncToCloud();
+    }
+
+    function addBuildingTab() {
+      if (!window.isJobOwner) { alert('号棟の追加は現場を開始した人（親機）のみ行えます。'); return; }
+      const name = prompt('新しい号棟の名前を入力してください（例：A棟、1号棟 など）', '');
+      if (name === null) return;
+      snapshotCurrentBuilding();
+      buildings.push(makeEmptyBuilding(name.trim()));
+      currentBuildingIdx = buildings.length - 1;
+      loadBuildingToView(currentBuildingIdx);
+      syncToCloud();
+    }
+
+    function renameBuildingTab(idx) {
+      if (!window.isJobOwner) { alert('号棟名の変更は現場を開始した人（親機）のみ行えます。'); return; }
+      const b = buildings[idx];
+      const name = prompt('号棟名を変更', b.name || '');
+      if (name === null) return;
+      b.name = name.trim();
+      renderBuildingTabs();
+      syncToCloud();
+    }
+
+    function deleteBuildingTab(idx) {
+      if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
+      if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
+      const b = buildings[idx];
+      if (!confirm((b.name || ('号棟' + (idx + 1))) + ' を削除します。この号棟の点検データも全て消えます。よろしいですか？')) return;
+      buildings.splice(idx, 1);
+      if (currentBuildingIdx >= buildings.length) currentBuildingIdx = buildings.length - 1;
+      loadBuildingToView(currentBuildingIdx);
+      syncToCloud();
+    }
+
+    function renderBuildingTabs() {
+      const bar = document.getElementById('buildingTabsBar');
+      if (!bar) return;
+      let html = '';
+      buildings.forEach((b, i) => {
+        const active = i === currentBuildingIdx;
+        const label = b.name ? b.name : ('号棟' + (i + 1));
+        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;padding:6px 12px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;' +
+          (active ? 'background:#ff8c42;color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;') + '">' + label +
+          (buildings.length > 1 ? ' <span onclick="event.stopPropagation();deleteBuildingTab(' + i + ')" style="margin-left:4px;opacity:0.7;">×</span>' : '') +
+          '</span>';
+      });
+      html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:6px 12px;cursor:pointer;font-size:13px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
+      bar.innerHTML = html;
+    }
+
     // ---- 現場（物件）ID の判定 ----
     // QRコード経由（URLの?join=…）で開かれた場合はそれを現場IDとして採用し、
     // localStorageに記録する。無ければ、前回保存しておいた現場IDを使う。
@@ -1892,6 +2037,9 @@
     // 新規物件の登録設定
     function startNewProperty() {
       document.getElementById('startScreen').style.display = 'none';
+      // 号棟データをリセット（前の現場のものが残らないように）
+      buildings = [ makeEmptyBuilding('') ];
+      currentBuildingIdx = 0;
       // 新しいjobIdを発行してそのまま設定画面へ
       window.currentJobId = (window.crypto && window.crypto.randomUUID)
         ? window.crypto.randomUUID()
@@ -1910,6 +2058,7 @@
       buildTimeSelects();
       renderScheduleDayList();
       document.getElementById('setup').style.display = 'block';
+      renderBuildingTabs();
     }
 
     // 既存物件から登録開始
@@ -2249,46 +2398,15 @@
     // ---- クラウド同期 ----
     // 画面上の状態を1つのオブジェクトにまとめる（サイン画像・不良写真は容量の都合上含めない）
     function gatherInspectionState() {
-      const cells = {};
-      document.querySelectorAll('td.cell').forEach(cell => {
-        cells[cell.dataset.room] = {
-          state: cell.dataset.state || 'mi',
-          furyo: cell.dataset.furyo || '',
-          
-          times: cell.dataset.times || '[]',
-          yoyakuTime: cell.dataset.yoyakuTime || '',
-          yoyakuNote: cell.dataset.yoyakuNote || ''
-        };
-      });
-      const rooms = {};
-      document.querySelectorAll('td.room-number').forEach(cell => {
-        rooms[cell.dataset.room] = {
-          label: cell.dataset.label || '',
-          hasshigo: cell.dataset.hasshigo || '0'
-        };
-      });
-
+      snapshotCurrentBuilding();
       return {
         property: {
           name: document.getElementById('propName').value,
           date: document.getElementById('propDate').value,
           staff: document.getElementById('propStaff').value
         },
-        setup: {
-          floorCount: document.getElementById('floorCount').value,
-          roomCount: document.getElementById('roomCount').value,
-          cut4Room: document.getElementById('cut4Room').checked,
-          cut4Floor: document.getElementById('cut4Floor').checked,
-          useSetsubiInfo: document.getElementById('useSetsubiInfo').checked,
-          hasshigoInput: document.getElementById('hasshigoInput').value,
-          pendingFloorValues: pendingFloorValues
-        },
-        tableFloorData: tableFloorData,
-        tableGenerated: tableGenerated,
-        cells: cells,
-        rooms: rooms,
-        setsubiDefaults: setsubiDefaults,
-        setsubiCustom: setsubiCustom,
+        buildings: buildings,
+        currentBuildingIdx: currentBuildingIdx,
         yoyakuList: yoyakuList,
         notePatterns: notePatterns,
         schedule: scheduleData
@@ -2310,18 +2428,35 @@
         document.getElementById('propStaff').value = state.property.staff || '';
       }
 
-      if (state.setup) {
-        document.getElementById('floorCount').value = state.setup.floorCount || '3';
-        document.getElementById('roomCount').value = state.setup.roomCount || '6';
-        document.getElementById('cut4Room').checked = !!state.setup.cut4Room;
-        document.getElementById('cut4Floor').checked = !!state.setup.cut4Floor;
-        document.getElementById('useSetsubiInfo').checked = !!state.setup.useSetsubiInfo;
-        document.getElementById('hasshigoInput').value = state.setup.hasshigoInput || '';
-        pendingFloorValues = state.setup.pendingFloorValues || {};
+      if (state.buildings && Array.isArray(state.buildings) && state.buildings.length > 0) {
+        // 新形式（号棟対応済みのデータ）
+        buildings = state.buildings;
+        currentBuildingIdx = state.currentBuildingIdx || 0;
+        if (currentBuildingIdx >= buildings.length || currentBuildingIdx < 0) currentBuildingIdx = 0;
+      } else if (state.setup) {
+        // 旧形式（号棟対応前のデータ）→ 号棟1つ分として自動移行。データは何も失われない。
+        buildings = [{
+          id: 'b1',
+          name: '',
+          setup: {
+            floorCount: state.setup.floorCount || '3',
+            roomCount: state.setup.roomCount || '6',
+            cut4Room: !!state.setup.cut4Room,
+            cut4Floor: !!state.setup.cut4Floor,
+            useSetsubiInfo: !!state.setup.useSetsubiInfo,
+            hasshigoInput: state.setup.hasshigoInput || '',
+            pendingFloorValues: state.setup.pendingFloorValues || {}
+          },
+          tableFloorData: state.tableFloorData || [],
+          tableGenerated: !!state.tableGenerated,
+          cells: state.cells || {},
+          rooms: state.rooms || {},
+          setsubiDefaults: state.setsubiDefaults || {},
+          setsubiCustom: state.setsubiCustom || {}
+        }];
+        currentBuildingIdx = 0;
       }
 
-      setsubiDefaults = state.setsubiDefaults || {};
-      setsubiCustom = state.setsubiCustom || {};
       yoyakuList = state.yoyakuList || [];
       if (state.notePatterns && state.notePatterns.length) {
         notePatterns = state.notePatterns;
@@ -2329,10 +2464,22 @@
       if (state.schedule && Array.isArray(state.schedule)) {
         scheduleData = state.schedule;
       }
-      useSetsubiFlag = !!(state.setup && state.setup.useSetsubiInfo);
 
-      if (state.tableGenerated && state.tableFloorData && state.tableFloorData.length > 0) {
-        renderTableFromState(state);
+      const b = buildings[currentBuildingIdx];
+      document.getElementById('floorCount').value = b.setup.floorCount || '3';
+      document.getElementById('roomCount').value = b.setup.roomCount || '6';
+      document.getElementById('cut4Room').checked = !!b.setup.cut4Room;
+      document.getElementById('cut4Floor').checked = !!b.setup.cut4Floor;
+      document.getElementById('useSetsubiInfo').checked = !!b.setup.useSetsubiInfo;
+      document.getElementById('hasshigoInput').value = b.setup.hasshigoInput || '';
+      pendingFloorValues = b.setup.pendingFloorValues || {};
+      setsubiDefaults = b.setsubiDefaults || {};
+      setsubiCustom = b.setsubiCustom || {};
+      yoyakuList = state.yoyakuList || [];
+      useSetsubiFlag = !!b.setup.useSetsubiInfo;
+
+      if (b.tableGenerated && b.tableFloorData && b.tableFloorData.length > 0) {
+        renderTableFromState({ tableFloorData: b.tableFloorData, cells: b.cells, rooms: b.rooms });
         // 複製後の初回起動時は設定画面へ誘導
         if (localStorage.getItem('mc_goto_setup') === '1') {
           localStorage.removeItem('mc_goto_setup');
@@ -2343,6 +2490,7 @@
       } else {
         buildNoteSelects();
       }
+      renderBuildingTabs();
     };
 
     // 保存されていた表データから立面図を再構築する（generateTable()の表構築部分に相当）
@@ -2654,11 +2802,14 @@
         }
       });
 
-      // 予約リストを再構築
-      yoyakuList = yoyakuList.filter(y => {
-        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
-        return cell !== null;
-      });
+      // 予約リストを再構築（号棟が1つだけの時のみ。複数号棟がある場合、今表示していない
+      // 号棟の予約まで「画面に無いから」という理由で消えてしまうのを防ぐため対象外にする）
+      if (buildings.length <= 1) {
+        yoyakuList = yoyakuList.filter(y => {
+          const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+          return cell !== null;
+        });
+      }
       renderYoyakuTable();
 
       document.getElementById('setup').style.display = 'none';
