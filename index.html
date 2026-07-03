@@ -1874,17 +1874,20 @@
     function renderBuildingTabs() {
       const bar = document.getElementById('buildingTabsBar');
       if (!bar) return;
+      const isAdmin = (window.myRole || 'worker') === 'admin';
       let html = '';
       buildings.forEach((b, i) => {
         const active = i === currentBuildingIdx;
         const color = buildingColor(i);
         const label = b.name ? b.name : ('号棟' + (i + 1));
-        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;padding:6px 12px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;' +
+        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;' +
           (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + '</span>';
       });
-      html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:6px 12px;cursor:pointer;font-size:13px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
-      if (buildings.length > 1) {
-        html += '<span onclick="deleteBuildingTabPrompt()" style="display:inline-block;padding:6px 12px;margin-left:4px;cursor:pointer;font-size:13px;background:#fff0f0;border:1px dashed #c88;border-radius:6px;color:#c00;">－ 号棟削除</span>';
+      if (isAdmin) {
+        html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:8px 16px;cursor:pointer;font-size:14px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
+        if (buildings.length > 1) {
+          html += '<span onclick="deleteBuildingTabPrompt()" style="display:inline-block;padding:8px 16px;margin-left:4px;cursor:pointer;font-size:14px;background:#fff0f0;border:1px dashed #c88;border-radius:6px;color:#c00;">－ 号棟削除</span>';
+        }
       }
       bar.innerHTML = html;
     }
@@ -1931,6 +1934,8 @@
       if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const jobListBtn = document.getElementById('jobListBtn');
       if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const toSetupBtn = document.getElementById('toSetupBtn');
+      if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
