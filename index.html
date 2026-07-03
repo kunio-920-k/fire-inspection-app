@@ -1822,7 +1822,6 @@
 
     function switchBuildingTab(idx) {
       if (idx === currentBuildingIdx) return;
-      if (!window.isJobOwner) { alert('号棟の切り替えは現場を開始した人（親機）のみ行えます。'); return; }
       snapshotCurrentBuilding();
       currentBuildingIdx = idx;
       loadBuildingToView(idx);
@@ -1850,6 +1849,17 @@
       syncToCloud();
     }
 
+    function deleteBuildingTabPrompt() {
+      if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
+      if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
+      const listText = buildings.map((b, i) => (i + 1) + ': ' + (b.name ? b.name : ('号棟' + (i + 1)))).join('\n');
+      const input = prompt('削除する号棟の番号を入力してください\n' + listText, '');
+      if (input === null) return;
+      const idx = parseInt(input) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= buildings.length) { alert('番号が正しくありません。'); return; }
+      deleteBuildingTab(idx);
+    }
+
     function deleteBuildingTab(idx) {
       if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
       if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
@@ -1870,11 +1880,12 @@
         const color = buildingColor(i);
         const label = b.name ? b.name : ('号棟' + (i + 1));
         html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;padding:6px 12px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;' +
-          (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label +
-          (buildings.length > 1 ? ' <span onclick="event.stopPropagation();deleteBuildingTab(' + i + ')" style="margin-left:4px;opacity:0.7;">×</span>' : '') +
-          '</span>';
+          (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + '</span>';
       });
       html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:6px 12px;cursor:pointer;font-size:13px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
+      if (buildings.length > 1) {
+        html += '<span onclick="deleteBuildingTabPrompt()" style="display:inline-block;padding:6px 12px;margin-left:4px;cursor:pointer;font-size:13px;background:#fff0f0;border:1px dashed #c88;border-radius:6px;color:#c00;">－ 号棟削除</span>';
+      }
       bar.innerHTML = html;
     }
 
@@ -1948,11 +1959,13 @@
         }, 60000);
       }
 
-      // 権限名を表示
+      // 権限名を表示（メンバー管理と同じ色分け：管理者=オレンジ／サブ管理者=緑／一般=青）
       const roleLabel = document.getElementById('myRoleLabel');
       if (roleLabel) {
         const labels = { admin: '【管理者】', sub: '【サブ管理者】', worker: '【一般】' };
+        const colors = { admin: '#ff8c42', sub: '#4caf50', worker: '#3a9bdc' };
         roleLabel.textContent = labels[role] || '';
+        roleLabel.style.color = colors[role] || '#ff8c42';
       }
 
       // 権限をwindow.isJobOwnerにも反映（既存のガード処理との互換性）
@@ -2482,7 +2495,13 @@
       if (state.buildings && Array.isArray(state.buildings) && state.buildings.length > 0) {
         // 新形式（号棟対応済みのデータ）
         buildings = state.buildings;
-        currentBuildingIdx = state.currentBuildingIdx || 0;
+        if (!window._localBuildingViewReady) {
+          // 初回読み込み時だけ、保存されていた号棟を採用する
+          currentBuildingIdx = state.currentBuildingIdx || 0;
+          window._localBuildingViewReady = true;
+        }
+        // 2回目以降（他端末からのリアルタイム更新）は、自分が今見ている号棟をそのまま維持する
+        // （誰かが別の号棟を操作しても、こちらの画面が勝手に切り替わらないように）
         if (currentBuildingIdx >= buildings.length || currentBuildingIdx < 0) currentBuildingIdx = 0;
       } else if (state.setup) {
         // 旧形式（号棟対応前のデータ）→ 号棟1つ分として自動移行。データは何も失われない。
@@ -3887,7 +3906,7 @@
           const label = b.name ? b.name : ('号棟' + (i + 1));
           const checked = isAll || (Array.isArray(ids) && ids.includes(b.id));
           const color = buildingColor(i);
-          html += '<span onclick="' + toggleCall + "('" + b.id + "')" + '" style="font-size:12px;padding:3px 10px;border-radius:12px;cursor:pointer;border:2px solid ' + (checked ? color : '#ccc') + ';' + (checked ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#999;') + '">' + (checked ? '✓ ' : '') + label + '</span>';
+          html += '<span onclick="' + toggleCall + "'" + b.id + "')" + '" style="font-size:12px;padding:3px 10px;border-radius:12px;cursor:pointer;border:2px solid ' + (checked ? color : '#ccc') + ';' + (checked ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#999;') + '">' + (checked ? '✓ ' : '') + label + '</span>';
         });
         html += '</div></div>';
         return html;
