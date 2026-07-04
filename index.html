@@ -1749,7 +1749,9 @@
     let activeRoomCell = null;
     let pressTimer = null;
     let signCell = null;
+    let signRoom = null; // サイン確定時にライブのセルを再取得するための部屋番号
     let furyoCell = null;
+    let furyoRoom = null; // 不良確定時にライブのセルを再取得するための部屋番号
     let yoyakuCell = null;
     let setsubiCell = null;
     let isDrawing = false;
@@ -1792,6 +1794,8 @@
     let updatedBuildingIds = new Set(); // 他号棟の更新があったと判定された号棟のidを保持
 
     function toggleHighlightFeature() {
+      const role = window.myRole || 'worker';
+      if (role !== 'admin' && role !== 'sub') return; // 一般権限はこの機能を使えない
       window.highlightEnabled = !window.highlightEnabled;
       localStorage.setItem('mc_highlight_enabled', window.highlightEnabled ? '1' : '0');
       if (!window.highlightEnabled) updatedBuildingIds.clear();
@@ -1936,9 +1940,11 @@
       const bar = document.getElementById('buildingTabsBar');
       if (!bar) return;
       const isAdmin = (window.myRole || 'worker') === 'admin';
+      const isManager = (window.myRole || 'worker') === 'admin' || (window.myRole || 'worker') === 'sub';
+      const highlightActive = window.highlightEnabled && isManager; // 一般権限ではこの機能自体を使わせない
       let html = '';
-      // 号棟が2つ以上ある現場でのみ、更新ハイライト機能のON/OFFボタンを出す
-      if (buildings.length > 1) {
+      // 号棟が2つ以上ある現場、かつ管理者／サブ管理者にのみ、更新ハイライト機能のON/OFFボタンを出す
+      if (buildings.length > 1 && isManager) {
         const onClass = window.highlightEnabled ? ' on' : '';
         const icon = window.highlightEnabled ? '🔔' : '🔕';
         html += '<span id="highlightToggleBtn" class="' + onClass.trim() + '" onclick="toggleHighlightFeature()" title="他号棟の更新お知らせ">' + icon + '</span>';
@@ -1947,7 +1953,7 @@
         const active = i === currentBuildingIdx;
         const color = buildingColor(i);
         const label = b.name ? b.name : ('号棟' + (i + 1));
-        const showBadge = window.highlightEnabled && !active && updatedBuildingIds.has(b.id);
+        const showBadge = highlightActive && !active && updatedBuildingIds.has(b.id);
         const badge = showBadge ? '<span class="building-tab-badge"></span>' : '';
         html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="position:relative;display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;' +
           (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + badge + '</span>';
@@ -2571,7 +2577,7 @@
         const isFirstLoad = !window._localBuildingViewReady;
         // 更新ハイライト機能ON時：上書きされる前の号棟データと比べて、
         // 内容が変わった号棟（今見ている号棟以外）を検出しておく
-        if (!isFirstLoad && window.highlightEnabled) {
+        if (!isFirstLoad && window.highlightEnabled && ((window.myRole || 'worker') === 'admin' || (window.myRole || 'worker') === 'sub')) {
           const oldById = {};
           buildings.forEach(ob => { oldById[ob.id] = ob; });
           state.buildings.forEach(nb => {
@@ -3227,6 +3233,14 @@
     }
 
     // ---- 点検中モーダル ----
+    // 【バグ対策】点検中モーダル～サイン確定までの間に他端末の同期で立面図が
+    // 再描画されると、変数に保持していたセルのDOM参照が「もう画面上には無い古い要素」に
+    // ズレてしまい、確定操作が画面に反映されない不具合があった。
+    // これを防ぐため、実際に書き換える直前に必ず部屋番号から「今の画面にあるセル」を
+    // 取得し直してから操作する。
+    function getLiveCell(room) {
+      return document.querySelector('td.cell[data-room="' + room + '"]');
+    }
     let tenkenCell = null;
     function openTenkenModal(cell) {
       tenkenCell = cell;
@@ -3262,9 +3276,10 @@
     }
     function cancelTenken() {
       if (!tenkenCell) return;
-      const cell = tenkenCell;
+      const room = tenkenCell.dataset.room;
       closeTenkenModal();
-      if (window.addLog) window.addLog('点検キャンセル', { room: cell.dataset.room });
+      if (window.addLog) window.addLog('点検キャンセル', { room: room });
+      const cell = getLiveCell(room) || tenkenCell;
       cell.dataset.state = 'mi';
       cell.classList.remove('tenkenchuu');
       updateCellDisplay(cell);
@@ -3274,16 +3289,18 @@
 
     function furyoFromTenken() {
       if (!tenkenCell) return;
-      const cell = tenkenCell;
+      const room = tenkenCell.dataset.room;
       furyoFromTenkenMode = true;
       closeTenkenModal();
+      const cell = getLiveCell(room) || tenkenCell;
       openFuryo(cell);
     }
 
     function finishTenken() {
       if (!tenkenCell) return;
-      const cell = tenkenCell;
+      const room = tenkenCell.dataset.room;
       closeTenkenModal();
+      const cell = getLiveCell(room) || tenkenCell;
       // 点検中クラスを外してサイン画面へ
       cell.classList.remove('tenkenchuu');
       openSign(cell);
@@ -3415,30 +3432,35 @@
 
     function openSign(cell) {
       signCell = cell;
+      signRoom = cell.dataset.room;
       document.getElementById('signTitle').textContent = cell.dataset.room + ' のサインをお願いします';
       clearSign();
       document.getElementById('signModal').classList.add('active');
     }
-    function cancelSign() { document.getElementById('signModal').classList.remove('active'); signCell = null; }
+    function cancelSign() { document.getElementById('signModal').classList.remove('active'); signCell = null; signRoom = null; }
     function clearSign() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
     function confirmSign() {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
       if (!Array.from(data).some(v => v !== 0)) { alert('サインが入力されていません'); return; }
       const signData = canvas.toDataURL('image/png');
-      signCell.dataset.state = 'nyushitsu';
-      signCell.dataset.sign = signData;
-      signCell.classList.add('nyushitsu');
-      signCell.classList.remove('fuzai', 'kushitsu', 'yoyaku');
-      updateCellDisplay(signCell);
-      if (signCell.dataset.yoyakuTime) {
-        updateYoyakuRowState(signCell.dataset.room, true);
+      // サイン記入中に他端末の同期で立面図が再描画されている可能性があるため、
+      // 部屋番号から改めて「今画面にある」セルを取得してから反映する
+      const cell = getLiveCell(signRoom) || signCell;
+      cell.dataset.state = 'nyushitsu';
+      cell.dataset.sign = signData;
+      cell.classList.add('nyushitsu');
+      cell.classList.remove('fuzai', 'kushitsu', 'yoyaku', 'tenkenchuu');
+      updateCellDisplay(cell);
+      if (cell.dataset.yoyakuTime) {
+        updateYoyakuRowState(cell.dataset.room, true);
       }
       // サイン画像をクラウドに個別保存
-      if (window.saveSignToCloud) window.saveSignToCloud(signCell.dataset.room, signData);
-      if (window.addLog) window.addLog('入室済', { room: signCell.dataset.room });
-      const signedRoom = signCell.dataset.room;
+      if (window.saveSignToCloud) window.saveSignToCloud(cell.dataset.room, signData);
+      if (window.addLog) window.addLog('入室済', { room: cell.dataset.room });
+      const signedRoom = cell.dataset.room;
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
+      signRoom = null;
       syncToCloud();
       if (window.updatePresence) window.updatePresence(signedRoom);
     }
@@ -3487,28 +3509,33 @@
 
     function openFuryo(cell) {
       furyoCell = cell;
+      furyoRoom = cell.dataset.room;
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
       document.getElementById('furyoPreview').style.display = 'none';
       document.getElementById('furyoPreview').src = '';
       document.getElementById('furyoModal').classList.add('active');
     }
-    function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; }
+    function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; furyoRoom = null; }
     function confirmFuryo() {
       const text = document.getElementById('furyoText').value.trim();
       if (!text) { alert('不良内容を入力してください'); return; }
-      furyoCell.dataset.furyo = text;
-      furyoCell.classList.add('furyo');
-      updateCellDisplay(furyoCell);
+      // 入力中に他端末の同期で立面図が再描画されている可能性があるため、
+      // 部屋番号から改めて「今画面にある」セルを取得してから反映する
+      const cell = getLiveCell(furyoRoom) || furyoCell;
+      cell.dataset.furyo = text;
+      cell.classList.add('furyo');
+      updateCellDisplay(cell);
       document.getElementById('furyoModal').classList.remove('active');
-      const furyoRoom = furyoCell.dataset.room;
-      if (window.addLog) window.addLog('不良記録', { room: furyoRoom, detail: text });
+      const savedFuryoRoom = cell.dataset.room;
+      if (window.addLog) window.addLog('不良記録', { room: savedFuryoRoom, detail: text });
       const returnToTenken = furyoFromTenkenMode;
-      const returnCell = furyoCell;
+      const returnCell = cell;
       furyoFromTenkenMode = false;
       furyoCell = null;
+      furyoRoom = null;
       syncToCloud();
-      if (window.updatePresence) window.updatePresence(furyoRoom);
+      if (window.updatePresence) window.updatePresence(savedFuryoRoom);
       if (returnToTenken) {
         openTenkenModal(returnCell);
       }
