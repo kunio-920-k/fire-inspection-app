@@ -357,6 +357,43 @@
       letter-spacing: 2px;
       font-weight: 600;
     }
+
+    /* 号棟タブ：更新ハイライト機能 */
+    .building-tab-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #e6394a;
+      box-shadow: 0 0 0 2px #fff;
+      animation: buildingTabPulse 1.4s ease-in-out infinite;
+    }
+    @keyframes buildingTabPulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.35); opacity: 0.6; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    #highlightToggleBtn {
+      display: inline-block;
+      min-width: 32px;
+      text-align: center;
+      padding: 8px 10px;
+      margin-right: 4px;
+      cursor: pointer;
+      font-size: 15px;
+      background: #f5f5f5;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      color: #888;
+      vertical-align: top;
+    }
+    #highlightToggleBtn.on {
+      background: #fff3e0;
+      border-color: #ff8c42;
+      color: #ff8c42;
+    }
   </style>
 
   <script type="module">
@@ -1077,6 +1114,7 @@
                 if (window.clearDismissed) window.clearDismissed();
               } else {
                 localStorage.removeItem('mc_job_id');
+                if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
                 alert('本日の作業が終了しました。お疲れさまでした。');
                 location.reload();
                 return;
@@ -1748,6 +1786,26 @@
     let buildings = [ makeEmptyBuilding('') ];
     let currentBuildingIdx = 0;
 
+    // ---- 号棟タブ：更新ハイライト機能（予備日など号棟をまたぐ作業向けのON/OFF機能）----
+    // 端末ごとの設定（localStorage）。既定はOFF。「本日の作業終了」でOFFに戻す。
+    window.highlightEnabled = (localStorage.getItem('mc_highlight_enabled') === '1');
+    let updatedBuildingIds = new Set(); // 他号棟の更新があったと判定された号棟のidを保持
+
+    function toggleHighlightFeature() {
+      window.highlightEnabled = !window.highlightEnabled;
+      localStorage.setItem('mc_highlight_enabled', window.highlightEnabled ? '1' : '0');
+      if (!window.highlightEnabled) updatedBuildingIds.clear();
+      renderBuildingTabs();
+    }
+
+    // 作業終了時に呼ぶ：ハイライト設定をOFFへリセットする
+    function resetHighlightFeatureSetting() {
+      window.highlightEnabled = false;
+      updatedBuildingIds.clear();
+      localStorage.setItem('mc_highlight_enabled', '0');
+    }
+    window.resetHighlightFeatureSetting = resetHighlightFeatureSetting;
+
     // 現在画面に表示中の内容を buildings[currentBuildingIdx] へ保存
     function snapshotCurrentBuilding() {
       const b = buildings[currentBuildingIdx];
@@ -1824,6 +1882,9 @@
       if (idx === currentBuildingIdx) return;
       snapshotCurrentBuilding();
       currentBuildingIdx = idx;
+      // 切り替えたタブの更新お知らせバッジは消す
+      const b = buildings[idx];
+      if (b && updatedBuildingIds.has(b.id)) updatedBuildingIds.delete(b.id);
       loadBuildingToView(idx);
       syncToCloud();
     }
@@ -1876,12 +1937,20 @@
       if (!bar) return;
       const isAdmin = (window.myRole || 'worker') === 'admin';
       let html = '';
+      // 号棟が2つ以上ある現場でのみ、更新ハイライト機能のON/OFFボタンを出す
+      if (buildings.length > 1) {
+        const onClass = window.highlightEnabled ? ' on' : '';
+        const icon = window.highlightEnabled ? '🔔' : '🔕';
+        html += '<span id="highlightToggleBtn" class="' + onClass.trim() + '" onclick="toggleHighlightFeature()" title="他号棟の更新お知らせ">' + icon + '</span>';
+      }
       buildings.forEach((b, i) => {
         const active = i === currentBuildingIdx;
         const color = buildingColor(i);
         const label = b.name ? b.name : ('号棟' + (i + 1));
-        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;' +
-          (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + '</span>';
+        const showBadge = window.highlightEnabled && !active && updatedBuildingIds.has(b.id);
+        const badge = showBadge ? '<span class="building-tab-badge"></span>' : '';
+        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="position:relative;display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;' +
+          (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + badge + '</span>';
       });
       if (isAdmin) {
         html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:8px 16px;cursor:pointer;font-size:14px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
@@ -2499,8 +2568,21 @@
 
       if (state.buildings && Array.isArray(state.buildings) && state.buildings.length > 0) {
         // 新形式（号棟対応済みのデータ）
+        const isFirstLoad = !window._localBuildingViewReady;
+        // 更新ハイライト機能ON時：上書きされる前の号棟データと比べて、
+        // 内容が変わった号棟（今見ている号棟以外）を検出しておく
+        if (!isFirstLoad && window.highlightEnabled) {
+          const oldById = {};
+          buildings.forEach(ob => { oldById[ob.id] = ob; });
+          state.buildings.forEach(nb => {
+            if (nb.id === (buildings[currentBuildingIdx] && buildings[currentBuildingIdx].id)) return; // 自分が見ている号棟は対象外
+            const ob = oldById[nb.id];
+            if (!ob) return; // 新規追加された号棟は「更新」扱いしない
+            if (JSON.stringify(ob) !== JSON.stringify(nb)) updatedBuildingIds.add(nb.id);
+          });
+        }
         buildings = state.buildings;
-        if (!window._localBuildingViewReady) {
+        if (isFirstLoad) {
           // 初回読み込み時だけ、保存されていた号棟を採用する
           currentBuildingIdx = state.currentBuildingIdx || 0;
           window._localBuildingViewReady = true;
@@ -4443,6 +4525,7 @@
           setTimeout(() => {
             if (window.clearDismissed) window.clearDismissed();
           }, 3000);
+          if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
           // 管理者自身もlocalStorageをクリアしてログアウト
           alert('作業終了を通知しました。お疲れさまでした。');
           if (window.logoutUser) window.logoutUser();
