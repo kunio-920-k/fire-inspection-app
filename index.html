@@ -606,15 +606,20 @@
 
     // ---- サイン画像のクラウド保存・読込・削除 ----
     // サインは1部屋ごとに別ドキュメントに保存（Firestoreの1MB上限を回避するため）
-    // 保存先: inspections/{jobId}/signs/{room}
+    // 保存先: inspections/{jobId}/signs/{号棟ID}_{room}
+    // 【重要】号棟ごとに部屋番号が重複しうる（各号棟とも101号室スタート等）ため、
+    // ドキュメントIDは号棟IDと部屋番号を組み合わせたものにし、号棟をまたいだ
+    // サインの上書き事故が起きないようにしている。
 
     // 1部屋分のサイン画像をFirestoreに保存する（サイン記録時に呼ぶ）
-    window.saveSignToCloud = function(room, signDataUrl) {
+    window.saveSignToCloud = function(buildingId, room, signDataUrl) {
       if (!window.currentUser || !window.currentJobId) return;
-      const ref = doc(db, 'inspections', window.currentJobId, 'signs', String(room));
+      const docId = String(buildingId) + '_' + String(room);
+      const ref = doc(db, 'inspections', window.currentJobId, 'signs', docId);
       setDoc(ref, {
         sign: signDataUrl,
         room: String(room),
+        buildingId: String(buildingId),
         updatedAt: serverTimestamp()
       }).then(() => {
         dlog('サイン保存OK / room=' + room);
@@ -624,22 +629,31 @@
     };
 
     // 全部屋分のサイン画像をFirestoreから読み込む（復元時に呼ぶ）
-    // 戻り値: { room: signDataUrl, ... } 形式のオブジェクト
+    // 戻り値: { 号棟ID: { room: signDataUrl, ... }, __legacy__: {...} } 形式のオブジェクト
+    // __legacy__ は号棟対応より前（部屋番号のみキー）に保存された古い形式のデータで、
+    // 移行期のみ「今表示中の号棟」への当てはめのフォールバックとして使う。
     window.loadSignsFromCloud = function() {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve({});
       const ref = collection(db, 'inspections', window.currentJobId, 'signs');
       return getDocs(ref).then((snap) => {
-        const signs = {};
+        const result = { __legacy__: {} };
+        let count = 0;
         snap.forEach((d) => {
-          if (d.data() && d.data().sign) {
-            signs[d.data().room] = d.data().sign;
+          const data = d.data();
+          if (!data || !data.sign) return;
+          count++;
+          if (data.buildingId) {
+            if (!result[data.buildingId]) result[data.buildingId] = {};
+            result[data.buildingId][data.room] = data.sign;
+          } else {
+            result.__legacy__[data.room] = data.sign;
           }
         });
-        dlog('サイン読込OK / ' + Object.keys(signs).length + '部屋分');
-        return signs;
+        dlog('サイン読込OK / ' + count + '件');
+        return result;
       }).catch((e) => {
         dlog('サイン読込エラー / ' + e.message);
-        return {};
+        return { __legacy__: {} };
       });
     };
 
@@ -1088,9 +1102,15 @@
           };
 
           // サイン画像をクラウドから読み込んでセルに反映するヘルパー
+          // 今アクティブな号棟のサインだけを当てはめる（号棟をまたいだ誤反映を防ぐ）
           function applyCloudSigns() {
             if (!window.loadSignsFromCloud) return;
-            window.loadSignsFromCloud().then((signs) => {
+            const activeBuilding = buildings[currentBuildingIdx];
+            const activeBuildingId = activeBuilding && activeBuilding.id;
+            window.loadSignsFromCloud().then((signsByBuilding) => {
+              const legacy = signsByBuilding.__legacy__ || {};
+              const own = (activeBuildingId && signsByBuilding[activeBuildingId]) || {};
+              const signs = Object.assign({}, legacy, own);
               Object.keys(signs).forEach((room) => {
                 const cell = document.querySelector('td.cell[data-room="' + room + '"]');
                 if (cell) {
@@ -1635,6 +1655,17 @@
     </div>
   </div>
 
+  <!-- 印刷対象の号棟を選ぶモーダル（号棟が2つ以上ある現場でのみ表示） -->
+  <div id="printSelectModal" class="modal">
+    <div class="modal-box" style="max-width:400px;">
+      <h2 id="printSelectTitle">印刷する号棟を選んでください</h2>
+      <div id="printSelectButtons" class="modal-buttons" style="flex-direction:column;"></div>
+      <div class="modal-buttons" style="margin-top:10px;">
+        <button onclick="closePrintSelectModal()">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
   <div id="furyoModal" class="modal">
     <div class="modal-box">
       <h2 id="furyoTitle">不良を記録</h2>
@@ -1880,6 +1911,8 @@
         buildNoteSelects();
       }
       renderBuildingTabs();
+      // 切り替え先の号棟のサインを当てはめる
+      if (window.applyCloudSigns) window.applyCloudSigns();
     }
 
     function switchBuildingTab(idx) {
@@ -3461,7 +3494,7 @@
         updateYoyakuRowState(cell.dataset.room, true);
       }
       // サイン画像をクラウドに個別保存
-      if (window.saveSignToCloud) window.saveSignToCloud(cell.dataset.room, signData);
+      if (window.saveSignToCloud) window.saveSignToCloud(buildings[currentBuildingIdx].id, cell.dataset.room, signData);
       if (window.addLog) window.addLog('入室済', { room: cell.dataset.room });
       const signedRoom = cell.dataset.room;
       document.getElementById('signModal').classList.remove('active');
@@ -4588,29 +4621,55 @@
       ta.style.display = 'block';
     }
 
-    function printRyomenzu() {
-      const prop = getProperty();
-      const counts = getCounts();
+    // ---- 印刷：号棟選択モーダル ----
+    // 号棟が2つ以上ある現場でのみ、印刷前にどの号棟を印刷するか選んでもらう。
+    // 1号棟だけの現場では、これまで通りモーダルを出さず即印刷する。
+    function openPrintSelectModal(kind) {
+      window._printSelectKind = kind;
+      document.getElementById('printSelectTitle').textContent =
+        (kind === 'furyo' ? '不良一覧を印刷する号棟を選んでください' : '立面図を印刷する号棟を選んでください');
+      const box = document.getElementById('printSelectButtons');
+      let html = '';
+      buildings.forEach((b, i) => {
+        const label = b.name ? b.name : ('号棟' + (i + 1));
+        html += '<button onclick="runSelectedPrint(' + i + ')" style="width:100%;">' + label + '</button>';
+      });
+      html += '<button onclick="runSelectedPrint(\'all\')" style="width:100%;font-weight:bold;background:#fff3e0;border-color:#ff8c42;color:#ff8c42;">全号棟まとめて</button>';
+      box.innerHTML = html;
+      document.getElementById('printSelectModal').classList.add('active');
+    }
+    function closePrintSelectModal() {
+      document.getElementById('printSelectModal').classList.remove('active');
+      window._printSelectKind = null;
+    }
+    function runSelectedPrint(target) {
+      const kind = window._printSelectKind;
+      closePrintSelectModal();
+      if (kind === 'furyo') printFuryo(target);
+      else printRyomenzu(target);
+    }
 
-      let cellData = {};
-      document.querySelectorAll('td.cell').forEach(cell => {
-        cellData[cell.dataset.room] = {
-          state: cell.dataset.state || 'mi',
-          sign: cell.dataset.sign || '',
-          furyo: cell.dataset.furyo || '',
-          yoyakuTime: cell.dataset.yoyakuTime || ''
-        };
+    // 号棟1つ分の立面図テーブルHTMLを、buildings配列のデータ（保存済みの状態）から組み立てる
+    // ※画面表示中のDOMは見ない。事前にsnapshotCurrentBuilding()で最新化しておくこと。
+    function buildRyomenzuTableHtml(b, signs) {
+      const tableFloorData = b.tableFloorData || [];
+      let allSuffixes = new Set();
+      for (const fd of tableFloorData) for (const room of fd.rooms) allSuffixes.add(parseInt(room) % 100);
+      const tableSuffixes = Array.from(allSuffixes).sort((a, c) => a - c);
+      const cellData = b.cells || {};
+      const roomNumberData = b.rooms || {};
+      const colCount = tableSuffixes.length || 1;
+      const colW = Math.floor(257 / colCount);
+
+      let counts = { nyushitsu: 0, total: 0 };
+      Object.keys(cellData).forEach((room) => {
+        const d = cellData[room];
+        if (d.state === 'kushitsu') return;
+        counts.total++;
+        if (d.state === 'nyushitsu') counts.nyushitsu++;
       });
 
-      let roomNumberData = {};
-      document.querySelectorAll('td.room-number').forEach(cell => {
-        roomNumberData[cell.dataset.room] = {
-          label: cell.dataset.label || cell.dataset.room
-        };
-      });
-
-      let tableHtml = '<table>';
-
+      let tableHtml = '<table style="table-layout:fixed;width:100%;">';
       for (const fd of tableFloorData) {
         let roomMap = {};
         for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
@@ -4619,46 +4678,82 @@
         for (const suffix of tableSuffixes) {
           if (roomMap[suffix]) {
             const rn = roomNumberData[roomMap[suffix]] || { label: roomMap[suffix] };
-            tableHtml += '<td class="room-number">' + rn.label + '</td>';
+            tableHtml += '<td class="room-number" style="width:' + colW + 'mm;">' + (rn.label || roomMap[suffix]) + '</td>';
           } else {
-            tableHtml += '<td class="empty-number"></td>';
+            tableHtml += '<td class="empty-number" style="width:' + colW + 'mm;"></td>';
           }
         }
         tableHtml += '</tr>';
 
         tableHtml += '<tr>';
         for (const suffix of tableSuffixes) {
-          if (!roomMap[suffix]) { tableHtml += '<td class="empty-state"></td>'; continue; }
-          const d = cellData[roomMap[suffix]] || { state: 'mi', sign: '', furyo: '', yoyakuTime: '' };
+          if (!roomMap[suffix]) { tableHtml += '<td class="empty-state" style="width:' + colW + 'mm;"></td>'; continue; }
+          const room = roomMap[suffix];
+          const d = cellData[room] || { state: 'mi', furyo: '', yoyakuTime: '' };
+          const sign = (signs && signs[room]) || '';
           let cls = 'cell';
           if (d.state === 'kushitsu') cls += ' kushitsu';
-          if (d.state === 'yoyaku' && d.yoyakuTime !== '') cls += ' yoyaku';
+          if (d.state === 'yoyaku' && d.yoyakuTime) cls += ' yoyaku';
           let inner = '';
-          if (d.state === 'nyushitsu' && d.sign) {
-            inner = '<img class="sign-img" src="' + d.sign + '">';
+          if (d.state === 'nyushitsu' && sign) {
+            inner = '<img class="sign-img" src="' + sign + '">';
           } else if (d.state === 'kushitsu') {
             inner = '空室';
-          } else if (d.state === 'yoyaku' && d.yoyakuTime !== '') {
+          } else if (d.state === 'yoyaku' && d.yoyakuTime) {
             inner = '<span class="yoyaku-time">' + d.yoyakuTime + '</span>予約';
           }
-          tableHtml += '<td class="' + cls + '">' + inner + '</td>';
+          tableHtml += '<td class="' + cls + '" style="width:' + colW + 'mm;">' + inner + '</td>';
         }
         tableHtml += '</tr>';
       }
       tableHtml += '</table>';
+      return { tableHtml, counts };
+    }
 
-      const colCount = tableSuffixes.length;
-      const colW = Math.floor(257 / colCount);
+    // target: 号棟のindex（数値） または 'all'（全号棟まとめて） または undefined（1号棟のみの現場）
+    function printRyomenzu(target) {
+      snapshotCurrentBuilding(); // 画面表示中の号棟の最新状態をbuildings配列へ反映
+      if (buildings.length > 1 && target === undefined) {
+        openPrintSelectModal('ryomenzu');
+        return;
+      }
+      const targets = (target === 'all') ? buildings.map((b, i) => i) : [(typeof target === 'number') ? target : 0];
+      const multi = targets.length > 1;
 
+      const prop = getProperty();
       const now = new Date();
       const printedAt = now.getFullYear() + '/' +
-        String(now.getMonth()+1).padStart(2,'0') + '/' +
-        String(now.getDate()).padStart(2,'0') + ' ' +
-        String(now.getHours()).padStart(2,'0') + ':' +
-        String(now.getMinutes()).padStart(2,'0') + '印刷';
+        String(now.getMonth() + 1).padStart(2, '0') + '/' +
+        String(now.getDate()).padStart(2, '0') + ' ' +
+        String(now.getHours()).padStart(2, '0') + ':' +
+        String(now.getMinutes()).padStart(2, '0') + '印刷';
 
+      // ポップアップブロック対策：ユーザー操作の直後、データ取得前にウィンドウを開いておく
       const win = window.open('', '_blank');
-      win.document.write(`<!DOCTYPE html>
+      win.document.write('<p style="font-family:sans-serif;padding:20px;">準備中です…</p>');
+
+      const loadSigns = window.loadSignsFromCloud ? window.loadSignsFromCloud() : Promise.resolve({ __legacy__: {} });
+      loadSigns.then((signsByBuilding) => {
+        const legacy = signsByBuilding.__legacy__ || {};
+        let sections = '';
+        targets.forEach((idx, i) => {
+          const b = buildings[idx];
+          if (!b) return;
+          const signs = Object.assign({}, legacy, signsByBuilding[b.id] || {});
+          const { tableHtml, counts } = buildRyomenzuTableHtml(b, signs);
+          const label = b.name ? b.name : ('号棟' + (idx + 1));
+          sections += '<div class="building-section"' + (i > 0 ? ' style="page-break-before:always;"' : '') + '>' +
+            '<h2>' + prop.name + (multi ? '　【' + label + '】' : '') + '　消防設備点検立面図</h2>' +
+            '<div class="info">' +
+              '<span>作業日：' + prop.date + '　担当：' + prop.staff + '</span>' +
+              '<span>' + printedAt + '　入室数：' + counts.nyushitsu + '／' + counts.total + '</span>' +
+            '</div>' +
+            tableHtml +
+            '</div>';
+        });
+
+        win.document.open();
+        win.document.write(`<!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8">
 <title>立面図</title>
@@ -4666,10 +4761,8 @@
   body { font-family: sans-serif; padding: 10mm; font-size: 11px; }
   h2 { font-size: 13px; margin: 0 0 3px; }
   .info { font-size: 10px; margin-bottom: 6px; display: flex; justify-content: space-between; }
-  .count { font-size: 11px; font-weight: bold; }
-  table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-  th { border: 1px solid #333; width: ${colW}mm; text-align: center; background: #ddd; padding: 2px 1px; font-size: 9px; overflow: hidden; }
-  td { border: 1px solid #333; width: ${colW}mm; text-align: center; font-size: 9px; overflow: hidden; }
+  table { border-collapse: collapse; width: 100%; }
+  td { border: 1px solid #333; text-align: center; font-size: 9px; overflow: hidden; }
   td.room-number { background: #f5f5f5; font-weight: bold; height: 16px; vertical-align: middle; }
   td.empty-number { background: #eee; height: 16px; }
   td.empty-state { background: #eee; height: 26px; }
@@ -4677,39 +4770,60 @@
   td.cell.kushitsu { background: white; color: #333; }
   td.cell.yoyaku { background: #ffb347; }
   .sign-img { width: 70%; height: 18px; object-fit: contain; display: block; margin: 0 auto; }
-  .furyo-mark { display: none; }
   .yoyaku-time { font-size: 8px; display: block; }
-  th.floor-empty { background: #ddd; }
-  th.floor-label { background: #ddd; }
+  .building-section { margin-bottom: 10px; }
   @media print { body { padding: 5mm; } }
 </style>
 </head><body>
-<h2>${prop.name}　消防設備点検立面図</h2>
-<div class="info">
-  <span>作業日：${prop.date}　担当：${prop.staff}</span>
-  <span>${printedAt}　入室数：${counts.nyushitsu}／${counts.total}</span>
-</div>
-${tableHtml}
+${sections}
 </body></html>`);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 500);
+        win.document.close();
+        win.focus();
+        setTimeout(() => win.print(), 500);
+      });
     }
 
-    function printFuryo() {
-      const prop = getProperty();
-      const list = getFuryoList();
-      let bodyHtml = '';
-      if (list.length === 0) {
-        bodyHtml = '<p>不良記録はありません</p>';
-      } else {
-        list.forEach((item, idx) => {
-          bodyHtml += '<div class="item">';
-          bodyHtml += '<p class="room-title">' + (idx + 1) + '. 【' + item.room + '】</p>';
-          bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
-          bodyHtml += '</div>';
-        });
+    // 号棟1つ分の不良一覧を配列で返す（保存済みの状態から。画面のDOMは見ない）
+    function buildFuryoListForBuilding(b) {
+      const cells = b.cells || {};
+      const list = [];
+      Object.keys(cells).forEach((room) => {
+        const d = cells[room];
+        if (d.furyo && d.furyo.length > 0) list.push({ room, furyo: d.furyo });
+      });
+      return list;
+    }
+
+    // target: 号棟のindex（数値） または 'all'（全号棟まとめて） または undefined（1号棟のみの現場）
+    function printFuryo(target) {
+      snapshotCurrentBuilding();
+      if (buildings.length > 1 && target === undefined) {
+        openPrintSelectModal('furyo');
+        return;
       }
+      const targets = (target === 'all') ? buildings.map((b, i) => i) : [(typeof target === 'number') ? target : 0];
+      const multi = targets.length > 1;
+      const prop = getProperty();
+
+      let bodyHtml = '';
+      targets.forEach((idx) => {
+        const b = buildings[idx];
+        if (!b) return;
+        const label = b.name ? b.name : ('号棟' + (idx + 1));
+        if (multi) bodyHtml += '<h3 class="building-heading">【' + label + '】</h3>';
+        const list = buildFuryoListForBuilding(b);
+        if (list.length === 0) {
+          bodyHtml += '<p class="none-text">不良記録はありません</p>';
+        } else {
+          list.forEach((item, i) => {
+            bodyHtml += '<div class="item">';
+            bodyHtml += '<p class="room-title">' + (i + 1) + '. 【' + item.room + '】</p>';
+            bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
+            bodyHtml += '</div>';
+          });
+        }
+      });
+
       const title = '不良一覧';
       const win = window.open('', '_blank');
       win.document.write(`<!DOCTYPE html>
@@ -4719,10 +4833,13 @@ ${tableHtml}
 <style>
   body { font-family: sans-serif; padding: 15mm; font-size: 12px; }
   h2 { font-size: 14px; margin: 0 0 4px; }
+  h3.building-heading { font-size: 13px; margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #ff8c42; }
+  h3.building-heading:first-of-type { margin-top: 4px; }
   .info { font-size: 11px; margin-bottom: 16px; }
   .item { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 12px; }
   .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
   .furyo-text { margin: 0 0 8px; padding-left: 12px; }
+  .none-text { font-size: 12px; color: #666; margin: 0 0 12px; }
   @media print { body { padding: 8mm; } }
 </style>
 </head><body>
