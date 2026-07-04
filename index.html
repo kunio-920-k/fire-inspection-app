@@ -1812,9 +1812,19 @@
       return {
         id: 'b' + Date.now() + Math.floor(Math.random() * 1000),
         name: name || '',
+        shortLabel: null, // 画面表示用の省略記号（例：「A」）。nullなら号棟名から自動で作る
         setup: { floorCount: '3', roomCount: '6', cut4Room: false, cut4Floor: false, useSetsubiInfo: false, hasshigoInput: '', pendingFloorValues: {} },
         tableFloorData: [], tableGenerated: false, cells: {}, rooms: {}, setsubiDefaults: {}, setsubiCustom: {}
       };
+    }
+    // 号棟の画面表示用プレフィックス（例：「A棟」→「A」）を返す。
+    // shortLabelが明示的に設定されていればそれを、なければ号棟名の末尾の「棟」を取ったものを使う。
+    function getBuildingShortLabel(b) {
+      if (!b) return '';
+      if (b.shortLabel !== null && b.shortLabel !== undefined) return b.shortLabel;
+      const name = (b.name || '').trim();
+      if (!name) return '';
+      return name.endsWith('棟') ? name.slice(0, -1) : name;
     }
     let buildings = [ makeEmptyBuilding('') ];
     let currentBuildingIdx = 0;
@@ -1943,7 +1953,14 @@
       const name = prompt('号棟名を変更', b.name || '');
       if (name === null) return;
       b.name = name.trim();
+      const currentShort = getBuildingShortLabel(b);
+      const shortLabel = prompt('画面表示用の記号（部屋番号の頭に付けます。例：A棟→A）', currentShort);
+      if (shortLabel !== null) b.shortLabel = shortLabel.trim();
       renderBuildingTabs();
+      // 部屋番号の見た目が変わるので、表示中のテーブルを再描画する
+      if (buildings[currentBuildingIdx] === b && b.tableGenerated) {
+        renderTableFromState({ tableFloorData: b.tableFloorData, cells: b.cells, rooms: b.rooms });
+      }
       syncToCloud();
     }
 
@@ -1988,7 +2005,7 @@
         const label = b.name ? b.name : ('号棟' + (i + 1));
         const showBadge = highlightActive && !active && updatedBuildingIds.has(b.id);
         const badge = showBadge ? '<span class="building-tab-badge"></span>' : '';
-        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="position:relative;display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:6px 6px 0 0;cursor:pointer;font-size:14px;' +
+        html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="position:relative;display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:8px;cursor:pointer;font-size:14px;' +
           (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + badge + '</span>';
       });
       if (isAdmin) {
@@ -2715,6 +2732,8 @@
 
       const cellsData = state.cells || {};
       const roomsData = state.rooms || {};
+      // 号棟が複数ある現場では、部屋番号の頭に号棟の記号を付ける（例：A-802）
+      const roomPrefix = (buildings.length > 1) ? getBuildingShortLabel(buildings[currentBuildingIdx]) : '';
 
       let html = '<table>';
       for (const fd of tableFloorData) {
@@ -2730,7 +2749,8 @@
               ? rd.hasshigo === '1'
               : (hasshigoSuffixes.has(suffix) && fd.floor !== 1);
             const label = rd && rd.label ? rd.label : room;
-            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (rd && rd.label ? rd.label : '') + '">' + label + '</td>';
+            const displayLabel = roomPrefix ? (roomPrefix + '-' + label) : label;
+            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (rd && rd.label ? rd.label : '') + '">' + displayLabel + '</td>';
           } else {
             html += '<td class="empty-number"></td>';
           }
@@ -2954,6 +2974,8 @@
       tableSuffixes = Array.from(allSuffixes).sort((a, b) => a - b);
 
       let html = '<table>';
+      // 号棟が複数ある現場では、部屋番号の頭に号棟の記号を付ける（例：A-802）
+      const roomPrefix = (buildings.length > 1) ? getBuildingShortLabel(buildings[currentBuildingIdx]) : '';
 
       for (const fd of tableFloorData) {
         let roomMap = {};
@@ -2966,7 +2988,8 @@
             const prevRoom = preservedRoomData[room];
             const isH = hasshigoSuffixes.has(suffix) && fd.floor !== 1;
             const label = prevRoom && prevRoom.label ? prevRoom.label : room;
-            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (prevRoom && prevRoom.label ? prevRoom.label : '') + '">' + label + '</td>';
+            const displayLabel = roomPrefix ? (roomPrefix + '-' + label) : label;
+            html += '<td class="room-number' + (isH ? ' hasshigo' : '') + '" data-room="' + room + '" data-hasshigo="' + (isH ? '1' : '0') + '" data-label="' + (prevRoom && prevRoom.label ? prevRoom.label : '') + '">' + displayLabel + '</td>';
           } else {
             html += '<td class="empty-number"></td>';
           }
@@ -3194,12 +3217,13 @@
         const newLabel = prompt('名称を入力してください', current);
         if (newLabel === null) return;
         const trimmed = newLabel.trim();
+        const roomPrefix = (buildings.length > 1) ? getBuildingShortLabel(buildings[currentBuildingIdx]) : '';
         if (trimmed === '') {
           cell.dataset.label = '';
-          cell.textContent = cell.dataset.room;
+          cell.textContent = roomPrefix ? (roomPrefix + '-' + cell.dataset.room) : cell.dataset.room;
         } else {
           cell.dataset.label = trimmed;
-          cell.textContent = trimmed;
+          cell.textContent = roomPrefix ? (roomPrefix + '-' + trimmed) : trimmed;
         }
       } else if (action === 'setsubi') {
         const room = cell.dataset.room;
