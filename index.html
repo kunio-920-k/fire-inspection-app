@@ -4718,7 +4718,6 @@
         return;
       }
       const targets = (target === 'all') ? buildings.map((b, i) => i) : [(typeof target === 'number') ? target : 0];
-      const multi = targets.length > 1;
 
       const prop = getProperty();
       const now = new Date();
@@ -4743,7 +4742,7 @@
           const { tableHtml, counts } = buildRyomenzuTableHtml(b, signs);
           const label = b.name ? b.name : ('号棟' + (idx + 1));
           sections += '<div class="building-section"' + (i > 0 ? ' style="page-break-before:always;"' : '') + '>' +
-            '<h2>' + prop.name + (multi ? '　【' + label + '】' : '') + '　消防設備点検立面図</h2>' +
+            '<h2>' + prop.name + (buildings.length > 1 ? '　【' + label + '】' : '') + '　消防設備点検立面図</h2>' +
             '<div class="info">' +
               '<span>作業日：' + prop.date + '　担当：' + prop.staff + '</span>' +
               '<span>' + printedAt + '　入室数：' + counts.nyushitsu + '／' + counts.total + '</span>' +
@@ -4802,7 +4801,6 @@ ${sections}
         return;
       }
       const targets = (target === 'all') ? buildings.map((b, i) => i) : [(typeof target === 'number') ? target : 0];
-      const multi = targets.length > 1;
       const prop = getProperty();
 
       let bodyHtml = '';
@@ -4810,7 +4808,7 @@ ${sections}
         const b = buildings[idx];
         if (!b) return;
         const label = b.name ? b.name : ('号棟' + (idx + 1));
-        if (multi) bodyHtml += '<h3 class="building-heading">【' + label + '】</h3>';
+        if (buildings.length > 1) bodyHtml += '<h3 class="building-heading">【' + label + '】</h3>';
         const list = buildFuryoListForBuilding(b);
         if (list.length === 0) {
           bodyHtml += '<p class="none-text">不良記録はありません</p>';
