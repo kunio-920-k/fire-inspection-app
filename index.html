@@ -2050,6 +2050,12 @@
 
       // 権限をwindow.isJobOwnerにも反映（既存のガード処理との互換性）
       window.isJobOwner = isAdmin;
+
+      // 号棟タブ行（更新お知らせボタン含む）は権限で表示が変わるため、
+      // 役割が確定した/変わったタイミングで必ず再描画する。
+      // （初回ロード時、号棟タブの描画がロール確定より先に走ると、
+      //   ここで再描画しないとお知らせボタンが出ないままになる不具合があった）
+      if (typeof renderBuildingTabs === 'function') renderBuildingTabs();
     }
     window.applyOwnerUI = applyOwnerUI;
     window.applyRoleUI = applyOwnerUI;
