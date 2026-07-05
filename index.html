@@ -1173,6 +1173,7 @@
               });
             }
             document.getElementById('startScreen').style.display = 'block';
+            refreshStartScreenCompanyStatus();
             // ③選択画面：ユーザー名と時計を設定
             if (user && user.displayName) {
               const el = document.getElementById('startUserName');
@@ -1395,6 +1396,8 @@
         <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中</div>
         <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
       </div>
+      <!-- 会社ステータス -->
+      <div id="companyStatusCard" onclick="openCompanyModal()" style="background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);border-radius:6px;padding:10px 12px;margin-bottom:16px;cursor:pointer;font-size:12px;color:#d0d0d0;">🏢 読み込み中…</div>
       <!-- メニューラベル -->
       <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
       <!-- 新規物件 -->
@@ -1595,7 +1598,6 @@
         <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📱</span> 子機を招待（QR）</button>
         <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📅</span> スケジュール確認</button>
         <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
-        <button id="companyBtn" onclick="openCompanyModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🏢</span> 会社</button>
         <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
         <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
       </div>
@@ -3028,6 +3030,7 @@
       if (!confirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
       document.getElementById('setup').style.display = 'none';
       document.getElementById('startScreen').style.display = 'block';
+      refreshStartScreenCompanyStatus();
     }
 
     function generateTable() {
@@ -4718,6 +4721,26 @@
     }
     function closeCompanyModal() {
       document.getElementById('companyModal').classList.remove('active');
+      refreshStartScreenCompanyStatus(); // 閉じた時点の最新状態をホーム画面のカードにも反映
+    }
+
+    // ホーム画面の会社ステータスカードを更新する
+    function refreshStartScreenCompanyStatus() {
+      const card = document.getElementById('companyStatusCard');
+      if (!card) return;
+      card.textContent = '🏢 読み込み中…';
+      if (!window.loadMyCompanyStatus) return;
+      window.loadMyCompanyStatus().then((status) => {
+        if (!status) {
+          card.textContent = '🏢 会社に未登録（タップして登録・参加）';
+        } else if (status.status === 'pending') {
+          card.textContent = '🏢 「' + status.companyName + '」へ参加申請中（承認待ち）';
+        } else if (status.status === 'approved') {
+          card.textContent = '🏢 ' + status.companyName + '（' + (status.isCompanyAdmin ? '管理者' : '一般') + '）';
+        } else {
+          card.textContent = '🏢 会社に未登録（タップして登録・参加）';
+        }
+      });
     }
 
     function refreshCompanyModal() {
