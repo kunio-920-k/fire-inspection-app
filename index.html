@@ -1744,7 +1744,10 @@
   <!-- 会社（組織）管理モーダル -->
   <div id="companyModal" class="modal">
     <div class="modal-box" style="max-width:440px;text-align:left;">
-      <h2 style="text-align:center;">🏢 会社</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <h2 style="margin:0;">🏢 会社</h2>
+        <span onclick="closeCompanyModal()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
+      </div>
       <div id="companyModalBody">読み込み中…</div>
       <div class="modal-buttons">
         <button onclick="closeCompanyModal()">閉じる</button>
