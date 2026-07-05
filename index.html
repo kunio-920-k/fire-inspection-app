@@ -415,7 +415,10 @@
       getDoc,
       getDocs,
       deleteDoc,
-      onSnapshot
+      onSnapshot,
+      query,
+      where,
+      updateDoc
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -852,6 +855,134 @@
         dlog('現場一覧取得エラー / ' + e.message);
         return [];
       });
+    };
+
+    // ---- 会社（組織）管理 ----
+    // 保存先: companies/{companyId}, companies/{companyId}/members/{uid}
+    // 「会社」は現場をまたいで人を束ねるための入れ物。
+    // 会社に「承認済み・会社の管理者」として登録された人は、その会社の現場であれば
+    // 個別に招待されていなくても【管理者】として入れる（現場ごとの役職とは別枠、重複して持てる）。
+
+    function generateInviteCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 紛らわしい文字(0,O,1,I)は除外
+      let code = '';
+      for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+      return code;
+    }
+
+    // 会社を新規登録する。実行した人が自動的にその会社の【管理者】になる。
+    window.registerCompany = function(companyName) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      const companyRef = doc(collection(db, 'companies'));
+      const inviteCode = generateInviteCode();
+      return setDoc(companyRef, {
+        name: companyName,
+        ownerUid: window.currentUser.uid,
+        inviteCode: inviteCode,
+        createdAt: serverTimestamp()
+      }).then(() => setDoc(doc(db, 'companies', companyRef.id, 'members', window.currentUser.uid), {
+        uid: window.currentUser.uid,
+        displayName: window.currentUser.displayName || '',
+        status: 'approved',
+        isCompanyAdmin: true,
+        requestedAt: serverTimestamp(),
+        approvedAt: serverTimestamp()
+      })).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
+        companyId: companyRef.id,
+        companyStatus: 'approved'
+      }, { merge: true })).then(() => companyRef.id);
+    };
+
+    // 招待コードを使って会社への参加を申請する（承認されるまでは何の権限も持たない）
+    window.requestJoinCompany = function(inviteCode) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      const code = (inviteCode || '').trim().toUpperCase();
+      if (!code) return Promise.reject(new Error('招待コードを入力してください'));
+      const q = query(collection(db, 'companies'), where('inviteCode', '==', code));
+      return getDocs(q).then((snap) => {
+        if (snap.empty) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
+        const companyDoc = snap.docs[0];
+        const companyId = companyDoc.id;
+        return setDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid), {
+          uid: window.currentUser.uid,
+          displayName: window.currentUser.displayName || '',
+          status: 'pending',
+          isCompanyAdmin: false,
+          requestedAt: serverTimestamp()
+        }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
+          companyId: companyId,
+          companyStatus: 'pending'
+        }, { merge: true })).then(() => ({ companyId, companyName: companyDoc.data().name }));
+      });
+    };
+
+    // 今の自分の会社所属状況を読み込む
+    window.loadMyCompanyStatus = function() {
+      if (!window.currentUser) return Promise.resolve(null);
+      return getDoc(doc(db, 'users', window.currentUser.uid)).then((snap) => {
+        const d = snap.exists() ? snap.data() : null;
+        if (!d || !d.companyId) return null;
+        return getDoc(doc(db, 'companies', d.companyId)).then((companySnap) => {
+          if (!companySnap.exists()) return null;
+          const company = companySnap.data();
+          return getDoc(doc(db, 'companies', d.companyId, 'members', window.currentUser.uid)).then((memberSnap) => {
+            const member = memberSnap.exists() ? memberSnap.data() : { status: d.companyStatus, isCompanyAdmin: false };
+            return {
+              companyId: d.companyId,
+              companyName: company.name,
+              inviteCode: company.inviteCode,
+              status: member.status,
+              isCompanyAdmin: !!member.isCompanyAdmin
+            };
+          });
+        });
+      }).catch((e) => { dlog('会社情報取得エラー / ' + e.message); return null; });
+    };
+
+    // 承認待ちのメンバー一覧を取得する（会社の管理者用）
+    window.loadPendingCompanyMembers = function(companyId) {
+      const ref = collection(db, 'companies', companyId, 'members');
+      return getDocs(query(ref, where('status', '==', 'pending'))).then((snap) => {
+        const list = [];
+        snap.forEach((d) => list.push(d.data()));
+        return list;
+      }).catch((e) => { dlog('承認待ち一覧取得エラー / ' + e.message); return []; });
+    };
+
+    // 承認済みメンバー一覧を取得する（会社の管理者用）
+    window.loadApprovedCompanyMembers = function(companyId) {
+      const ref = collection(db, 'companies', companyId, 'members');
+      return getDocs(query(ref, where('status', '==', 'approved'))).then((snap) => {
+        const list = [];
+        snap.forEach((d) => list.push(d.data()));
+        return list;
+      }).catch((e) => { dlog('会社メンバー一覧取得エラー / ' + e.message); return []; });
+    };
+
+    // メンバーを承認する
+    window.approveCompanyMember = function(companyId, uid, isCompanyAdmin) {
+      return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
+        status: 'approved',
+        isCompanyAdmin: !!isCompanyAdmin,
+        approvedAt: serverTimestamp()
+      }).then(() => setDoc(doc(db, 'users', uid), { companyStatus: 'approved' }, { merge: true }));
+    };
+
+    // 参加申請を却下する（会社から外す）
+    window.rejectCompanyMember = function(companyId, uid) {
+      return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
+        .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+    };
+
+    // メンバーの「会社の管理者」フラグを切り替える
+    window.setCompanyMemberAdmin = function(companyId, uid, isCompanyAdmin) {
+      return updateDoc(doc(db, 'companies', companyId, 'members', uid), { isCompanyAdmin: !!isCompanyAdmin });
+    };
+
+    // 招待コードを再発行する（漏洩時の保険）
+    window.regenerateInviteCode = function(companyId) {
+      const newCode = generateInviteCode();
+      return updateDoc(doc(db, 'companies', companyId), { inviteCode: newCode }).then(() => newCode);
     };
 
     // 現場データを取得する（複製用）
@@ -1453,6 +1584,7 @@
         <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📱</span> 子機を招待（QR）</button>
         <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📅</span> スケジュール確認</button>
         <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
+        <button id="companyBtn" onclick="openCompanyModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🏢</span> 会社</button>
         <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
         <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
       </div>
@@ -1556,6 +1688,17 @@
       <div id="memberList"></div>
       <div class="modal-buttons">
         <button onclick="closeMemberModal()">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 会社（組織）管理モーダル -->
+  <div id="companyModal" class="modal">
+    <div class="modal-box" style="max-width:440px;text-align:left;">
+      <h2 style="text-align:center;">🏢 会社</h2>
+      <div id="companyModalBody">読み込み中…</div>
+      <div class="modal-buttons">
+        <button onclick="closeCompanyModal()">閉じる</button>
       </div>
     </div>
   </div>
@@ -4546,6 +4689,164 @@
     }
     function closeMemberModal() {
       document.getElementById('memberModal').classList.remove('active');
+    }
+
+    // ---- 会社（組織）管理 ----
+    function openCompanyModal() {
+      document.getElementById('companyModal').classList.add('active');
+      refreshCompanyModal();
+    }
+    function closeCompanyModal() {
+      document.getElementById('companyModal').classList.remove('active');
+    }
+
+    function refreshCompanyModal() {
+      const body = document.getElementById('companyModalBody');
+      body.innerHTML = '読み込み中…';
+      if (!window.loadMyCompanyStatus) { body.innerHTML = '<p>まだログインが完了していません。</p>'; return; }
+      window.loadMyCompanyStatus().then((status) => {
+        window._myCompanyStatus = status;
+        if (!status) {
+          renderCompanyModalNoCompany(body);
+        } else if (status.status === 'pending') {
+          body.innerHTML =
+            '<p style="font-size:14px;">「' + status.companyName + '」への参加申請中です。</p>' +
+            '<p style="font-size:12px;color:#888;">会社の代表者が承認するまでお待ちください。</p>';
+        } else if (status.status === 'approved') {
+          renderCompanyModalApproved(body, status);
+        } else {
+          renderCompanyModalNoCompany(body);
+        }
+      });
+    }
+
+    function renderCompanyModalNoCompany(body) {
+      body.innerHTML =
+        '<p style="font-size:13px;color:#666;">まだどの会社にも登録されていません。</p>' +
+        '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">会社を登録する</div>' +
+          '<p style="font-size:11px;color:#888;margin:0 0 8px;">その日のすべての現場を管理・監視できるようになります。実行した人が会社の【管理者】になります。</p>' +
+          '<input id="newCompanyNameInput" type="text" placeholder="会社名（例：くにお消防設備）" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
+          '<button onclick="submitRegisterCompany()" style="width:100%;">登録する</button>' +
+        '</div>' +
+        '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">招待コードで参加する</div>' +
+          '<p style="font-size:11px;color:#888;margin:0 0 8px;">会社の代表者からもらった招待コードを入力してください。承認されるまでは待機状態になります。</p>' +
+          '<input id="joinInviteCodeInput" type="text" placeholder="招待コード" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;text-transform:uppercase;">' +
+          '<button onclick="submitJoinCompany()" style="width:100%;">参加申請する</button>' +
+        '</div>';
+    }
+
+    function submitRegisterCompany() {
+      const nameInput = document.getElementById('newCompanyNameInput');
+      const name = (nameInput.value || '').trim();
+      if (!name) { alert('会社名を入力してください'); return; }
+      if (!confirm('「' + name + '」として会社を登録します。よろしいですか？')) return;
+      window.registerCompany(name).then(() => {
+        alert('会社を登録しました。あなたはこの会社の【管理者】です。');
+        refreshCompanyModal();
+      }).catch((e) => alert('登録に失敗しました：' + e.message));
+    }
+
+    function submitJoinCompany() {
+      const codeInput = document.getElementById('joinInviteCodeInput');
+      const code = (codeInput.value || '').trim();
+      if (!code) { alert('招待コードを入力してください'); return; }
+      window.requestJoinCompany(code).then((r) => {
+        alert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
+        refreshCompanyModal();
+      }).catch((e) => alert(e.message));
+    }
+
+    function renderCompanyModalApproved(body, status) {
+      let html = '<p style="font-size:15px;font-weight:bold;margin:0 0 4px;">' + status.companyName + '</p>';
+      html += '<p style="font-size:12px;color:#666;margin:0 0 12px;">あなたの立場：' +
+        (status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）') +
+        '</p>';
+
+      if (status.isCompanyAdmin) {
+        html += '<div style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">招待コード</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;">' +
+            '<code id="inviteCodeDisplay" style="flex:1;font-size:16px;letter-spacing:2px;background:#f5f5f5;padding:6px 10px;border-radius:6px;">' + status.inviteCode + '</code>' +
+            '<button onclick="copyInviteCode()" style="padding:6px 10px;">コピー</button>' +
+          '</div>' +
+          '<button onclick="doRegenerateInviteCode(\'' + status.companyId + '\')" style="width:100%;margin-top:8px;background:#fff0f0;border-color:#c88;color:#c00;">コードを再発行する（漏洩時など）</button>' +
+        '</div>';
+        html += '<div id="companyMemberSection" style="margin:10px 0;">読み込み中…</div>';
+      }
+
+      html += '<p style="font-size:12px;color:#999;margin-top:16px;">📊 会社の現場一覧ダッシュボードは近日対応予定です。</p>';
+      body.innerHTML = html;
+
+      if (status.isCompanyAdmin) {
+        loadCompanyMemberSection(status.companyId);
+      }
+    }
+
+    function copyInviteCode() {
+      const el = document.getElementById('inviteCodeDisplay');
+      if (!el) return;
+      const text = el.textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => alert('招待コードをコピーしました'));
+      } else {
+        alert('招待コード：' + text);
+      }
+    }
+
+    function doRegenerateInviteCode(companyId) {
+      if (!confirm('招待コードを再発行します。古いコードは使えなくなります。よろしいですか？')) return;
+      window.regenerateInviteCode(companyId).then(() => {
+        alert('招待コードを再発行しました。');
+        refreshCompanyModal();
+      });
+    }
+
+    function loadCompanyMemberSection(companyId) {
+      const section = document.getElementById('companyMemberSection');
+      Promise.all([
+        window.loadPendingCompanyMembers(companyId),
+        window.loadApprovedCompanyMembers(companyId)
+      ]).then(([pending, approved]) => {
+        let html = '';
+        if (pending.length > 0) {
+          html += '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">承認待ち（' + pending.length + '件）</div>';
+          pending.forEach((m) => {
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
+              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + '</span>' +
+              '<span>' +
+                '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',false)" style="padding:4px 8px;font-size:12px;">一般で承認</button> ' +
+                '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',true)" style="padding:4px 8px;font-size:12px;background:#fff3e0;border-color:#ff8c42;">管理者で承認</button> ' +
+                '<button onclick="rejectMemberUI(\'' + companyId + '\',\'' + m.uid + '\')" style="padding:4px 8px;font-size:12px;background:#fff0f0;border-color:#c88;color:#c00;">却下</button>' +
+              '</span></div>';
+          });
+        }
+        html += '<div style="font-weight:bold;font-size:13px;margin:12px 0 6px;">会社メンバー（' + approved.length + '人）</div>';
+        if (approved.length === 0) {
+          html += '<p style="font-size:12px;color:#888;">まだいません。</p>';
+        } else {
+          approved.forEach((m) => {
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
+              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + (m.isCompanyAdmin ? ' <span style="color:#ff8c42;font-size:11px;">【管理者】</span>' : '') + '</span>' +
+              '<button onclick="toggleCompanyAdminUI(\'' + companyId + '\',\'' + m.uid + '\',' + (!m.isCompanyAdmin) + ')" style="padding:4px 8px;font-size:12px;">' +
+                (m.isCompanyAdmin ? '管理者を外す' : '管理者にする') +
+              '</button></div>';
+          });
+        }
+        section.innerHTML = html;
+      });
+    }
+
+    function approveMemberUI(companyId, uid, asAdmin) {
+      window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId));
+    }
+    function rejectMemberUI(companyId, uid) {
+      if (!confirm('この参加申請を却下します。よろしいですか？')) return;
+      window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId));
+    }
+    function toggleCompanyAdminUI(companyId, uid, makeAdmin) {
+      window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId));
     }
 
     // メンバー一覧を描画する（startPresenceWatchのonSnapshotから呼ばれる）
