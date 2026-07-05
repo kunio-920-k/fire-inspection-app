@@ -1288,6 +1288,17 @@
           window.loadInspectionFromCloud().then((state) => {
             if (state && window.restoreInspectionState) {
               window.restoreInspectionState(state);
+            } else {
+              // クラウドにまだ何も保存されていない（新規作成直後、オートセーブ前に閉じた等）
+              // → 何も表示されないまま止まってしまうので、一括設定画面を表示しておく
+              document.getElementById('setup').style.display = 'block';
+              document.getElementById('propertyArea').style.display = 'none';
+              document.getElementById('yoyakuArea').style.display = 'none';
+              document.getElementById('outputArea').style.display = 'none';
+              const tw = document.querySelector('.table-wrap');
+              if (tw) tw.style.display = 'none';
+              buildNoteSelects();
+              renderBuildingTabs();
             }
             applyCloudSigns();
           });
