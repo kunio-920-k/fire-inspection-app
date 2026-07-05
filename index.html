@@ -932,7 +932,8 @@
               companyName: company.name,
               inviteCode: company.inviteCode,
               status: member.status,
-              isCompanyAdmin: !!member.isCompanyAdmin
+              isCompanyAdmin: !!member.isCompanyAdmin,
+              isOwner: company.ownerUid === window.currentUser.uid
             };
           });
         });
@@ -960,29 +961,64 @@
     };
 
     // メンバーを承認する
+    // メンバーを承認する（会社の「登録者（オーナー）」のみ行える）
     window.approveCompanyMember = function(companyId, uid, isCompanyAdmin) {
-      return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
-        status: 'approved',
-        isCompanyAdmin: !!isCompanyAdmin,
-        approvedAt: serverTimestamp()
-      }).then(() => setDoc(doc(db, 'users', uid), { companyStatus: 'approved' }, { merge: true }));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('承認は会社の登録者のみ行えます。');
+        }
+        return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
+          status: 'approved',
+          isCompanyAdmin: !!isCompanyAdmin,
+          approvedAt: serverTimestamp()
+        }).then(() => setDoc(doc(db, 'users', uid), { companyStatus: 'approved' }, { merge: true }));
+      });
     };
 
-    // 参加申請を却下する（会社から外す）
+    // 参加申請を却下する（会社から外す。こちらも登録者のみ行える）
     window.rejectCompanyMember = function(companyId, uid) {
-      return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
-        .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('却下は会社の登録者のみ行えます。');
+        }
+        return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
+          .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+      });
     };
 
-    // メンバーの「会社の管理者」フラグを切り替える
+    // メンバーの「会社の管理者」フラグを切り替える（管理者なら誰でも可）
     window.setCompanyMemberAdmin = function(companyId, uid, isCompanyAdmin) {
       return updateDoc(doc(db, 'companies', companyId, 'members', uid), { isCompanyAdmin: !!isCompanyAdmin });
     };
 
-    // 招待コードを再発行する（漏洩時の保険）
+    // 会社メンバーを除名する（辞職・短期依頼の終了など。招待コードは変えずに済む）
+    // 管理者なら誰でも可。ただし現オーナー（登録者）は先に権限を譲渡してからでないと除名できない。
+    window.removeCompanyMember = function(companyId, uid) {
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (snap.exists() && snap.data().ownerUid === uid) {
+          throw new Error('この人は現在の登録者（オーナー）です。先に登録者権限を他の人へ譲渡してから除名してください。');
+        }
+        return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
+          .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+      });
+    };
+
+    // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
     window.regenerateInviteCode = function(companyId) {
       const newCode = generateInviteCode();
       return updateDoc(doc(db, 'companies', companyId), { inviteCode: newCode }).then(() => newCode);
+    };
+
+    // 「登録者（オーナー）」権限を他の会社メンバーに譲渡する（現オーナーのみ実行可）
+    // 譲渡先は自動的に会社の管理者にもなる。元オーナーは管理者のまま残る（外れない）。
+    window.transferCompanyOwnership = function(companyId, newOwnerUid) {
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('譲渡は現在の登録者のみ行えます。');
+        }
+        return updateDoc(doc(db, 'companies', companyId), { ownerUid: newOwnerUid })
+          .then(() => updateDoc(doc(db, 'companies', companyId, 'members', newOwnerUid), { isCompanyAdmin: true }));
+      });
     };
 
     // 現場データを取得する（複製用）
@@ -4803,9 +4839,9 @@
 
     function renderCompanyModalApproved(body, status) {
       let html = '<p style="font-size:15px;font-weight:bold;margin:0 0 4px;">' + status.companyName + '</p>';
-      html += '<p style="font-size:12px;color:#666;margin:0 0 12px;">あなたの立場：' +
-        (status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）') +
-        '</p>';
+      let roleText = status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）';
+      if (status.isOwner) roleText += ' <span style="color:#3a9bdc;font-weight:bold;">（登録者）</span>';
+      html += '<p style="font-size:12px;color:#666;margin:0 0 12px;">あなたの立場：' + roleText + '</p>';
 
       if (status.isCompanyAdmin) {
         html += '<div style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
@@ -4817,13 +4853,22 @@
           '<button onclick="doRegenerateInviteCode(\'' + status.companyId + '\')" style="width:100%;margin-top:8px;background:#fff0f0;border-color:#c88;color:#c00;">コードを再発行する（漏洩時など）</button>' +
         '</div>';
         html += '<div id="companyMemberSection" style="margin:10px 0;">読み込み中…</div>';
+        if (status.isOwner) {
+          html += '<div id="companyOwnerSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+            '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">登録者（オーナー）権限の譲渡</div>' +
+            '<p style="font-size:11px;color:#888;margin:0 0 8px;">参加申請の承認・却下は登録者だけができます。本格運用時など、この権限を他の会社メンバーに譲ることができます（あなた自身は管理者のまま残ります）。</p>' +
+            '<div id="ownerTransferButtons">読み込み中…</div>' +
+          '</div>';
+        }
+      } else if (!status.isOwner) {
+        html += '<p style="font-size:12px;color:#888;">参加申請の承認・却下は会社の登録者が行います。</p>';
       }
 
       html += '<p style="font-size:12px;color:#999;margin-top:16px;">📊 会社の現場一覧ダッシュボードは近日対応予定です。</p>';
       body.innerHTML = html;
 
       if (status.isCompanyAdmin) {
-        loadCompanyMemberSection(status.companyId);
+        loadCompanyMemberSection(status.companyId, status.isOwner);
       }
     }
 
@@ -4846,7 +4891,7 @@
       });
     }
 
-    function loadCompanyMemberSection(companyId) {
+    function loadCompanyMemberSection(companyId, isOwner) {
       const section = document.getElementById('companyMemberSection');
       Promise.all([
         window.loadPendingCompanyMembers(companyId),
@@ -4857,12 +4902,17 @@
           html += '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">承認待ち（' + pending.length + '件）</div>';
           pending.forEach((m) => {
             html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
-              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + '</span>' +
-              '<span>' +
-                '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',false)" style="padding:4px 8px;font-size:12px;">一般で承認</button> ' +
-                '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',true)" style="padding:4px 8px;font-size:12px;background:#fff3e0;border-color:#ff8c42;">管理者で承認</button> ' +
-                '<button onclick="rejectMemberUI(\'' + companyId + '\',\'' + m.uid + '\')" style="padding:4px 8px;font-size:12px;background:#fff0f0;border-color:#c88;color:#c00;">却下</button>' +
-              '</span></div>';
+              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + '</span>';
+            if (isOwner) {
+              html += '<span>' +
+                  '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',false)" style="padding:4px 8px;font-size:12px;">一般で承認</button> ' +
+                  '<button onclick="approveMemberUI(\'' + companyId + '\',\'' + m.uid + '\',true)" style="padding:4px 8px;font-size:12px;background:#fff3e0;border-color:#ff8c42;">管理者で承認</button> ' +
+                  '<button onclick="rejectMemberUI(\'' + companyId + '\',\'' + m.uid + '\')" style="padding:4px 8px;font-size:12px;background:#fff0f0;border-color:#c88;color:#c00;">却下</button>' +
+                '</span>';
+            } else {
+              html += '<span style="font-size:11px;color:#999;">登録者の承認待ち</span>';
+            }
+            html += '</div>';
           });
         }
         html += '<div style="font-weight:bold;font-size:13px;margin:12px 0 6px;">会社メンバー（' + approved.length + '人）</div>';
@@ -4872,24 +4922,57 @@
           approved.forEach((m) => {
             html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
               '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + (m.isCompanyAdmin ? ' <span style="color:#ff8c42;font-size:11px;">【管理者】</span>' : '') + '</span>' +
+              '<span>' +
               '<button onclick="toggleCompanyAdminUI(\'' + companyId + '\',\'' + m.uid + '\',' + (!m.isCompanyAdmin) + ')" style="padding:4px 8px;font-size:12px;">' +
                 (m.isCompanyAdmin ? '管理者を外す' : '管理者にする') +
-              '</button></div>';
+              '</button> ' +
+              '<button onclick="removeMemberUI(\'' + companyId + '\',\'' + m.uid + '\',\'' + (m.displayName || '（名前未設定）').replace(/'/g, "\\'") + '\')" style="padding:4px 8px;font-size:12px;background:#fff0f0;border-color:#c88;color:#c00;">除名</button>' +
+              '</span></div>';
           });
         }
         section.innerHTML = html;
+
+        // オーナー権限の譲渡先候補（自分以外の会社メンバー）を描画
+        const transferBox = document.getElementById('ownerTransferButtons');
+        if (transferBox) {
+          const others = approved.filter((m) => m.uid !== window.currentUser.uid);
+          if (others.length === 0) {
+            transferBox.innerHTML = '<p style="font-size:12px;color:#888;">譲渡できる相手（他のメンバー）がまだいません。</p>';
+          } else {
+            let th = '';
+            others.forEach((m) => {
+              th += '<button onclick="doTransferOwnership(\'' + companyId + '\',\'' + m.uid + '\',\'' + (m.displayName || '（名前未設定）').replace(/'/g, "\\'") + '\')" style="width:100%;margin-bottom:6px;">' +
+                (m.displayName || '（名前未設定）') + ' に譲渡する</button>';
+            });
+            transferBox.innerHTML = th;
+          }
+        }
       });
     }
 
+    function doTransferOwnership(companyId, newOwnerUid, newOwnerName) {
+      if (!confirm('登録者（オーナー）権限を「' + newOwnerName + '」に譲渡します。以後、参加申請の承認・却下はその人が行うことになります。あなたは管理者のまま残ります。よろしいですか？')) return;
+      window.transferCompanyOwnership(companyId, newOwnerUid).then(() => {
+        alert('譲渡しました。');
+        refreshCompanyModal();
+      }).catch((e) => alert(e.message));
+    }
+
     function approveMemberUI(companyId, uid, asAdmin) {
-      window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId));
+      window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
     }
     function rejectMemberUI(companyId, uid) {
       if (!confirm('この参加申請を却下します。よろしいですか？')) return;
-      window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId));
+      window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
     }
     function toggleCompanyAdminUI(companyId, uid, makeAdmin) {
-      window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId));
+      window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner));
+    }
+    function removeMemberUI(companyId, uid, name) {
+      if (!confirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
+      window.removeCompanyMember(companyId, uid).then(() => {
+        loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner);
+      }).catch((e) => alert(e.message));
     }
 
     // メンバー一覧を描画する（startPresenceWatchのonSnapshotから呼ばれる）
