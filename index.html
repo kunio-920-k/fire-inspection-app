@@ -2850,6 +2850,15 @@
           }, 500);
         }
       } else {
+        // この号棟はまだ立面図が未作成 → 一括設定画面を表示する
+        // （号棟切り替え時のloadBuildingToViewと同じ処理。ここが抜けていたため、
+        //   立面図未作成の号棟を復元した際に画面が空白になるバグがあった）
+        document.getElementById('setup').style.display = 'block';
+        document.getElementById('propertyArea').style.display = 'none';
+        document.getElementById('yoyakuArea').style.display = 'none';
+        document.getElementById('outputArea').style.display = 'none';
+        document.querySelector('.table-wrap').style.display = 'none';
+        document.getElementById('tableArea').innerHTML = '';
         buildNoteSelects();
       }
       renderBuildingTabs();
