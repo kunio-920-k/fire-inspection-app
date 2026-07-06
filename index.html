@@ -583,10 +583,19 @@
     window.setJobOwnerIfNew = function(jobId) {
       if (!window.currentUser || !jobId) return;
       const ref = doc(db, 'inspections', jobId);
-      setDoc(ref, {
-        ownerUid: window.currentUser.uid,
-        ownerEmail: window.currentUser.email || ''
-      }, { merge: true }).then(() => {
+      // 作成者が会社に承認済みで所属していれば、新しい現場を自動でその会社に紐付ける
+      // （あとから会社モーダルの操作で手動での紐付け・解除も可能）
+      const companyLookup = window.loadMyCompanyStatus
+        ? window.loadMyCompanyStatus().then((s) => (s && s.status === 'approved') ? s.companyId : null).catch(() => null)
+        : Promise.resolve(null);
+      companyLookup.then((companyId) => {
+        const data = {
+          ownerUid: window.currentUser.uid,
+          ownerEmail: window.currentUser.email || ''
+        };
+        if (companyId) data.companyId = companyId;
+        return setDoc(ref, data, { merge: true });
+      }).then(() => {
         dlog('現場オーナー設定OK / job=' + jobId);
       }).catch((e) => {
         dlog('現場オーナー設定エラー / ' + e.message);
@@ -599,6 +608,8 @@
       if (!window.currentUser || !window.currentJobId) return Promise.resolve(true);
       const ref = doc(db, 'inspections', window.currentJobId);
       return getDoc(ref).then((snap) => {
+        // この現場がどの会社に紐付いているかを、あとで registerPresence 等が使えるように保持しておく
+        window.currentJobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
         if (snap.exists() && snap.data() && snap.data().ownerUid) {
           window.isJobOwner = (snap.data().ownerUid === window.currentUser.uid);
         } else {
@@ -612,8 +623,18 @@
       }).catch((e) => {
         dlog('オーナー確認エラー / ' + e.message);
         window.isJobOwner = true;
+        window.currentJobCompanyId = null;
         return true;
       });
+    };
+
+    // 今ログインしている人が「会社の管理者」として、この現場に無招待で入る資格があるかを確認する。
+    // 条件：会社に承認済みで所属している ＋ その会社IDが、この現場に紐付いている会社IDと一致する ＋ 会社の管理者フラグを持つ
+    window.checkCompanyAdminAccess = function() {
+      if (!window.currentJobCompanyId || !window.loadMyCompanyStatus) return Promise.resolve(false);
+      return window.loadMyCompanyStatus().then((status) => {
+        return !!(status && status.status === 'approved' && status.isCompanyAdmin && status.companyId === window.currentJobCompanyId);
+      }).catch(() => false);
     };
 
     // ---- サイン画像のクラウド保存・読込・削除 ----
@@ -697,29 +718,46 @@
       if (!window.currentUser || !window.currentJobId) return;
       const amOwner = !!window.isJobOwner; // 非同期処理の前に値を確定させる
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
-      getDoc(ref).then((snap) => {
-        if (snap.exists() && snap.data().role && !amOwner) {
-          // 既に登録済み かつ オーナーでない → roleをそのまま使う
-          window.myRole = snap.data().role;
-          if (window.applyRoleUI) window.applyRoleUI();
-        } else {
-          // 未登録、またはオーナーの場合はadminで登録・上書き
-          const initialRole = amOwner ? 'admin' : 'worker';
-          setDoc(ref, {
-            uid: window.currentUser.uid,
-            displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
-            role: initialRole,
-            room: '',
-            joinedAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          }, { merge: true }).then(() => {
-            window.myRole = initialRole;
-            if (window.applyRoleUI) window.applyRoleUI();
-            // 管理者ならdismissedをリセット
-            if (initialRole === 'admin' && window.clearDismissed) window.clearDismissed();
-          });
-        }
-      }).catch((e) => dlog('presence初期登録エラー / ' + e.message));
+      const companyAdminCheck = window.checkCompanyAdminAccess ? window.checkCompanyAdminAccess() : Promise.resolve(false);
+      companyAdminCheck.then((isCompanyAdminHere) => {
+        getDoc(ref).then((snap) => {
+          if (snap.exists() && snap.data().role && !amOwner) {
+            if (isCompanyAdminHere && snap.data().role !== 'admin') {
+              // 既にworker/subとして参加済みだが、会社の管理者なので【管理者】へ自動格上げする
+              setDoc(ref, {
+                uid: window.currentUser.uid,
+                displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
+                role: 'admin',
+                updatedAt: serverTimestamp()
+              }, { merge: true }).then(() => {
+                window.myRole = 'admin';
+                if (window.applyRoleUI) window.applyRoleUI();
+                if (window.clearDismissed) window.clearDismissed();
+              });
+            } else {
+              // 既に登録済み かつ オーナーでない → roleをそのまま使う
+              window.myRole = snap.data().role;
+              if (window.applyRoleUI) window.applyRoleUI();
+            }
+          } else {
+            // 未登録、またはオーナーの場合はadminで登録・上書き（会社の管理者としての無招待入室もここでadmin扱いにする）
+            const initialRole = (amOwner || isCompanyAdminHere) ? 'admin' : 'worker';
+            setDoc(ref, {
+              uid: window.currentUser.uid,
+              displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
+              role: initialRole,
+              room: '',
+              joinedAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            }, { merge: true }).then(() => {
+              window.myRole = initialRole;
+              if (window.applyRoleUI) window.applyRoleUI();
+              // 管理者ならdismissedをリセット
+              if (initialRole === 'admin' && window.clearDismissed) window.clearDismissed();
+            });
+          }
+        }).catch((e) => dlog('presence初期登録エラー / ' + e.message));
+      });
     };
 
     // 自分の現在位置をクラウドに書き込む（roleは上書きしない）
@@ -1027,6 +1065,22 @@
         }
         return updateDoc(doc(db, 'companies', companyId), { ownerUid: newOwnerUid })
           .then(() => updateDoc(doc(db, 'companies', companyId, 'members', newOwnerUid), { isCompanyAdmin: true }));
+      });
+    };
+
+    // 現在開いている現場を、指定した会社に紐付ける（会社の管理者がこの現場に無招待で入れるようになる）
+    window.linkJobToCompany = function(jobId, companyId) {
+      if (!jobId || !companyId) return Promise.reject(new Error('現場または会社が指定されていません'));
+      return updateDoc(doc(db, 'inspections', jobId), { companyId: companyId }).then(() => {
+        window.currentJobCompanyId = companyId;
+      });
+    };
+
+    // 現在開いている現場の、会社への紐付けを解除する
+    window.unlinkJobFromCompany = function(jobId) {
+      if (!jobId) return Promise.reject(new Error('現場が指定されていません'));
+      return updateDoc(doc(db, 'inspections', jobId), { companyId: null }).then(() => {
+        window.currentJobCompanyId = null;
       });
     };
 
@@ -4013,16 +4067,8 @@
       let list; // [{y, realIdx}]
       let sortedMode = false;
       if (isAdmin && multiBuilding) {
-        // 管理者（親機）：全号棟の予約をまとめて日付→時間順に表示
+        // 管理者（親機）：全号棟の予約をまとめて表示（日付グループ内は時間順）
         list = yoyakuList.map((y, realIdx) => ({ y, realIdx }));
-        list.sort((a, b) => {
-          const da = a.y.date || '';
-          const db = b.y.date || '';
-          if (da !== db) return da.localeCompare(db);
-          const ta = a.y.time === '' ? '99:99' : (a.y.time || '99:99');
-          const tb = b.y.time === '' ? '99:99' : (b.y.time || '99:99');
-          return ta.localeCompare(tb);
-        });
         sortedMode = true;
       } else {
         // 一般権限（子機）、または号棟が1つだけの現場：今表示中の号棟の予約のみ、従来通りの並び順
@@ -4032,32 +4078,63 @@
         });
       }
 
-      list.forEach(({ y, realIdx }, displayIdx) => {
-        const tr = document.createElement('tr');
-        const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
-        const isPass = y.time === '';
-        // パス（時間指定なし）は入室済と同様、即時に完了扱いとする
-        if ((cell && cell.dataset.state === 'nyushitsu') || isPass) {
-          tr.classList.add('done');
+      // 日付ごとにグループ分けする（日付昇順。未設定の日付は最後にまとめる）。
+      // グループ内の並び順は従来ロジックをそのまま維持する：
+      //   sortedModeなら時間順に並べ替え、それ以外は元の順序（手動並べ替え＝↓ボタン）を維持する。
+      const DATE_UNSET_KEY = '\uFFFF';
+      const groupOrder = [];
+      const groupMap = new Map();
+      list.forEach(item => {
+        const key = item.y.date || DATE_UNSET_KEY;
+        if (!groupMap.has(key)) { groupMap.set(key, []); groupOrder.push(key); }
+        groupMap.get(key).push(item);
+      });
+      groupOrder.sort((a, b) => a.localeCompare(b));
+
+      groupOrder.forEach(key => {
+        const group = groupMap.get(key);
+        if (sortedMode) {
+          group.sort((a, b) => {
+            const ta = a.y.time === '' ? '99:99' : (a.y.time || '99:99');
+            const tb = b.y.time === '' ? '99:99' : (b.y.time || '99:99');
+            return ta.localeCompare(tb);
+          });
         }
-        const timeLabel = (multiDay && y.date ? formatDateJP(y.date) + ' ' : '') + (isPass ? 'パス' : y.time);
-        const bIdx = buildings.findIndex(b => b.id === y.buildingId);
-        const badge = multiBuilding
-          ? '<span style="display:inline-block;background:' + buildingColor(bIdx >= 0 ? bIdx : 0) + ';color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;">' + buildingLabelForId(y.buildingId) + '</span>'
-          : '';
-        const roomLabel = badge + y.room;
-        let sortCell = '';
-        if (!sortedMode && displayIdx < list.length - 1) {
-          const nextRealIdx = list[displayIdx + 1].realIdx;
-          sortCell = '<button onclick="moveYoyaku(' + realIdx + ',' + nextRealIdx + ')">↓</button>';
+        // 複数日の物件の時だけ、グループの間に日付の見出し行を挟む（単日物件は今まで通り見出しなし）
+        if (multiDay) {
+          const headerTr = document.createElement('tr');
+          const label = key === DATE_UNSET_KEY ? '日付未定' : formatDateJP(key);
+          headerTr.innerHTML = '<td colspan="5" style="background:#e0e0e0;font-weight:bold;text-align:left;padding:5px 8px;">' + label + '</td>';
+          tbody.appendChild(headerTr);
         }
-        tr.innerHTML =
-          '<td>' + roomLabel + '</td>' +
-          '<td>' + timeLabel + '</td>' +
-          '<td>' + y.note + '</td>' +
-          '<td class="sort-btn">' + sortCell + '</td>' +
-          '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + realIdx + ')">削除</button></td>';
-        tbody.appendChild(tr);
+        group.forEach(({ y, realIdx }, posInGroup) => {
+          const tr = document.createElement('tr');
+          const cell = document.querySelector('td.cell[data-room="' + y.room + '"]');
+          const isPass = y.time === '';
+          // パス（時間指定なし）は入室済と同様、即時に完了扱いとする
+          if ((cell && cell.dataset.state === 'nyushitsu') || isPass) {
+            tr.classList.add('done');
+          }
+          const timeLabel = isPass ? 'パス' : y.time;
+          const bIdx = buildings.findIndex(b => b.id === y.buildingId);
+          const badge = multiBuilding
+            ? '<span style="display:inline-block;background:' + buildingColor(bIdx >= 0 ? bIdx : 0) + ';color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;">' + buildingLabelForId(y.buildingId) + '</span>'
+            : '';
+          const roomLabel = badge + y.room;
+          let sortCell = '';
+          // 並べ替え（↓）は同じ日付グループ内でのみ機能させる（別の日の予約と入れ替わらないようにする）
+          if (!sortedMode && posInGroup < group.length - 1) {
+            const nextRealIdx = group[posInGroup + 1].realIdx;
+            sortCell = '<button onclick="moveYoyaku(' + realIdx + ',' + nextRealIdx + ')">↓</button>';
+          }
+          tr.innerHTML =
+            '<td>' + roomLabel + '</td>' +
+            '<td>' + timeLabel + '</td>' +
+            '<td>' + y.note + '</td>' +
+            '<td class="sort-btn">' + sortCell + '</td>' +
+            '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + realIdx + ')">削除</button></td>';
+          tbody.appendChild(tr);
+        });
       });
     }
 
@@ -4893,12 +4970,66 @@
         html += '<p style="font-size:12px;color:#888;">参加申請の承認・却下は会社の登録者が行います。</p>';
       }
 
+      const canManageJobLink = !!(window.currentJobId && (window.myRole === 'admin' || window.isJobOwner));
+      if (canManageJobLink) {
+        html += '<div id="jobCompanyLinkSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">今開いている現場の会社紐付け</div>' +
+          '<div id="jobCompanyLinkStatus" style="font-size:12px;color:#666;">確認中…</div>' +
+        '</div>';
+      }
+
       html += '<p style="font-size:12px;color:#999;margin-top:16px;">📊 会社の現場一覧ダッシュボードは近日対応予定です。</p>';
       body.innerHTML = html;
 
       if (status.isCompanyAdmin) {
         loadCompanyMemberSection(status.companyId, status.isOwner);
       }
+      if (canManageJobLink) {
+        renderJobCompanyLinkSection(status.companyId, status.companyName);
+      }
+    }
+
+    // 今開いている現場の会社紐付け状況を確認し、紐付け／解除ボタンを出す
+    function renderJobCompanyLinkSection(myCompanyId, myCompanyName) {
+      const el = document.getElementById('jobCompanyLinkStatus');
+      if (!el || !window.currentJobId) return;
+      getDoc(doc(db, 'inspections', window.currentJobId)).then((snap) => {
+        const jobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
+        const escapedName = myCompanyName.replace(/'/g, "\\'");
+        if (jobCompanyId && jobCompanyId === myCompanyId) {
+          el.innerHTML =
+            '<p style="margin:0 0 8px;">「' + myCompanyName + '」に紐付け済みです。会社の管理者は、この現場に招待なしで入れます。</p>' +
+            '<button onclick="submitUnlinkJobFromCompany()" style="width:100%;background:#fff0f0;border-color:#c88;color:#c00;">紐付けを解除する</button>';
+        } else if (jobCompanyId) {
+          el.innerHTML =
+            '<p style="margin:0 0 8px;">この現場は別の会社に紐付いています。</p>' +
+            '<button onclick="submitLinkJobToCompany(\'' + myCompanyId + '\', \'' + escapedName + '\')" style="width:100%;">「' + myCompanyName + '」に紐付け直す</button>';
+        } else {
+          el.innerHTML =
+            '<p style="margin:0 0 8px;">まだどの会社にも紐付いていません。紐付けると、会社の管理者がこの現場に招待なしで入れるようになります。</p>' +
+            '<button onclick="submitLinkJobToCompany(\'' + myCompanyId + '\', \'' + escapedName + '\')" style="width:100%;">「' + myCompanyName + '」に紐付ける</button>';
+        }
+      }).catch((e) => {
+        el.textContent = '確認に失敗しました：' + e.message;
+      });
+    }
+
+    function submitLinkJobToCompany(companyId, companyName) {
+      if (!window.currentJobId) return;
+      if (!confirm('この現場を「' + companyName + '」に紐付けます。会社の管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
+      window.linkJobToCompany(window.currentJobId, companyId).then(() => {
+        alert('紐付けました。');
+        refreshCompanyModal();
+      }).catch((e) => alert('失敗しました：' + e.message));
+    }
+
+    function submitUnlinkJobFromCompany() {
+      if (!window.currentJobId) return;
+      if (!confirm('この現場の会社への紐付けを解除します。よろしいですか？')) return;
+      window.unlinkJobFromCompany(window.currentJobId).then(() => {
+        alert('紐付けを解除しました。');
+        refreshCompanyModal();
+      }).catch((e) => alert('失敗しました：' + e.message));
     }
 
     function copyInviteCode() {
