@@ -1617,7 +1617,19 @@
           <div style="display:flex;gap:10px;">
             <div style="flex:1;">
               <div class="mc-label-new">作業日</div>
-              <input type="date" id="propDate">
+              <div style="display:flex;gap:14px;margin:2px 0 6px;">
+                <label style="font-size:13px;color:#1a1a1a;"><input type="radio" name="propDayMode" id="propDayModeSingle" checked onchange="onPropDayModeChange()"> 単日</label>
+                <label style="font-size:13px;color:#1a1a1a;"><input type="radio" name="propDayMode" id="propDayModeMulti" onchange="onPropDayModeChange()"> 複数日</label>
+              </div>
+              <input type="date" id="propDate" onchange="applyPropertyDatesToSchedule()" style="width:100%;box-sizing:border-box;">
+              <div id="propMultiDayArea" style="display:none;">
+                <div style="display:flex;gap:8px;align-items:center;margin:4px 0 6px;">
+                  <span style="font-size:13px;">日数：</span>
+                  <input type="text" inputmode="numeric" id="propDayCount" class="count-input zenkaku-ok" value="2" style="width:50px;">
+                  <button type="button" onclick="openMultiDateCalendar()" style="padding:6px 12px;font-size:13px;">📅 日付を選ぶ</button>
+                </div>
+                <div id="propMultiDatesSummary" style="font-size:12px;color:#4a4040;">まだ日付が選択されていません</div>
+              </div>
             </div>
             <div style="flex:1;">
               <div class="mc-label-new">担当者</div>
@@ -1827,6 +1839,23 @@
       <div id="scheduleReadOnlyList" style="max-height:50vh;overflow-y:auto;"></div>
       <div class="modal-buttons" style="margin-top:16px;">
         <button onclick="closeScheduleModal()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 作業日（複数日）を選ぶカレンダーモーダル -->
+  <div id="multiDateCalendarModal" class="modal">
+    <div class="modal-box" style="max-width:340px;">
+      <h2 style="font-size:16px;">作業日を選択（<span id="calSelectedCount">0</span>/<span id="calTargetCount">2</span>日）</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
+        <button type="button" onclick="calendarMonthShift(-1)" style="padding:4px 12px;">←</button>
+        <div id="calMonthLabel" style="font-weight:bold;font-size:14px;"></div>
+        <button type="button" onclick="calendarMonthShift(1)" style="padding:4px 12px;">→</button>
+      </div>
+      <div id="calendarGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+      <div class="modal-buttons" style="margin-top:14px;">
+        <button type="button" onclick="closeMultiDateCalendar()" style="background:#eee;">キャンセル</button>
+        <button type="button" onclick="confirmMultiDateCalendar()" style="background:#ff8c42;color:#fff;">決定</button>
       </div>
     </div>
   </div>
@@ -2820,6 +2849,147 @@
       }
     }
     checkMobile();
+    applyPropDayModeUI();
+
+    // ---- 物件情報：作業日（単日／複数日）----
+    // window.propDayMode: 'single' | 'multi'　window.propMultiDates: ['yyyy-mm-dd', ...]（昇順）
+    window.propDayMode = 'single';
+    window.propMultiDates = [];
+    let calViewYear, calViewMonth;
+    let calTempSelected = new Set();
+
+    function onPropDayModeChange() {
+      const mode = document.getElementById('propDayModeMulti').checked ? 'multi' : 'single';
+      window.propDayMode = mode;
+      applyPropDayModeUI();
+      if (mode === 'single') applyPropertyDatesToSchedule();
+      syncToCloud();
+    }
+
+    // 現在のpropDayMode/propMultiDatesに合わせて、画面表示（入力欄の出し分け）を更新する
+    function applyPropDayModeUI() {
+      const propDateEl = document.getElementById('propDate');
+      const multiArea = document.getElementById('propMultiDayArea');
+      document.getElementById('propDayModeSingle').checked = (window.propDayMode !== 'multi');
+      document.getElementById('propDayModeMulti').checked = (window.propDayMode === 'multi');
+      if (window.propDayMode === 'multi') {
+        propDateEl.type = 'text';
+        propDateEl.style.display = 'none';
+        propDateEl.readOnly = true;
+        multiArea.style.display = 'block';
+        renderPropMultiDatesSummary();
+      } else {
+        propDateEl.type = 'date';
+        propDateEl.style.display = 'block';
+        propDateEl.readOnly = false;
+        multiArea.style.display = 'none';
+      }
+    }
+
+    // 日付を「6/10」のような短い表記にする
+    function formatDateShortJP(dateStr) {
+      const parts = (dateStr || '').split('-');
+      if (parts.length !== 3) return dateStr || '';
+      return parseInt(parts[1]) + '/' + parseInt(parts[2]);
+    }
+
+    // 複数日の選択状況を画面に反映し、propDate（このモードでは表示専用のテキスト欄）にも要約を書き込む
+    // ※ 保存・印刷・現場一覧など他の画面はpropDateの値をそのまま表示に使っているため、
+    //    複数日モードでもここに人が読める要約文字列を入れておくことで、他の画面を一切変更せずに対応する。
+    function renderPropMultiDatesSummary() {
+      const el = document.getElementById('propMultiDatesSummary');
+      const propDateEl = document.getElementById('propDate');
+      if (!window.propMultiDates.length) {
+        el.textContent = 'まだ日付が選択されていません';
+        if (propDateEl) propDateEl.value = '';
+        return;
+      }
+      const summary = window.propMultiDates.map(formatDateShortJP).join('・') + '（' + window.propMultiDates.length + '日間）';
+      el.textContent = '選択中：' + summary;
+      if (propDateEl) propDateEl.value = summary;
+    }
+
+    // 物件情報の作業日を、まだ何も組まれていないスケジュールに初期反映する。
+    // すでにスケジュールが手動で編集されている場合は、上書きして壊さないよう何もしない。
+    function applyPropertyDatesToSchedule() {
+      if (scheduleData.length > 0) return;
+      const dates = window.propDayMode === 'multi'
+        ? window.propMultiDates.slice()
+        : (document.getElementById('propDate').value ? [document.getElementById('propDate').value] : []);
+      if (!dates.length) return;
+      dates.forEach(date => {
+        scheduleData.push({ date: date, reserveOnly: false, buildingIds: 'ALL', sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' }] });
+      });
+      if (typeof renderScheduleDayList === 'function') renderScheduleDayList();
+      syncToCloud();
+    }
+
+    // ---- 複数日カレンダーモーダル ----
+    function openMultiDateCalendar() {
+      calTempSelected = new Set(window.propMultiDates);
+      const sortedExisting = Array.from(calTempSelected).sort();
+      const base = sortedExisting.length ? new Date(sortedExisting[0] + 'T00:00:00') : new Date();
+      calViewYear = base.getFullYear();
+      calViewMonth = base.getMonth();
+      renderCalendarGrid();
+      document.getElementById('multiDateCalendarModal').classList.add('active');
+    }
+
+    function closeMultiDateCalendar() {
+      document.getElementById('multiDateCalendarModal').classList.remove('active');
+    }
+
+    function calendarMonthShift(diff) {
+      calViewMonth += diff;
+      if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
+      if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
+      renderCalendarGrid();
+    }
+
+    function renderCalendarGrid() {
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '';
+      document.getElementById('calMonthLabel').textContent = calViewYear + '年' + (calViewMonth + 1) + '月';
+      ['日','月','火','水','木','金','土'].forEach(w => {
+        const el = document.createElement('div');
+        el.style.cssText = 'text-align:center;font-size:11px;color:#888;';
+        el.textContent = w;
+        grid.appendChild(el);
+      });
+      const startWeekday = new Date(calViewYear, calViewMonth, 1).getDay();
+      const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+      for (let i = 0; i < startWeekday; i++) grid.appendChild(document.createElement('div'));
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = calViewYear + '-' + String(calViewMonth + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        const cell = document.createElement('div');
+        cell.textContent = d;
+        const selected = calTempSelected.has(dateStr);
+        cell.style.cssText = 'text-align:center;padding:7px 0;border-radius:6px;cursor:pointer;font-size:13px;' +
+          (selected ? 'background:#ff8c42;color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#1a1a1a;');
+        cell.onclick = () => toggleCalendarDate(dateStr);
+        grid.appendChild(cell);
+      }
+      document.getElementById('calSelectedCount').textContent = calTempSelected.size;
+      document.getElementById('calTargetCount').textContent = parseInt(document.getElementById('propDayCount').value) || 1;
+    }
+
+    function toggleCalendarDate(dateStr) {
+      if (calTempSelected.has(dateStr)) calTempSelected.delete(dateStr);
+      else calTempSelected.add(dateStr);
+      renderCalendarGrid();
+    }
+
+    function confirmMultiDateCalendar() {
+      const targetCount = parseInt(document.getElementById('propDayCount').value) || 1;
+      if (calTempSelected.size !== targetCount) {
+        if (!confirm('選択した日数（' + calTempSelected.size + '日）が、指定した日数（' + targetCount + '日）と一致していません。このまま進めますか？')) return;
+      }
+      window.propMultiDates = Array.from(calTempSelected).sort();
+      renderPropMultiDatesSummary();
+      closeMultiDateCalendar();
+      applyPropertyDatesToSchedule();
+      syncToCloud();
+    }
 
     function toggleSetsubiSetup() {
       const checked = document.getElementById('useSetsubiInfo').checked;
@@ -2862,7 +3032,9 @@
         property: {
           name: document.getElementById('propName').value,
           date: document.getElementById('propDate').value,
-          staff: document.getElementById('propStaff').value
+          staff: document.getElementById('propStaff').value,
+          dayMode: window.propDayMode || 'single',
+          multiDates: window.propMultiDates || []
         },
         buildings: buildings,
         currentBuildingIdx: currentBuildingIdx,
@@ -2883,8 +3055,13 @@
 
       if (state.property) {
         document.getElementById('propName').value = state.property.name || '';
-        document.getElementById('propDate').value = state.property.date || '';
         document.getElementById('propStaff').value = state.property.staff || '';
+        window.propDayMode = state.property.dayMode || 'single';
+        window.propMultiDates = Array.isArray(state.property.multiDates) ? state.property.multiDates : [];
+        if (window.propDayMode !== 'multi') {
+          document.getElementById('propDate').value = state.property.date || '';
+        }
+        applyPropDayModeUI();
       }
 
       if (state.buildings && Array.isArray(state.buildings) && state.buildings.length > 0) {
