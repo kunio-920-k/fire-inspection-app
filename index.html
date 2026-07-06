@@ -71,6 +71,7 @@
     #propertyInputArea p { margin: 6px 0; font-size: 14px; }
     #propertyInputArea input { width: 250px; margin-left: 8px; }
     #propertyInputArea input[type="date"] { width: auto; }
+    #propertyInputArea input[type="radio"] { width: auto; margin-left: 0; margin-right: 4px; vertical-align: middle; }
 
     #setup { padding: 0; background: linear-gradient(180deg, #716B66 0%, #BCB8AD 100%); position: fixed; inset: 0; z-index: 50; overflow-y: auto; display: none; }
     .mc-logo-h { display: none !important; }
@@ -1646,7 +1647,7 @@
       </div>
       <div id="buildingModeMultiCountArea" style="display:none;margin-bottom:10px;">
         <span style="font-size:13px;">棟数：</span>
-        <input type="text" inputmode="numeric" id="buildingCount" class="count-input zenkaku-ok" value="2" style="width:50px;" onchange="renderMultiBuildingBlocks()">
+        <input type="text" inputmode="numeric" id="buildingCount" class="count-input zenkaku-ok" value="2" style="width:50px;" oninput="renderMultiBuildingBlocks()" onchange="renderMultiBuildingBlocks()">
       </div>
 
       <div id="singleBuildingArea" style="display:flex;flex-direction:column;gap:14px;">
@@ -2238,29 +2239,38 @@
 
     // 入力された棟数分の設定から、まとめて全棟の立面図を作成する
     function generateMultiBuildingTables() {
+      // 念のため、実際に画面に並んでいるブロックの数を、指定されている棟数に合わせ直してから読み取る
+      renderMultiBuildingBlocks();
       const count = Math.max(1, parseInt(document.getElementById('buildingCount').value) || 1);
       const newBuildings = [];
-      for (let i = 0; i < count; i++) {
-        const name = (document.getElementById('mb_name_' + i).value || '').trim() || ((i + 1) + '棟目');
-        const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
-        const roomCount = parseInt(document.getElementById('mb_room_' + i).value) || 1;
-        const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
-        const cut4Floor = document.getElementById('mb_cut4floor_' + i).checked;
-        const useSetsubiInfoForBuilding = document.getElementById('mb_setsubi_' + i).checked;
+      try {
+        for (let i = 0; i < count; i++) {
+          const nameEl = document.getElementById('mb_name_' + i);
+          if (!nameEl) throw new Error((i + 1) + '棟目の入力欄が見つかりませんでした。');
+          const name = (nameEl.value || '').trim() || ((i + 1) + '棟目');
+          const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
+          const roomCount = parseInt(document.getElementById('mb_room_' + i).value) || 1;
+          const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
+          const cut4Floor = document.getElementById('mb_cut4floor_' + i).checked;
+          const useSetsubiInfoForBuilding = document.getElementById('mb_setsubi_' + i).checked;
 
-        const b = makeEmptyBuilding(name);
-        b.setup = {
-          floorCount: String(floorCount), roomCount: String(roomCount),
-          cut4Room, cut4Floor, useSetsubiInfo: useSetsubiInfoForBuilding,
-          hasshigoInput: '', pendingFloorValues: {}
-        };
-        const floorData = buildDefaultFloorData(floorCount, roomCount, cut4Room, cut4Floor);
-        const { cells, rooms } = buildDefaultCellsAndRooms(floorData);
-        b.tableFloorData = floorData;
-        b.tableGenerated = true;
-        b.cells = cells;
-        b.rooms = rooms;
-        newBuildings.push(b);
+          const b = makeEmptyBuilding(name);
+          b.setup = {
+            floorCount: String(floorCount), roomCount: String(roomCount),
+            cut4Room, cut4Floor, useSetsubiInfo: useSetsubiInfoForBuilding,
+            hasshigoInput: '', pendingFloorValues: {}
+          };
+          const floorData = buildDefaultFloorData(floorCount, roomCount, cut4Room, cut4Floor);
+          const { cells, rooms } = buildDefaultCellsAndRooms(floorData);
+          b.tableFloorData = floorData;
+          b.tableGenerated = true;
+          b.cells = cells;
+          b.rooms = rooms;
+          newBuildings.push(b);
+        }
+      } catch (e) {
+        alert('立面図の作成に失敗しました：' + e.message + '\nもう一度「複数棟」を選び直してからお試しください。');
+        return;
       }
       if (!confirm(count + '棟分の立面図をまとめて作成します。よろしいですか？')) return;
 
