@@ -1783,6 +1783,15 @@
           <input type="number" id="noticeMinutes" min="1" max="60" value="5" style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;margin:0 4px;">分前
         </label>
       </div>
+      <div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.5);border:1px solid rgba(0,0,0,0.12);border-radius:6px;">
+        <div style="font-size:13px;color:#1a1a1a;margin-bottom:6px;">新規予約の通知（他端末や事務所から予約が追加された時の通知）</div>
+        <div style="font-size:12px;color:#4a4040;margin-bottom:4px;">通知を受け取る相手（この現場全体の設定）：</div>
+        <label style="font-size:13px;margin-right:14px;"><input type="checkbox" id="newYoyakuRoleAdmin" onchange="updateNewYoyakuNoticeRoles()" checked> 管理者</label>
+        <label style="font-size:13px;margin-right:14px;"><input type="checkbox" id="newYoyakuRoleSub" onchange="updateNewYoyakuNoticeRoles()" checked> サブ管理者</label>
+        <label style="font-size:13px;"><input type="checkbox" id="newYoyakuRoleWorker" onchange="updateNewYoyakuNoticeRoles()"> 一般</label>
+        <div style="font-size:12px;color:#4a4040;margin:8px 0 4px;">通知音（この端末のみの設定）：</div>
+        <label style="font-size:13px;"><input type="checkbox" id="newYoyakuSoundToggle" onchange="updateNewYoyakuSoundSetting()" checked> 音を鳴らす</label>
+      </div>
       <div id="scheduleDayList"></div>
       <button onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
 
@@ -1857,6 +1866,12 @@
     <span id="yoyakuNoticeText"></span>
     <button onclick="openAssignModal()" style="margin-left:12px;background:white;color:#e53935;border:none;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:bold;cursor:pointer;">担当者を指名</button>
     <button onclick="dismissNoticeBanner()" style="margin-left:8px;background:rgba(255,255,255,0.3);color:white;border:none;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer;">✕</button>
+  </div>
+
+  <!-- 新規予約追加バナー（全員向け：他端末／事務所ダッシュボードから予約が追加されたことを通知） -->
+  <div id="newYoyakuBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:#1565c0;color:white;padding:10px 16px;font-size:14px;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+    <span id="newYoyakuBannerText"></span>
+    <button onclick="dismissNewYoyakuBanner()" style="margin-left:8px;background:rgba(255,255,255,0.3);color:white;border:none;border-radius:4px;padding:4px 10px;font-size:13px;cursor:pointer;">✕</button>
   </div>
 
   <!-- 担当者指名モーダル（管理者・サブ用） -->
@@ -3705,7 +3720,8 @@
         currentBuildingIdx: currentBuildingIdx,
         yoyakuList: yoyakuList,
         notePatterns: notePatterns,
-        schedule: scheduleData
+        schedule: scheduleData,
+        newYoyakuNoticeRoles: window.newYoyakuNoticeRoles || ['admin', 'sub']
       };
     }
 
@@ -3717,6 +3733,10 @@
     // クラウドから読み込んだ内容で画面を復元する（loginWithGoogle成功後、自動的に呼ばれる）
     window.restoreInspectionState = function (state) {
       if (!state) return;
+
+      // 新規予約の検知用：上書きされる前の予約一覧をキー化しておく（号棟＋号室で一意）
+      const isFirstYoyakuLoad = !window._yoyakuNotifyReady;
+      const oldYoyakuKeys = new Set(yoyakuList.map(y => (y.buildingId || '') + '|' + y.room));
 
       if (state.property) {
         document.getElementById('propName').value = state.property.name || '';
@@ -3778,6 +3798,24 @@
       }
 
       yoyakuList = state.yoyakuList || [];
+
+      // 新規予約を検知して通知（初回読み込み時は対象外。自分の書き込みは呼び出し元で除外済み）
+      if (!isFirstYoyakuLoad) {
+        const newlyAdded = yoyakuList.filter(y => !oldYoyakuKeys.has((y.buildingId || '') + '|' + y.room));
+        if (newlyAdded.length > 0 && window.showNewYoyakuNotice) {
+          window.showNewYoyakuNotice(newlyAdded);
+        }
+      }
+      window._yoyakuNotifyReady = true;
+
+      window.newYoyakuNoticeRoles = Array.isArray(state.newYoyakuNoticeRoles) ? state.newYoyakuNoticeRoles : ['admin', 'sub'];
+      const nyAdmin = document.getElementById('newYoyakuRoleAdmin');
+      const nySub = document.getElementById('newYoyakuRoleSub');
+      const nyWorker = document.getElementById('newYoyakuRoleWorker');
+      if (nyAdmin) nyAdmin.checked = window.newYoyakuNoticeRoles.includes('admin');
+      if (nySub) nySub.checked = window.newYoyakuNoticeRoles.includes('sub');
+      if (nyWorker) nyWorker.checked = window.newYoyakuNoticeRoles.includes('worker');
+
       if (state.notePatterns && state.notePatterns.length) {
         notePatterns = state.notePatterns;
       }
@@ -5545,6 +5583,77 @@
     function dismissNoticeBanner() {
       document.getElementById('yoyakuNoticeBanner').style.display = 'none';
     }
+
+    // 新規予約追加バナー用の通知音（外部ファイル不要のビープ音）
+    function playNewYoyakuSound() {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        [0, 0.18].forEach((delay) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = 880;
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+          gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + delay + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.16);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + delay);
+          osc.stop(ctx.currentTime + delay + 0.18);
+        });
+      } catch (e) {
+        dlog('通知音の再生に失敗 / ' + e.message);
+      }
+    }
+
+    // 他端末（事務所ダッシュボード含む）から新しい予約が追加された時に、対象の役割にだけバナー通知する
+    window.showNewYoyakuNotice = function(items) {
+      const targetRoles = window.newYoyakuNoticeRoles || ['admin', 'sub'];
+      const myRole = window.myRole || 'worker';
+      if (!targetRoles.includes(myRole)) return;
+      const lines = items.map(y => {
+        const bLabel = (buildings.length > 1 && y.buildingId) ? buildingLabelForId(y.buildingId) + '　' : '';
+        const dateLabel = y.date ? y.date + ' ' : '';
+        return bLabel + y.room + '号室（' + dateLabel + (y.time || '時間未定') + '）';
+      });
+      const text = items.length === 1
+        ? '📅 新しい予約が追加されました：' + lines[0]
+        : '📅 新しい予約が' + items.length + '件追加されました：' + lines.join('　/　');
+      document.getElementById('newYoyakuBannerText').textContent = text;
+      document.getElementById('newYoyakuBanner').style.display = 'block';
+      if (isNewYoyakuSoundEnabled()) playNewYoyakuSound();
+    };
+    function dismissNewYoyakuBanner() {
+      document.getElementById('newYoyakuBanner').style.display = 'none';
+    }
+
+    // 通知対象の役割チェックボックス（現場全体の設定）が変更された時
+    function updateNewYoyakuNoticeRoles() {
+      const roles = [];
+      if (document.getElementById('newYoyakuRoleAdmin').checked) roles.push('admin');
+      if (document.getElementById('newYoyakuRoleSub').checked) roles.push('sub');
+      if (document.getElementById('newYoyakuRoleWorker').checked) roles.push('worker');
+      window.newYoyakuNoticeRoles = roles;
+      syncToCloud();
+    }
+
+    // 通知音ON/OFF（この端末だけの設定。ローカルストレージに保存）
+    function isNewYoyakuSoundEnabled() {
+      return localStorage.getItem('mc_new_yoyaku_sound') !== '0';
+    }
+    function updateNewYoyakuSoundSetting() {
+      const checked = document.getElementById('newYoyakuSoundToggle').checked;
+      localStorage.setItem('mc_new_yoyaku_sound', checked ? '1' : '0');
+    }
+    // ページ読み込み時、この端末に保存された音設定をチェックボックスへ反映
+    (function initNewYoyakuSoundToggle() {
+      document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('newYoyakuSoundToggle');
+        if (el) el.checked = isNewYoyakuSoundEnabled();
+      });
+    })();
 
     // 担当者指名モーダルを開く
     function openAssignModal() {
