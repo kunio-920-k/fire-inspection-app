@@ -1614,10 +1614,10 @@
       <!-- 既存物件から新規 -->
       <div id="startExistingBtn" onclick="startExistingProperty()" style="background:linear-gradient(150deg,#5e3310,#3d2008);border-radius:8px;padding:16px 20px;margin-bottom:10px;position:relative;overflow:hidden;cursor:pointer;border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);">
         <div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#ff8c42;border-radius:8px 0 0 8px;"></div>
-        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">COPY</div>
+        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">EDIT</div>
         <div style="display:flex;align-items:center;gap:14px;">
           <div style="font-size:24px;width:40px;text-align:center;flex-shrink:0;">🗂</div>
-          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">既存物件から新規登録</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">過去の設備情報を引き継いで新規登録する</div></div>
+          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">既存物件を編集</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">過去の設備情報の編集・引用して新規登録など</div></div>
           <div style="color:rgba(255,255,255,0.3);font-size:20px;margin-left:auto;">›</div>
         </div>
       </div>
@@ -1645,9 +1645,12 @@
   <div id="existingPropertyModal" class="modal">
     <div class="modal-box" style="max-width:480px;">
       <h2>📋 既存物件から選択</h2>
-      <input type="text" id="existingSearch" placeholder="物件名で検索..." oninput="renderExistingNames()" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">
-      <div id="existingNameList" style="max-height:200px;overflow-y:auto;margin-bottom:10px;"></div>
-      <div id="existingDateList" style="max-height:200px;overflow-y:auto;"></div>
+      <div id="existingNameSection">
+        <input type="text" id="existingSearch" placeholder="物件名で検索..." oninput="renderExistingNames()" style="width:100%;box-sizing:border-box;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">
+        <div id="existingNameList" style="max-height:280px;overflow-y:auto;margin-bottom:10px;"></div>
+      </div>
+      <button id="backToExistingNameListBtn" onclick="backToExistingNameList()" type="button" style="display:none;width:100%;background:#eee;border:none;border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-bottom:10px;">← 一覧に戻る</button>
+      <div id="existingDateList" style="max-height:280px;overflow-y:auto;"></div>
       <div class="modal-buttons" style="margin-top:12px;">
         <button onclick="closeExistingModal()" style="background:#eee;">キャンセル</button>
       </div>
@@ -3132,11 +3135,23 @@
       const existBtn = document.getElementById('startExistingBtn');
       if (existBtn && existBtn.disabled) return;
       renderExistingNames();
+      backToExistingNameList();
       document.getElementById('existingPropertyModal').classList.add('active');
     }
     function closeExistingModal() {
       document.getElementById('existingPropertyModal').classList.remove('active');
       document.getElementById('existingDateList').innerHTML = '';
+      backToExistingNameList();
+    }
+
+    // 物件を選び直せるよう、一覧表示に戻す
+    function backToExistingNameList() {
+      const nameSection = document.getElementById('existingNameSection');
+      const backBtn = document.getElementById('backToExistingNameListBtn');
+      const dateList = document.getElementById('existingDateList');
+      if (nameSection) nameSection.style.display = 'block';
+      if (backBtn) backBtn.style.display = 'none';
+      if (dateList) dateList.innerHTML = '';
     }
 
     // 物件名の一覧を表示（古い順）
@@ -3175,6 +3190,10 @@
         const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
         return tb - ta;
       });
+      const nameSection = document.getElementById('existingNameSection');
+      const backBtn = document.getElementById('backToExistingNameListBtn');
+      if (nameSection) nameSection.style.display = 'none';
+      if (backBtn) backBtn.style.display = 'block';
       const container = document.getElementById('existingDateList');
       container.innerHTML = `<div style="font-weight:bold;font-size:13px;color:#333;margin-bottom:8px;padding-top:8px;border-top:1px solid #eee;">「${name}」の過去データ</div>` +
         jobs.map(j => {
