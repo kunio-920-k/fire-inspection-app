@@ -1353,22 +1353,8 @@
             // 選択画面を表示（過去データがあるか確認）
             if (window.loadJobList) {
               window.loadJobList().then((jobs) => {
-                const activeJobs = jobs.filter(j => !j.hidden);
-                const pastJobs = jobs;
-                const hasContinue = activeJobs.length > 0;
-                const hasExisting = jobs.length > 0;
-
-                const continueBtn = document.getElementById('startContinueBtn');
-                const continueNote = document.getElementById('noContinueNote');
-                if (continueBtn) { continueBtn.disabled = !hasContinue; continueBtn.style.opacity = hasContinue ? '1' : '0.5'; continueBtn.style.cursor = hasContinue ? 'pointer' : 'not-allowed'; }
-                if (continueNote) continueNote.style.display = hasContinue ? 'none' : 'block';
-
-                const existBtn = document.getElementById('startExistingBtn');
-                const note = document.getElementById('noExistingNote');
-                if (existBtn) { existBtn.disabled = !hasExisting; existBtn.style.opacity = hasExisting ? '1' : '0.5'; existBtn.style.cursor = hasExisting ? 'pointer' : 'not-allowed'; }
-                if (note) note.style.display = hasExisting ? 'none' : 'block';
-
                 window._allJobsCache = jobs;
+                updateStartScreenJobButtons(jobs);
               });
             }
             document.getElementById('startScreen').style.display = 'block';
@@ -1836,6 +1822,7 @@
         <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
         <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
         <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
+        <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #1a7a35;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🏁</span> この物件を完了にする</button>
         <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #888;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🚪</span> この現場から退場</button>
       </div>
     </div>
@@ -2921,6 +2908,8 @@
       if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const completePropertyBtn = document.getElementById('completePropertyBtn');
+      if (completePropertyBtn) completePropertyBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
@@ -3001,6 +2990,23 @@
     // ---- 開始選択画面 ----
 
     // 継続中の物件を選択
+    // ホーム画面の「継続中の物件を選択」「既存物件から新規登録」ボタンの有効/無効を更新する
+    function updateStartScreenJobButtons(jobs) {
+      const activeJobs = jobs.filter(j => !j.hidden);
+      const hasContinue = activeJobs.length > 0;
+      const hasExisting = jobs.length > 0;
+
+      const continueBtn = document.getElementById('startContinueBtn');
+      const continueNote = document.getElementById('noContinueNote');
+      if (continueBtn) { continueBtn.disabled = !hasContinue; continueBtn.style.opacity = hasContinue ? '1' : '0.5'; continueBtn.style.cursor = hasContinue ? 'pointer' : 'not-allowed'; }
+      if (continueNote) continueNote.style.display = hasContinue ? 'none' : 'block';
+
+      const existBtn = document.getElementById('startExistingBtn');
+      const note = document.getElementById('noExistingNote');
+      if (existBtn) { existBtn.disabled = !hasExisting; existBtn.style.opacity = hasExisting ? '1' : '0.5'; existBtn.style.cursor = hasExisting ? 'pointer' : 'not-allowed'; }
+      if (note) note.style.display = hasExisting ? 'none' : 'block';
+    }
+
     function startContinueProperty() {
       const continueBtn = document.getElementById('startContinueBtn');
       if (continueBtn && continueBtn.disabled) return;
@@ -3028,6 +3034,24 @@
         alert('削除に失敗しました：' + e.message);
       });
     }
+
+    // 継続中一覧から「完了」として外す（データは消えず、既存物件から選択の一覧からいつでも継続中に戻せる）
+    function confirmMarkJobComplete(jobId, name) {
+      const ok = confirm('「' + name + '」を完了にして、継続中の物件一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？');
+      if (!ok) return;
+      if (!window.hideJob) return;
+      window.hideJob(jobId).then(() => {
+        if (window.loadJobList) {
+          window.loadJobList().then((jobs) => {
+            window._allJobsCache = jobs;
+            renderContinueList();
+            updateStartScreenJobButtons(jobs);
+          });
+        }
+      }).catch((e) => {
+        alert('操作に失敗しました：' + e.message);
+      });
+    }
     function renderContinueList() {
       const query = (document.getElementById('continueSearch').value || '').trim().toLowerCase();
       const jobs = (window._allJobsCache || []).filter(j => !j.hidden && (!query || (j.name || '').toLowerCase().includes(query)));
@@ -3050,6 +3074,10 @@
             <button onclick="resumeJob('${j.jobId}')"
               style="flex:1;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
               この物件の続きを開始
+            </button>
+            <button onclick="confirmMarkJobComplete('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}')"
+              style="padding:10px 12px;background:#eefbf0;color:#1a7a35;border:1px solid #b7e6c2;border-radius:6px;font-size:13px;cursor:pointer;">
+              ✓ 完了にする
             </button>
             <button onclick="confirmDeleteContinueJob('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}')"
               style="padding:10px 14px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:6px;font-size:13px;cursor:pointer;">
@@ -3151,14 +3179,38 @@
       container.innerHTML = `<div style="font-weight:bold;font-size:13px;color:#333;margin-bottom:8px;padding-top:8px;border-top:1px solid #eee;">「${name}」の過去データ</div>` +
         jobs.map(j => {
           const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
+          const restoreBtn = j.hidden
+            ? `<button onclick="restoreJobToContinue('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')"
+                style="width:100%;padding:9px;margin-top:6px;background:#eefbf0;color:#1a7a35;border:1px solid #b7e6c2;border-radius:6px;font-size:13px;cursor:pointer;">
+                継続中に戻す
+              </button>`
+            : '';
           return `<div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:8px;background:#fafafa;">
-            <div style="font-size:13px;color:#666;margin-bottom:8px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+            <div style="font-size:13px;color:#666;margin-bottom:8px;">作業日：${j.date || '未設定'}　更新：${updatedAt}${j.hidden ? '　<span style="color:#1a7a35;">（完了）</span>' : ''}</div>
             <button onclick="startFromExisting('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')"
               style="width:100%;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
-              このデータをもとに新規登録
+              このデータで新規登録する
             </button>
+            ${restoreBtn}
           </div>`;
         }).join('');
+    }
+
+    // 完了にした（非表示にした）物件を、継続中の物件一覧に戻す
+    function restoreJobToContinue(jobId, name) {
+      if (!window.unhideJob) return;
+      window.unhideJob(jobId).then(() => {
+        alert('「' + name + '」を継続中の物件に戻しました。');
+        if (window.loadJobList) {
+          window.loadJobList().then((jobs) => {
+            window._allJobsCache = jobs;
+            updateStartScreenJobButtons(jobs);
+            showExistingDates(name);
+          });
+        }
+      }).catch((e) => {
+        alert('操作に失敗しました：' + e.message);
+      });
     }
 
     // 既存データをもとに新規登録開始
@@ -3914,6 +3966,25 @@
       document.getElementById('setup').style.display = 'none';
       document.getElementById('startScreen').style.display = 'block';
       refreshStartScreenCompanyStatus();
+    }
+
+    // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
+    function confirmCompleteProperty() {
+      if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.currentJobId) return;
+      if (!confirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
+      if (!window.hideJob) return;
+      window.hideJob(window.currentJobId).then(() => {
+        alert('この物件を完了にしました。');
+        document.getElementById('setup').style.display = 'none';
+        document.getElementById('propertyArea').style.display = 'none';
+        const tableWrap = document.querySelector('.table-wrap');
+        if (tableWrap) tableWrap.style.display = 'none';
+        document.getElementById('startScreen').style.display = 'block';
+        refreshStartScreenCompanyStatus();
+      }).catch((e) => {
+        alert('操作に失敗しました：' + e.message);
+      });
     }
 
     function generateTable() {
