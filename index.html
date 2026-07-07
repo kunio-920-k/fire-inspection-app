@@ -727,34 +727,49 @@
       companyAdminCheck.then((isCompanyAdminHere) => {
         getDoc(ref).then((snap) => {
           if (snap.exists() && snap.data().role && !amOwner) {
-            if (isCompanyAdminHere && snap.data().role !== 'admin') {
+            const existing = snap.data();
+            if (isCompanyAdminHere && existing.role !== 'admin') {
               // 既にworker/subとして参加済みだが、会社の管理者なので【管理者】へ自動格上げする
               setDoc(ref, {
                 uid: window.currentUser.uid,
                 displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
                 role: 'admin',
+                grantedViaCompany: true,
                 updatedAt: serverTimestamp()
               }, { merge: true }).then(() => {
                 window.myRole = 'admin';
                 if (window.applyRoleUI) window.applyRoleUI();
                 if (window.clearDismissed) window.clearDismissed();
               });
+            } else if (!isCompanyAdminHere && existing.role === 'admin' && existing.grantedViaCompany === true) {
+              // 会社経由で得ていた【管理者】権限だが、今はもう対象外（会社から抜けた・除名された・
+              // 現場の会社紐付けが解除された等）→ 一般へ格下げする
+              setDoc(ref, {
+                role: 'worker',
+                grantedViaCompany: false,
+                updatedAt: serverTimestamp()
+              }, { merge: true }).then(() => {
+                window.myRole = 'worker';
+                if (window.applyRoleUI) window.applyRoleUI();
+              });
             } else {
               // 既に登録済み かつ オーナーでない → roleをそのまま使う
-              window.myRole = snap.data().role;
+              window.myRole = existing.role;
               if (window.applyRoleUI) window.applyRoleUI();
             }
           } else {
             // 未登録、またはオーナーの場合はadminで登録・上書き（会社の管理者としての無招待入室もここでadmin扱いにする）
             const initialRole = (amOwner || isCompanyAdminHere) ? 'admin' : 'worker';
-            setDoc(ref, {
+            const presenceData = {
               uid: window.currentUser.uid,
               displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
               role: initialRole,
               room: '',
               joinedAt: serverTimestamp(),
               updatedAt: serverTimestamp()
-            }, { merge: true }).then(() => {
+            };
+            if (!amOwner && isCompanyAdminHere) presenceData.grantedViaCompany = true;
+            setDoc(ref, presenceData, { merge: true }).then(() => {
               window.myRole = initialRole;
               if (window.applyRoleUI) window.applyRoleUI();
               // 管理者ならdismissedをリセット
