@@ -1725,8 +1725,9 @@
       </div>
 
       <div id="multiBuildingArea" style="display:none;"></div>
-      <p id="multiBuildingNote" style="display:none;font-size:11px;color:#4a4040;margin:-4px 0 8px;">※ 住戸内設備情報は棟ごとに使用有無だけ設定できます（系統ごとの定・差・煙の初期数は0からになります。表作成後に号室ごとの個別編集も可能です）</p>
-      <button type="button" id="generateMultiBuildingsBtn" onclick="generateMultiBuildingTables()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:10px;">🏢 全棟まとめて立面図を作成</button>
+      <p id="multiBuildingNote" style="display:none;font-size:11px;color:#4a4040;margin:-4px 0 8px;">※ 号室は自動採番（◯階◯号室）になります。住戸内設備情報は棟ごとに使用有無だけ設定でき、系統ごとの定・差・煙の初期数は0からになります（いずれも表作成後に号室ごとの個別編集が可能です）。棟名や階数を登録すると、下の「スケジュール設定」で棟ごとに担当を指定できるようになります。実際の立面図は、一番下の「設定内容で立面図を作成」で作成されます。</p>
+      <button type="button" id="generateMultiBuildingsBtn" onclick="registerMultiBuildingComposition()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:6px;">🏢 住戸構成を登録</button>
+      <p id="multiBuildingRegisterStatus" style="display:none;font-size:12px;color:#2a6b2a;margin:0 0 10px;text-align:center;"></p>
 
       <div id="setsubiSetupArea">
         <h3 style="font-size:14px;color:#2a2520;margin:16px 0 4px;">号室系統ごとの設備数を入力してください</h3>
@@ -1754,7 +1755,7 @@
           <p style="font-size:12px;color:#4a4040;margin:2px 0 6px;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</p>
           <input type="text" id="hasshigoInput" class="zenkaku-ok" placeholder="例：3,5">
         </div>
-        <button onclick="generateTable()" class="setup-generate-btn">立面図を作成</button>
+        <button id="setupGenerateBtn" onclick="handleSetupGenerateClick()" class="setup-generate-btn">設定内容で立面図を作成</button>
       </div>
     </div>
   </div>
@@ -2222,7 +2223,7 @@
     // すでに立面図が1つでも作成済み、または号棟が複数ある現場では、この一括入力は使わせない
     // （既存データを誤って上書きしないようにするため。以後の号棟追加は従来通り「号棟追加」タブで行う）
     function isMultiBuildingBulkSetupAvailable() {
-      return buildings.length === 1 && !buildings[0].tableGenerated;
+      return !buildings.some(b => b.tableGenerated);
     }
 
     function updateBuildingModeAvailability() {
@@ -2233,6 +2234,25 @@
         const singleRadio = document.getElementById('buildingModeSingle');
         if (singleRadio) singleRadio.checked = true;
         onBuildingModeChange();
+      }
+      updateGenerateButtonLabel();
+    }
+
+    // 一番下の生成ボタンの文言を、状況に応じて「これから作る」か「もう出来ている」かで出し分ける
+    function updateGenerateButtonLabel() {
+      const btn = document.getElementById('setupGenerateBtn');
+      if (!btn) return;
+      const alreadyGenerated = !!(buildings[currentBuildingIdx] && buildings[currentBuildingIdx].tableGenerated);
+      btn.textContent = alreadyGenerated ? '立面図に戻る' : '設定内容で立面図を作成';
+    }
+
+    // 一番下の生成ボタンが押された時の処理。複数棟がまだ未生成の状態で登録されていれば
+    // まとめて生成し、それ以外は今まで通り単一号棟の生成処理を行う。
+    function handleSetupGenerateClick() {
+      if (buildings.length > 1 && !buildings.some(b => b.tableGenerated)) {
+        generateAllRegisteredBuildings();
+      } else {
+        generateTable();
       }
     }
 
@@ -2268,6 +2288,12 @@
       const disp = document.getElementById('buildingCountDisplay');
       if (disp) disp.textContent = window._buildingCount;
       renderMultiBuildingBlocks();
+      hideMultiBuildingRegisterStatus();
+    }
+
+    function hideMultiBuildingRegisterStatus() {
+      const statusEl = document.getElementById('multiBuildingRegisterStatus');
+      if (statusEl) statusEl.style.display = 'none';
     }
 
     // 棟数分の入力ブロックを描画する（棟数を変更しても、既に入力済みの値はそのまま保持する）
@@ -2284,8 +2310,7 @@
           room: document.getElementById('mb_room_' + i).value,
           cut4room: document.getElementById('mb_cut4room_' + i).checked,
           cut4floor: document.getElementById('mb_cut4floor_' + i).checked,
-          setsubi: document.getElementById('mb_setsubi_' + i).checked,
-          hasshigo: (document.getElementById('mb_hasshigo_' + i) || {}).value || ''
+          setsubi: document.getElementById('mb_setsubi_' + i).checked
         });
       }
       let html = '';
@@ -2303,109 +2328,42 @@
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4room_' + i + '" ' + (prev.cut4room ? 'checked' : '') + '> 4号室をカットする（104・204等）</label></div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4floor_' + i + '" ' + (prev.cut4floor ? 'checked' : '') + '> 4階をカットする</label></div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_setsubi_' + i + '" ' + (prev.setsubi ? 'checked' : '') + '> 住戸内設備情報を使用する</label></div>' +
-          '<button type="button" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:6px;">号室を確認・編集する</button>' +
-          '<div id="mb_editArea_' + i + '" style="display:none;margin-top:8px;">' +
-            '<p style="font-size:12px;color:#4a4040;margin:4px 0;">各階の号室を確認・編集してください（カンマ区切り）</p>' +
-            '<div id="mb_floorEditList_' + i + '"></div>' +
-            '<div style="margin-top:8px;">' +
-              '<div class="mc-label-new" style="font-size:12px;">避難はしご設置（号室末尾）</div>' +
-              '<p style="font-size:11px;color:#4a4040;margin:2px 0 4px;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</p>' +
-              '<input type="text" class="zenkaku-ok" id="mb_hasshigo_' + i + '" value="' + (prev.hasshigo || '') + '" placeholder="例：3,5" style="width:100%;box-sizing:border-box;">' +
-            '</div>' +
-          '</div>' +
         '</div>';
       }
       container.innerHTML = html;
     }
 
-    // 号棟ブロックごとの「号室を確認・編集する」の開閉。開く時は現在の階数・号室数・カット設定から
-    // 号室リストを組み立てるが、既に編集済みの階があればその内容を保持する。
-    function toggleMultiBuildingRoomEdit(i) {
-      const area = document.getElementById('mb_editArea_' + i);
-      if (!area) return;
-      if (area.style.display === 'block') {
-        area.style.display = 'none';
-        return;
-      }
-      const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
-      const roomCount = parseInt(document.getElementById('mb_room_' + i).value) || 1;
-      const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
-      const cut4Floor = document.getElementById('mb_cut4floor_' + i).checked;
-      const listEl = document.getElementById('mb_floorEditList_' + i);
-
-      // 既に編集済みの階があれば、その入力内容を保持する
-      const prevByFloor = {};
-      listEl.querySelectorAll('input').forEach(inp => {
-        const f = inp.id.split('_').pop();
-        prevByFloor[f] = inp.value;
-      });
-
-      let html = '';
-      for (let f = floorCount; f >= 1; f--) {
-        if (cut4Floor && f === 4) continue;
-        let roomNumbers;
-        if (prevByFloor[f] !== undefined) {
-          roomNumbers = prevByFloor[f];
-        } else {
-          const arr = [];
-          for (let r = 1; r <= roomCount; r++) {
-            if (cut4Room && r === 4) continue;
-            arr.push(f * 100 + r);
-          }
-          roomNumbers = arr.join(',');
-        }
-        html += '<div class="floor-edit">' + f + '階：<input type="text" class="zenkaku-ok" id="mb_floorinput_' + i + '_' + f + '" value="' + roomNumbers + '"></div>';
-      }
-      listEl.innerHTML = html;
-      area.style.display = 'block';
-    }
-
-    // 階数・号室数・カット設定から、号室構成（フロアごとの号室リスト）を組み立てる。
-    // 「号室を確認・編集する」で個別入力された階があればそれを優先し、なければデフォルトの自動採番を使う。
-    function buildFloorDataForBlock(i, floorCount, roomCount, cut4Room, cut4Floor) {
+    // 階数・号室数・カット設定から、デフォルトの号室構成（フロアごとの号室リスト）を組み立てる
+    function buildDefaultFloorDataForSetup(floorCount, roomCount, cut4Room, cut4Floor) {
       const data = [];
       for (let f = floorCount; f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
-        const customInput = document.getElementById('mb_floorinput_' + i + '_' + f);
-        let rooms;
-        if (customInput) {
-          rooms = normalizeListInput(customInput.value).split(',').map(r => r.trim()).filter(r => r !== '');
-        } else {
-          rooms = [];
-          for (let r = 1; r <= roomCount; r++) {
-            if (cut4Room && r === 4) continue;
-            rooms.push(String(f * 100 + r));
-          }
+        const rooms = [];
+        for (let r = 1; r <= roomCount; r++) {
+          if (cut4Room && r === 4) continue;
+          rooms.push(String(f * 100 + r));
         }
         data.push({ floor: f, rooms: rooms });
       }
       return data;
     }
 
-    function buildCellsAndRoomsForBlock(tableFloorDataForBuilding, hasshigoInputValue) {
+    function buildDefaultCellsAndRoomsForSetup(tableFloorDataForBuilding) {
       const cells = {};
       const rooms = {};
-      const hasshigoSuffixesLocal = new Set();
-      const hv = normalizeListInput(hasshigoInputValue || '');
-      if (hv.trim() !== '') {
-        hv.split(',').forEach(v => {
-          const n = parseInt(v.trim());
-          if (!isNaN(n)) hasshigoSuffixesLocal.add(n);
-        });
-      }
       tableFloorDataForBuilding.forEach(fd => {
         fd.rooms.forEach(room => {
-          const suffix = parseInt(room) % 100;
-          const isH = hasshigoSuffixesLocal.has(suffix) && fd.floor !== 1;
           cells[room] = { state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '', yoyakuDate: '' };
-          rooms[room] = { label: '', hasshigo: isH ? '1' : '0' };
+          rooms[room] = { label: '', hasshigo: '0' };
         });
       });
       return { cells, rooms };
     }
 
-    // 入力された棟数分の設定から、まとめて全棟の立面図を作成する
-    function generateMultiBuildingTables() {
+    // 「住戸構成を登録」：棟名・階数・号室数などを buildings 配列に登録するだけで、
+    // まだ立面図は作らない。これにより下の「スケジュール設定」に棟名ピルが反映される。
+    // 実際の立面図作成は、一番下の「設定内容で立面図を作成」ボタンで行う。
+    function registerMultiBuildingComposition() {
       const count = window._buildingCount || 2;
       const newBuildings = [];
       try {
@@ -2418,30 +2376,46 @@
           const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
           const cut4Floor = document.getElementById('mb_cut4floor_' + i).checked;
           const useSetsubiInfoForBuilding = document.getElementById('mb_setsubi_' + i).checked;
-          const hasshigoEl = document.getElementById('mb_hasshigo_' + i);
-          const hasshigoValue = hasshigoEl ? hasshigoEl.value : '';
 
           const b = makeEmptyBuilding(name);
           b.setup = {
             floorCount: String(floorCount), roomCount: String(roomCount),
             cut4Room, cut4Floor, useSetsubiInfo: useSetsubiInfoForBuilding,
-            hasshigoInput: hasshigoValue, pendingFloorValues: {}
+            hasshigoInput: '', pendingFloorValues: {}
           };
-          const floorData = buildFloorDataForBlock(i, floorCount, roomCount, cut4Room, cut4Floor);
-          const { cells, rooms } = buildCellsAndRoomsForBlock(floorData, hasshigoValue);
-          b.tableFloorData = floorData;
-          b.tableGenerated = true;
-          b.cells = cells;
-          b.rooms = rooms;
           newBuildings.push(b);
         }
       } catch (e) {
-        alert('立面図の作成に失敗しました：' + e.message);
+        alert('住戸構成の登録に失敗しました：' + e.message);
         return;
       }
-      if (!confirm(count + '棟分の立面図をまとめて作成します。よろしいですか？')) return;
-
       buildings = newBuildings;
+      currentBuildingIdx = 0;
+      renderScheduleDayList(); // 棟名ピルに反映
+      updateGenerateButtonLabel();
+      const statusEl = document.getElementById('multiBuildingRegisterStatus');
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = '✓ ' + count + '棟を登録しました。下のスケジュール設定で棟ごとの担当を指定できます。';
+      }
+    }
+
+    // 登録済みの棟情報から、まとめて全棟の立面図を作成する（一番下の生成ボタンから呼ばれる）
+    function generateAllRegisteredBuildings() {
+      if (!confirm(buildings.length + '棟分の立面図をまとめて作成します。よろしいですか？')) return;
+      buildings.forEach(b => {
+        if (b.tableGenerated) return; // 既に生成済みなら触らない（保険）
+        const floorCount = parseInt(b.setup.floorCount) || 1;
+        const roomCount = parseInt(b.setup.roomCount) || 1;
+        const cut4Room = !!b.setup.cut4Room;
+        const cut4Floor = !!b.setup.cut4Floor;
+        const floorData = buildDefaultFloorDataForSetup(floorCount, roomCount, cut4Room, cut4Floor);
+        const { cells, rooms } = buildDefaultCellsAndRoomsForSetup(floorData);
+        b.tableFloorData = floorData;
+        b.tableGenerated = true;
+        b.cells = cells;
+        b.rooms = rooms;
+      });
       currentBuildingIdx = 0;
       loadBuildingToView(0);
       renderBuildingTabs();
