@@ -1206,9 +1206,9 @@
     };
 
     window.clearDismissed = function() {
-      if (!window.currentJobId) return;
+      if (!window.currentJobId) return Promise.resolve();
       const ref = doc(db, 'inspections', window.currentJobId);
-      setDoc(ref, { dismissed: false }, { merge: true });
+      return setDoc(ref, { dismissed: false }, { merge: true });
     };
 
     window.startMemoWatch = function() {
@@ -1424,10 +1424,14 @@
             if (!snap.exists() || !snap.data()) return;
 
             // 作業終了フラグを検知 → 管理者以外はリセットしてログアウト
+            // （役割がまだ確定していない一瞬のタイミングで誤って弾いてしまわないよう、
+            //   myRoleが未確定のうちは何もしない＝role確定後の判定に委ねる）
             if (snap.data().dismissed === true) {
-              if (window.myRole === 'admin') {
+              if (window.myRole === 'admin' || window.isJobOwner) {
                 // 管理者は自動でリセット
                 if (window.clearDismissed) window.clearDismissed();
+              } else if (window.myRole === undefined) {
+                // 役割確定前 → 何もしない（誤って弾かない）
               } else {
                 localStorage.removeItem('mc_job_id');
                 if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
@@ -6076,11 +6080,14 @@
       if (!ok) return;
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
-          // 3秒後にdismissedフラグをリセット
-          setTimeout(() => {
-            if (window.clearDismissed) window.clearDismissed();
-          }, 3000);
           if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
+          // 他端末が「作業終了」の通知を確実に受け取れるよう少し待ってから、
+          // dismissedフラグのリセットを完了させる（この処理が終わるまではアラートを出さない＝
+          // タブを閉じられてもリセット漏れが起きないようにするため）
+          return new Promise((resolve) => setTimeout(resolve, 2000));
+        }).then(() => {
+          return window.clearDismissed ? window.clearDismissed() : Promise.resolve();
+        }).then(() => {
           // 管理者自身もlocalStorageをクリアしてログアウト
           alert('作業終了を通知しました。お疲れさまでした。');
           if (window.logoutUser) window.logoutUser();
