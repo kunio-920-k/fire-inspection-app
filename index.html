@@ -1095,6 +1095,19 @@
       });
     };
 
+    // メンバー自身が、自分の意思で会社から抜ける。除名（管理者操作）とは別の、本人発の操作。
+    // 登録者（オーナー）は先に権限を他の人へ譲渡してからでないと抜けられない。
+    window.leaveCompanySelf = function(companyId) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (snap.exists() && snap.data().ownerUid === window.currentUser.uid) {
+          throw new Error('あなたは現在の登録者（オーナー）です。先に登録者権限を他の人へ譲渡してから抜けてください。');
+        }
+        return deleteDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid))
+          .then(() => setDoc(doc(db, 'users', window.currentUser.uid), { companyId: null, companyStatus: null }, { merge: true }));
+      });
+    };
+
     // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
     window.regenerateInviteCode = function(companyId) {
       const newCode = generateInviteCode();
@@ -1293,6 +1306,24 @@
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email;
+
+        // 会社への参加リンク（?companyInvite=コード）をタップして開いた場合、自動で参加申請する
+        if (!window._companyInviteHandled) {
+          window._companyInviteHandled = true;
+          const inviteUrlParams = new URLSearchParams(location.search);
+          const companyInviteCode = inviteUrlParams.get('companyInvite');
+          if (companyInviteCode && window.requestJoinCompany) {
+            window.requestJoinCompany(companyInviteCode).then((r) => {
+              alert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
+              refreshStartScreenCompanyStatus();
+            }).catch((e) => {
+              alert('参加申請に失敗しました：' + e.message);
+            }).finally(() => {
+              // リロード時に再申請しないよう、URLからパラメータを消しておく
+              history.replaceState(null, '', location.origin + location.pathname);
+            });
+          }
+        }
 
         // jobIdが無い場合（初回・子機として参加する前）は選択画面を表示
         if (!window.currentJobId) {
@@ -5752,6 +5783,15 @@
       }).catch((e) => alert(e.message));
     }
 
+    function submitLeaveCompany(companyId, companyName) {
+      if (!confirm('「' + companyName + '」から抜けます。\n再度参加するには、招待コードでの申請と承認が必要になります。\n\nよろしいですか？')) return;
+      window.leaveCompanySelf(companyId).then(() => {
+        alert('「' + companyName + '」から抜けました。');
+        refreshCompanyModal();
+        refreshStartScreenCompanyStatus();
+      }).catch((e) => alert(e.message));
+    }
+
     function renderCompanyModalApproved(body, status) {
       let html = '<p style="font-size:15px;font-weight:bold;margin:0 0 4px;">' + status.companyName + '</p>';
       let roleText = status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）';
@@ -5765,6 +5805,7 @@
             '<code id="inviteCodeDisplay" style="flex:1;font-size:16px;letter-spacing:2px;background:#f5f5f5;padding:6px 10px;border-radius:6px;">' + status.inviteCode + '</code>' +
             '<button onclick="copyInviteCode()" style="padding:6px 10px;">コピー</button>' +
           '</div>' +
+          '<button onclick="copyCompanyJoinLink(\'' + status.inviteCode + '\')" style="width:100%;margin-top:8px;background:#eef5ff;border-color:#8ab;color:#246;">🔗 参加リンクをコピー（タップだけで申請できます）</button>' +
           '<button onclick="doRegenerateInviteCode(\'' + status.companyId + '\')" style="width:100%;margin-top:8px;background:#fff0f0;border-color:#c88;color:#c00;">コードを再発行する（漏洩時など）</button>' +
         '</div>';
         html += '<div id="companyMemberSection" style="margin:10px 0;">読み込み中…</div>';
@@ -5790,6 +5831,15 @@
       if (status.isCompanyAdmin) {
         html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 現場管理ダッシュボードを開く</button>';
       }
+
+      html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee;">';
+      if (status.isOwner) {
+        html += '<p style="font-size:11px;color:#888;">あなたは登録者（オーナー）のため、この会社から抜けることはできません。抜けたい場合は、先に上の「権限の譲渡」で登録者権限を他の人へ譲渡してください。</p>';
+      } else {
+        html += '<button onclick="submitLeaveCompany(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;background:#fff0f0;border-color:#c88;color:#c00;">この会社から抜ける</button>';
+      }
+      html += '</div>';
+
       body.innerHTML = html;
 
       if (status.isCompanyAdmin) {
@@ -5851,6 +5901,16 @@
         navigator.clipboard.writeText(text).then(() => alert('招待コードをコピーしました'));
       } else {
         alert('招待コード：' + text);
+      }
+    }
+
+    // タップするだけで参加申請できるリンクをコピーする（招待コードをURLに埋め込んだもの）
+    function copyCompanyJoinLink(inviteCode) {
+      const url = location.origin + location.pathname + '?companyInvite=' + encodeURIComponent(inviteCode);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => alert('参加リンクをコピーしました。\nLINEなどで共有すると、相手はタップするだけで参加申請できます。'));
+      } else {
+        prompt('このリンクをコピーして共有してください：', url);
       }
     }
 
