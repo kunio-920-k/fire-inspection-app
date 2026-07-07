@@ -594,7 +594,11 @@
           ownerUid: window.currentUser.uid,
           ownerEmail: window.currentUser.email || ''
         };
-        if (companyId) data.companyId = companyId;
+        if (companyId) {
+          data.companyId = companyId;
+          window.currentJobCompanyId = companyId;
+          if (window.saveCompanyGenbaSummary) window.saveCompanyGenbaSummary(companyId, jobId, '', '');
+        }
         return setDoc(ref, data, { merge: true });
       }).then(() => {
         dlog('現場オーナー設定OK / job=' + jobId);
@@ -905,7 +909,47 @@
       });
     };
 
-    // ---- 会社（組織）管理 ----
+    // ---- 会社に紐づく現場一覧（事務所ダッシュボード用）----
+    // 保存先: companies/{companyId}/genbaIndex/{jobId}
+    // users/{uid}/jobs（個人の現場一覧）と同じ発想の、会社版の一覧。
+    // 現場が会社に紐付いた時・物件名や作業日が変わった時に、ここへ軽量なサマリだけを書き込んでおく。
+    window.saveCompanyGenbaSummary = function(companyId, jobId, name, date) {
+      if (!companyId || !jobId) return;
+      const ref = doc(db, 'companies', companyId, 'genbaIndex', jobId);
+      setDoc(ref, {
+        jobId: jobId,
+        name: name || '（物件名未設定）',
+        date: date || '',
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch((e) => dlog('会社の現場一覧保存エラー / ' + e.message));
+    };
+
+    window.removeCompanyGenbaSummary = function(companyId, jobId) {
+      if (!companyId || !jobId) return Promise.resolve();
+      return deleteDoc(doc(db, 'companies', companyId, 'genbaIndex', jobId)).catch((e) => {
+        dlog('会社の現場一覧削除エラー / ' + e.message);
+      });
+    };
+
+    window.loadCompanyGenbaList = function(companyId) {
+      if (!companyId) return Promise.resolve([]);
+      const ref = collection(db, 'companies', companyId, 'genbaIndex');
+      return getDocs(ref).then((snap) => {
+        const jobs = [];
+        snap.forEach(d => jobs.push(d.data()));
+        jobs.sort((a, b) => {
+          const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
+          const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
+          return tb - ta; // 新しい順
+        });
+        return jobs;
+      }).catch((e) => {
+        dlog('会社の現場一覧取得エラー / ' + e.message);
+        return [];
+      });
+    };
+
+
     // 保存先: companies/{companyId}, companies/{companyId}/members/{uid}
     // 「会社」は現場をまたいで人を束ねるための入れ物。
     // 会社に「承認済み・会社の管理者」として登録された人は、その会社の現場であれば
@@ -1074,14 +1118,23 @@
       if (!jobId || !companyId) return Promise.reject(new Error('現場または会社が指定されていません'));
       return updateDoc(doc(db, 'inspections', jobId), { companyId: companyId }).then(() => {
         window.currentJobCompanyId = companyId;
+        if (window.saveCompanyGenbaSummary) {
+          const nameEl = document.getElementById('propName');
+          const dateEl = document.getElementById('propDate');
+          window.saveCompanyGenbaSummary(companyId, jobId, nameEl ? nameEl.value : '', dateEl ? dateEl.value : '');
+        }
       });
     };
 
     // 現在開いている現場の、会社への紐付けを解除する
     window.unlinkJobFromCompany = function(jobId) {
       if (!jobId) return Promise.reject(new Error('現場が指定されていません'));
+      const prevCompanyId = window.currentJobCompanyId;
       return updateDoc(doc(db, 'inspections', jobId), { companyId: null }).then(() => {
         window.currentJobCompanyId = null;
+        if (window.removeCompanyGenbaSummary && prevCompanyId) {
+          window.removeCompanyGenbaSummary(prevCompanyId, jobId);
+        }
       });
     };
 
@@ -1850,6 +1903,21 @@
     </div>
   </div>
 
+  <!-- 事務所ダッシュボード（会社に紐づく現場の一覧。会社の管理者のみ） -->
+  <div id="officeDashboardModal" class="modal">
+    <div class="modal-box" style="max-width:480px;text-align:left;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <h2 style="margin:0;">🏢 事務所ダッシュボード</h2>
+        <span onclick="closeOfficeDashboard()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
+      </div>
+      <input type="text" id="officeDashboardSearch" placeholder="🔍 物件名で検索" oninput="renderOfficeDashboardList()" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;font-size:14px;">
+      <div id="officeDashboardList" style="max-height:55vh;overflow-y:auto;">読み込み中…</div>
+      <div class="modal-buttons" style="margin-top:14px;">
+        <button onclick="closeOfficeDashboard()" style="background:#eee;">閉じる</button>
+      </div>
+    </div>
+  </div>
+
   <!-- スケジュール確認モーダル（閲覧専用。編集は一括設定画面から行う） -->
   <div id="scheduleModal" class="modal">
     <div class="modal-box" style="max-width:520px;">
@@ -2132,6 +2200,20 @@
       const name = (b.name || '').trim();
       if (!name) return '';
       return name.endsWith('棟') ? name.slice(0, -1) : name;
+    }
+
+    // メニューの「一括設定画面へ」ボタンは、実際には号棟が複数ある現場だと
+    // 「今開いている1棟分の設定」しか出せないため、複数棟の現場では文言を変えて誤解を防ぐ
+    function updateToSetupBtnLabel() {
+      const btn = document.getElementById('toSetupBtn');
+      if (!btn) return;
+      if (buildings.length > 1) {
+        const b = buildings[currentBuildingIdx];
+        const label = (b && b.name && b.name.trim()) ? b.name.trim() : ('号棟' + (currentBuildingIdx + 1));
+        btn.innerHTML = '<span style="font-size:20px;">⚙️</span> ' + label + 'の設定へ';
+      } else {
+        btn.innerHTML = '<span style="font-size:20px;">⚙️</span> 一括設定画面へ';
+      }
     }
     let buildings = [ makeEmptyBuilding('') ];
     let currentBuildingIdx = 0;
@@ -2526,6 +2608,7 @@
     function renderBuildingTabs() {
       const bar = document.getElementById('buildingTabsBar');
       if (!bar) return;
+      updateToSetupBtnLabel();
       const isAdmin = (window.myRole || 'worker') === 'admin';
       const isManager = (window.myRole || 'worker') === 'admin' || (window.myRole || 'worker') === 'sub';
       const highlightActive = window.highlightEnabled && isManager; // 一般権限ではこの機能自体を使わせない
@@ -4623,6 +4706,9 @@
       if (window.saveJobSummary && window.currentJobId) {
         window.saveJobSummary(window.currentJobId, prop.name, prop.date);
       }
+      if (window.saveCompanyGenbaSummary && window.currentJobId && window.currentJobCompanyId) {
+        window.saveCompanyGenbaSummary(window.currentJobCompanyId, window.currentJobId, prop.name, prop.date);
+      }
     }
 
     function getCounts() {
@@ -5296,6 +5382,51 @@
       refreshStartScreenCompanyStatus(); // 閉じた時点の最新状態をホーム画面のカードにも反映
     }
 
+    // ---- 事務所ダッシュボード（会社に紐づく現場の一覧）----
+    let officeDashboardJobs = [];
+    function openOfficeDashboard(companyId, companyName) {
+      window._officeDashboardCompanyId = companyId;
+      window._officeDashboardCompanyName = companyName;
+      document.getElementById('officeDashboardModal').classList.add('active');
+      document.getElementById('officeDashboardSearch').value = '';
+      document.getElementById('officeDashboardList').innerHTML = '読み込み中…';
+      if (!window.loadCompanyGenbaList) return;
+      window.loadCompanyGenbaList(companyId).then((jobs) => {
+        officeDashboardJobs = jobs;
+        renderOfficeDashboardList();
+      });
+    }
+    function closeOfficeDashboard() {
+      document.getElementById('officeDashboardModal').classList.remove('active');
+    }
+    function renderOfficeDashboardList() {
+      const listEl = document.getElementById('officeDashboardList');
+      const keyword = (document.getElementById('officeDashboardSearch').value || '').trim();
+      const filtered = keyword
+        ? officeDashboardJobs.filter(j => (j.name || '').includes(keyword))
+        : officeDashboardJobs;
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<p style="font-size:13px;color:#888;text-align:center;padding:20px 0;">' +
+          (officeDashboardJobs.length === 0 ? 'この会社にはまだ現場が紐付いていません。' : '該当する現場が見つかりません。') + '</p>';
+        return;
+      }
+      let html = '';
+      filtered.forEach(j => {
+        const dateLabel = j.date || '（日付未設定）';
+        html += '<div onclick="openOfficeDashboardJob(\'' + j.jobId + '\')" style="padding:10px 12px;border:1px solid #ddd;border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fafafa;">' +
+          '<div style="font-weight:bold;font-size:14px;">' + (j.name || '（物件名未設定）') + '</div>' +
+          '<div style="font-size:12px;color:#666;margin-top:2px;">' + dateLabel + '</div>' +
+        '</div>';
+      });
+      listEl.innerHTML = html;
+    }
+    // 一覧の現場をタップして開く（会社の管理者として、招待なしで入室できる）
+    function openOfficeDashboardJob(jobId) {
+      closeOfficeDashboard();
+      closeCompanyModal();
+      switchJob(jobId);
+    }
+
     // ホーム画面の会社ステータスカードを更新する
     function refreshStartScreenCompanyStatus() {
       const card = document.getElementById('companyStatusCard');
@@ -5408,7 +5539,9 @@
         '</div>';
       }
 
-      html += '<p style="font-size:12px;color:#999;margin-top:16px;">📊 会社の現場一覧ダッシュボードは近日対応予定です。</p>';
+      if (status.isCompanyAdmin) {
+        html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 事務所ダッシュボードを開く</button>';
+      }
       body.innerHTML = html;
 
       if (status.isCompanyAdmin) {
