@@ -376,17 +376,6 @@
       50% { transform: scale(1.35); opacity: 0.6; }
       100% { transform: scale(1); opacity: 1; }
     }
-    /* 部屋を探す：ジャンプ先のセルを一時的に光らせる */
-    .room-search-highlight {
-      position: relative;
-      z-index: 5;
-      animation: roomSearchFlash 1.6s ease-in-out 0s 2;
-    }
-    @keyframes roomSearchFlash {
-      0% { box-shadow: 0 0 0 0 rgba(255,140,66,0.9); }
-      50% { box-shadow: 0 0 0 10px rgba(255,140,66,0.35); }
-      100% { box-shadow: 0 0 0 0 rgba(255,140,66,0); }
-    }
     #highlightToggleBtn {
       display: inline-block;
       min-width: 32px;
@@ -1565,7 +1554,8 @@
         <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
       </div>
       <!-- 会社ステータス -->
-      <div id="companyStatusCard" onclick="openCompanyModal()" style="background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);border-radius:6px;padding:10px 12px;margin-bottom:16px;cursor:pointer;font-size:12px;color:#d0d0d0;">🏢 読み込み中…</div>
+      <div id="companyStatusCard" onclick="openCompanyModal()" style="background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);border-radius:6px;padding:10px 12px;margin-bottom:10px;cursor:pointer;font-size:12px;color:#d0d0d0;">🏢 読み込み中…</div>
+      <button id="startScreenDashboardBtn" onclick="openOfficeDashboardFromStartScreen()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:16px;">🏢 現場管理ダッシュボードを開く</button>
       <!-- メニューラベル -->
       <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
       <!-- 新規物件 -->
@@ -1796,7 +1786,6 @@
       <!-- アクションボタン -->
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
         <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📱</span> 子機を招待（QR）</button>
-        <button id="roomSearchBtn" onclick="openRoomSearch()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🔍</span> 部屋を探す</button>
         <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📅</span> スケジュール確認</button>
         <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
         <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
@@ -1925,7 +1914,7 @@
   <div id="officeDashboardModal" class="modal">
     <div class="modal-box" style="max-width:480px;text-align:left;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h2 style="margin:0;">🏢 事務所ダッシュボード</h2>
+        <h2 style="margin:0;">🏢 現場管理ダッシュボード</h2>
         <span onclick="closeOfficeDashboard()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
       </div>
       <input type="text" id="officeDashboardSearch" placeholder="🔍 物件名で検索" oninput="renderOfficeDashboardList()" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;font-size:14px;">
@@ -1936,19 +1925,6 @@
     </div>
   </div>
 
-  <!-- 部屋を探す（号棟をまたいでジャンプ検索） -->
-  <div id="roomSearchModal" class="modal">
-    <div class="modal-box" style="max-width:340px;">
-      <h2 style="font-size:16px;">🔍 部屋を探す</h2>
-      <p style="font-size:12px;color:#666;margin:0 0 8px;">部屋番号を入力すると、号棟をまたいで探して移動します。</p>
-      <input type="text" id="roomSearchInput" placeholder="部屋番号を入力（例：802）" style="width:100%;box-sizing:border-box;padding:10px;font-size:16px;margin-bottom:8px;" onkeydown="if(event.key==='Enter'){event.preventDefault();submitRoomSearch();}">
-      <p id="roomSearchResult" style="font-size:13px;color:#c00;min-height:18px;margin:0 0 4px;"></p>
-      <div class="modal-buttons">
-        <button onclick="closeRoomSearch()" style="background:#eee;">キャンセル</button>
-        <button onclick="submitRoomSearch()" style="background:#ff8c42;color:#fff;">移動する</button>
-      </div>
-    </div>
-  </div>
 
   <!-- スケジュール確認モーダル（閲覧専用。編集は一括設定画面から行う） -->
   <div id="scheduleModal" class="modal">
@@ -2760,66 +2736,6 @@
       renderBuildingTabs();
       // 切り替え先の号棟のサインを当てはめる
       if (window.applyCloudSigns) window.applyCloudSigns();
-    }
-
-    // ---- 部屋を探す（号棟をまたいでジャンプ検索）----
-    function openRoomSearch() {
-      document.getElementById('roomSearchModal').classList.add('active');
-      const input = document.getElementById('roomSearchInput');
-      const resultEl = document.getElementById('roomSearchResult');
-      if (input) input.value = '';
-      if (resultEl) resultEl.textContent = '';
-      setTimeout(() => { if (input) input.focus(); }, 50);
-    }
-    function closeRoomSearch() {
-      document.getElementById('roomSearchModal').classList.remove('active');
-    }
-    function submitRoomSearch() {
-      const input = document.getElementById('roomSearchInput');
-      const resultEl = document.getElementById('roomSearchResult');
-      const query = normalizeListInput(input.value || '').trim();
-      if (!query) return;
-      // 今の入力内容を反映してから探す（現在表示中の号棟のデータを最新化する）
-      snapshotCurrentBuilding();
-
-      // 現在の号棟を優先しつつ、他の号棟も含めて探す
-      const order = [currentBuildingIdx].concat(buildings.map((_, i) => i).filter(i => i !== currentBuildingIdx));
-      let targetBuildingIdx = -1;
-      let matchedRoom = null;
-
-      // まず完全一致を全号棟から探す
-      for (const i of order) {
-        const cells = (buildings[i] && buildings[i].cells) || {};
-        if (cells[query]) { targetBuildingIdx = i; matchedRoom = query; break; }
-      }
-      // 見つからなければ部分一致で探す
-      if (targetBuildingIdx === -1) {
-        for (const i of order) {
-          const cells = (buildings[i] && buildings[i].cells) || {};
-          const partial = Object.keys(cells).find(r => r.includes(query));
-          if (partial) { targetBuildingIdx = i; matchedRoom = partial; break; }
-        }
-      }
-
-      if (targetBuildingIdx === -1) {
-        if (resultEl) resultEl.textContent = '「' + query + '」に該当する部屋が見つかりませんでした。';
-        return;
-      }
-
-      closeRoomSearch();
-      const jumpToRoom = () => {
-        setTimeout(() => {
-          const cell = document.querySelector('td.cell[data-room="' + matchedRoom + '"]');
-          if (!cell) return;
-          cell.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-          cell.classList.add('room-search-highlight');
-          setTimeout(() => cell.classList.remove('room-search-highlight'), 3400);
-        }, 150);
-      };
-      if (targetBuildingIdx !== currentBuildingIdx) {
-        switchBuildingTab(targetBuildingIdx);
-      }
-      jumpToRoom();
     }
 
     function switchBuildingTab(idx) {
@@ -5751,6 +5667,8 @@
       const card = document.getElementById('companyStatusCard');
       if (!card) return;
       card.textContent = '🏢 読み込み中…';
+      const dashBtn = document.getElementById('startScreenDashboardBtn');
+      if (dashBtn) dashBtn.style.display = 'none';
       if (!window.loadMyCompanyStatus) return;
       window.loadMyCompanyStatus().then((status) => {
         if (!status) {
@@ -5759,10 +5677,21 @@
           card.textContent = '🏢 「' + status.companyName + '」へ参加申請中（承認待ち）';
         } else if (status.status === 'approved') {
           card.textContent = '🏢 ' + status.companyName + '（' + (status.isCompanyAdmin ? '管理者' : '一般') + '）';
+          if (status.isCompanyAdmin && dashBtn) {
+            dashBtn.style.display = 'block';
+            window._startScreenDashboardCompanyId = status.companyId;
+            window._startScreenDashboardCompanyName = status.companyName;
+          }
         } else {
           card.textContent = '🏢 会社に未登録（タップして登録・参加）';
         }
       });
+    }
+
+    // ホーム画面から直接、事務所（現場管理）ダッシュボードを開く
+    function openOfficeDashboardFromStartScreen() {
+      if (!window._startScreenDashboardCompanyId) return;
+      openOfficeDashboard(window._startScreenDashboardCompanyId, window._startScreenDashboardCompanyName);
     }
 
     function refreshCompanyModal() {
@@ -5859,7 +5788,7 @@
       }
 
       if (status.isCompanyAdmin) {
-        html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 事務所ダッシュボードを開く</button>';
+        html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 現場管理ダッシュボードを開く</button>';
       }
       body.innerHTML = html;
 
