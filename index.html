@@ -2334,8 +2334,12 @@
           '</div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4room_' + i + '" ' + (prev.cut4room ? 'checked' : '') + '> 4号室をカットする（104・204等）</label></div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4floor_' + i + '" ' + (prev.cut4floor ? 'checked' : '') + '> 4階をカットする</label></div>' +
-          '<div class="checkbox-area"><label><input type="checkbox" id="mb_setsubi_' + i + '" ' + (prev.setsubi ? 'checked' : '') + '> 住戸内設備情報を使用する</label></div>' +
-          '<button type="button" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:6px;">号室を確認・編集する</button>' +
+          '<div class="checkbox-area"><label><input type="checkbox" id="mb_setsubi_' + i + '" onchange="toggleMultiBuildingSetsubi(' + i + ')" ' + (prev.setsubi ? 'checked' : '') + '> 住戸内設備情報を使用する</label></div>' +
+          '<div id="mb_setsubiArea_' + i + '" style="display:' + (prev.setsubi ? 'block' : 'none') + ';margin:4px 0 6px;padding:8px;background:rgba(255,255,255,0.5);border-radius:6px;">' +
+            '<p style="font-size:12px;color:#4a4040;margin:0 0 6px;">号室系統ごとの設備数を入力してください</p>' +
+            '<div id="mb_setsubiList_' + i + '"></div>' +
+          '</div>' +
+          '<button type="button" id="mb_roomEditBtn_' + i + '" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:6px;">号室を確認・編集する</button>' +
           '<div id="mb_editArea_' + i + '" style="display:none;margin-top:8px;">' +
             '<p style="font-size:12px;color:#4a4040;margin:4px 0;">各階の号室を確認・編集してください（カンマ区切り）</p>' +
             '<div id="mb_floorEditList_' + i + '"></div>' +
@@ -2348,6 +2352,52 @@
         '</div>';
       }
       container.innerHTML = html;
+      for (let i = 0; i < count; i++) {
+        if (document.getElementById('mb_setsubi_' + i).checked) {
+          buildMultiBuildingSetsubiList(i);
+        }
+      }
+    }
+
+    // 号棟ブロックの「住戸内設備情報を使用する」の開閉
+    function toggleMultiBuildingSetsubi(i) {
+      const checked = document.getElementById('mb_setsubi_' + i).checked;
+      const area = document.getElementById('mb_setsubiArea_' + i);
+      if (area) area.style.display = checked ? 'block' : 'none';
+      if (checked) buildMultiBuildingSetsubiList(i);
+    }
+
+    // 号棟ブロックごとの、号室系統別の設備数（定・差・煙）入力欄を組み立てる
+    function buildMultiBuildingSetsubiList(i) {
+      const rooms = parseInt(document.getElementById('mb_room_' + i).value) || 6;
+      const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
+      const list = document.getElementById('mb_setsubiList_' + i);
+      if (!list) return;
+      // 既に入力済みの値があれば保持する
+      const prevByR = {};
+      list.querySelectorAll('.setsubi-row').forEach(row => {
+        const teiInput = row.querySelector('input[id^="mb_tei_"]');
+        if (!teiInput) return;
+        const r = teiInput.id.split('_').pop();
+        const saInput = row.querySelector('input[id^="mb_sa_"]');
+        const keInput = row.querySelector('input[id^="mb_ke_"]');
+        prevByR[r] = { tei: teiInput.value, sa: saInput ? saInput.value : '0', ke: keInput ? keInput.value : '0' };
+      });
+      list.innerHTML = '';
+      for (let r = 1; r <= rooms; r++) {
+        if (cut4Room && r === 4) continue;
+        const existing = prevByR[r] || { tei: 0, sa: 0, ke: 0 };
+        const div = document.createElement('div');
+        div.className = 'setsubi-row';
+        div.innerHTML =
+          '<label>' + String(r).padStart(2, '0') + '系統（' + r + '号室列）</label>' +
+          '<div class="setsubi-inputs">' +
+          '定 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.tei + '" id="mb_tei_' + i + '_' + r + '" style="width:45px;">' +
+          '差 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.sa + '" id="mb_sa_' + i + '_' + r + '" style="width:45px;">' +
+          '煙 × <input type="text" inputmode="numeric" class="zenkaku-ok" value="' + existing.ke + '" id="mb_ke_' + i + '_' + r + '" style="width:45px;">' +
+          '</div>';
+        list.appendChild(div);
+      }
     }
 
     // 階数・号室数・カット設定から、デフォルトの号室構成（フロアごとの号室リスト）を組み立てる
@@ -2370,9 +2420,11 @@
     // 号室リストを組み立てるが、既に編集済みの階があればその内容を保持する。
     function toggleMultiBuildingRoomEdit(i) {
       const area = document.getElementById('mb_editArea_' + i);
+      const btn = document.getElementById('mb_roomEditBtn_' + i);
       if (!area) return;
       if (area.style.display === 'block') {
         area.style.display = 'none';
+        if (btn) btn.textContent = '号室を確認・編集する';
         return;
       }
       const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
@@ -2406,6 +2458,7 @@
       }
       listEl.innerHTML = html;
       area.style.display = 'block';
+      if (btn) btn.textContent = '号室編集画面をしまう';
     }
 
     // 階数・号室数・カット設定から、号室構成（フロアごとの号室リスト）を組み立てる。
@@ -2514,6 +2567,22 @@
         b.tableGenerated = true;
         b.cells = cells;
         b.rooms = rooms;
+        if (b.setup.useSetsubiInfo && blockIdx !== null) {
+          const roomCountForSetsubi = parseInt(b.setup.roomCount) || 1;
+          const defaults = {};
+          for (let r = 1; r <= roomCountForSetsubi; r++) {
+            if (cut4Room && r === 4) continue;
+            const teiEl = document.getElementById('mb_tei_' + blockIdx + '_' + r);
+            const saEl = document.getElementById('mb_sa_' + blockIdx + '_' + r);
+            const keEl = document.getElementById('mb_ke_' + blockIdx + '_' + r);
+            defaults[r] = {
+              tei: teiEl ? (parseInt(teiEl.value) || 0) : 0,
+              sa: saEl ? (parseInt(saEl.value) || 0) : 0,
+              ke: keEl ? (parseInt(keEl.value) || 0) : 0
+            };
+          }
+          b.setsubiDefaults = defaults;
+        }
         delete b._blockIndex;
       });
       currentBuildingIdx = 0;
@@ -4970,13 +5039,12 @@
         return;
       }
       // 対象号棟の選択ピルを作る（号棟が1つしかない現場では表示しない＝今まで通りシンプルなまま）
-      const buildingPills = (ids, toggleCall, allCall) => {
+      const buildingPills = (ids, toggleCall) => {
         if (buildings.length <= 1) return '';
         const isAll = !ids || ids === 'ALL';
         let html = '<div style="padding-left:12px;margin:2px 0 8px;">';
         html += '<div style="font-size:11px;color:#777;margin-bottom:3px;">対象号棟（タップして選ぶ／外す。色が付いているのが対象）</div>';
         html += '<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">';
-        html += '<span onclick="' + allCall + '" style="font-size:12px;padding:3px 10px;border-radius:12px;cursor:pointer;border:2px solid ' + (isAll ? '#4B5B7F' : '#ccc') + ';' + (isAll ? 'background:#4B5B7F;color:#fff;font-weight:bold;' : 'background:#f5f5f5;color:#999;') + '">' + (isAll ? '✓ ' : '') + '全号棟</span>';
         buildings.forEach((b, i) => {
           const label = b.name ? b.name : ('号棟' + (i + 1));
           const checked = isAll || (Array.isArray(ids) && ids.includes(b.id));
@@ -5004,7 +5072,7 @@
               style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
             <span style="font-size:13px;color:#555;">階</span>
             <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
-          </div>${buildingPills(s.buildingIds, 'toggleSessionBuilding(' + di + ',' + si + ',', 'setSessionBuildingsAll(' + di + ',' + si + ')')}`).join('');
+          </div>${buildingPills(s.buildingIds, 'toggleSessionBuilding(' + di + ',' + si + ',')}`).join('');
         const isReserveOnly = day.reserveOnly ? 'checked' : '';
         return `
           <div class="schedule-day-row" data-di="${di}" style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
@@ -5017,7 +5085,7 @@
               </label>
               <button onclick="removeScheduleDay(${di})" style="margin-left:auto;font-size:12px;padding:2px 8px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">削除</button>
             </div>
-            ${day.reserveOnly ? buildingPills(day.buildingIds, 'toggleDayBuilding(' + di + ',', 'setDayBuildingsAll(' + di + ')') : ''}
+            ${day.reserveOnly ? buildingPills(day.buildingIds, 'toggleDayBuilding(' + di + ',') : ''}
             <div id="sessions-${di}">${day.reserveOnly ? '' : sessions}</div>
             ${day.reserveOnly ? '' : `<button onclick="addSession(${di})" style="font-size:12px;padding:4px 10px;background:#f5f5f5;border:1px dashed #999;border-radius:4px;margin-left:12px;">＋ セッションを追加</button>`}
           </div>`;
