@@ -435,6 +435,70 @@
     const provider = new GoogleAuthProvider();
     const db = getFirestore(app);
 
+    // ===== 匿名エラー報告(開発者=くにお 宛て) =====
+    // このプロジェクト設定は、フォーク・別Firebaseプロジェクトへの切替後も変更しないでください。
+    // 個人情報・現場データは一切送信しません(エラーメッセージとスタックトレースのみ)。
+    // 送信を止めたい場合は、設定画面の「匿名のエラー情報を送信する」のチェックを外してください。
+    const APP_VERSION = '2026-07-08';
+    const telemetryFirebaseConfig = {
+      apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
+      authDomain: "manchestar-test.firebaseapp.com",
+      projectId: "manchestar-test",
+      storageBucket: "manchestar-test.firebasestorage.app",
+      messagingSenderId: "863412425540",
+      appId: "1:863412425540:web:9f7f5af93b89417132bd11"
+    };
+    let telemetryDb = null;
+    try {
+      const telemetryApp = initializeApp(telemetryFirebaseConfig, 'telemetry');
+      telemetryDb = getFirestore(telemetryApp);
+    } catch (e) {
+      console.log('匿名エラー報告の初期化に失敗:', e.message);
+    }
+
+    function isErrorReportingEnabled() {
+      return localStorage.getItem('mc_error_report_optout') !== '1';
+    }
+    window.isErrorReportingEnabled = isErrorReportingEnabled;
+
+    // メールアドレスらしき文字列を念のためマスクし、長さも制限する簡易サニタイズ
+    function sanitizeForReport(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/g, '[email]')
+        .slice(0, 800);
+    }
+
+    const _sentErrorSignatures = new Set();
+
+    function reportAnonymousError(message, stack, source) {
+      try {
+        if (!isErrorReportingEnabled() || !telemetryDb) return;
+        const sig = (String(message) + '|' + String(stack || '').split('\n')[0]).slice(0, 200);
+        if (_sentErrorSignatures.has(sig)) return; // 同一エラーの連続送信を防止
+        _sentErrorSignatures.add(sig);
+        addDoc(collection(telemetryDb, 'anon_error_reports'), {
+          message: sanitizeForReport(message),
+          stack: sanitizeForReport(stack),
+          source: source || 'unknown',
+          appVersion: APP_VERSION,
+          userAgent: navigator.userAgent,
+          screen: window.innerWidth + 'x' + window.innerHeight,
+          createdAt: serverTimestamp()
+        }).catch(() => { /* 送信失敗は静かに無視(本来の動作に影響させない) */ });
+      } catch (e) { /* 報告処理自体の失敗も握りつぶす */ }
+    }
+
+    window.addEventListener('error', (e) => {
+      reportAnonymousError(e.message, e.error && e.error.stack, 'window.onerror');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const reason = e.reason;
+      const msg = (reason && reason.message) ? reason.message : String(reason);
+      const stack = (reason && reason.stack) ? reason.stack : '';
+      reportAnonymousError(msg, stack, 'unhandledrejection');
+    });
+
     // デバッグ用：console出力とlocalStorageへの蓄積のみ行う(画面表示パネルは廃止)
     function dlog(msg) {
       const time = new Date().toLocaleTimeString('ja-JP', { hour12: false }) + '.' + new Date().getMilliseconds();
@@ -1782,6 +1846,11 @@
         <label style="font-size:13px;"><input type="checkbox" id="newYoyakuRoleWorker" onchange="updateNewYoyakuNoticeRoles()"> 一般</label>
         <div style="font-size:12px;color:#4a4040;margin:8px 0 4px;">通知音（この端末のみの設定）：</div>
         <label style="font-size:13px;"><input type="checkbox" id="newYoyakuSoundToggle" onchange="updateNewYoyakuSoundSetting()" checked> 音を鳴らす</label>
+      </div>
+      <div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.5);border:1px solid rgba(0,0,0,0.12);border-radius:6px;">
+        <div style="font-size:13px;color:#1a1a1a;margin-bottom:4px;">アプリの改善にご協力ください（この端末のみの設定）</div>
+        <div style="font-size:11px;color:#4a4040;margin-bottom:6px;line-height:1.5;">不具合が起きた際、氏名・現場情報・入力内容などは一切含まない匿名のエラー情報のみを開発者に自動送信します。他のユーザーが同じ不具合に困らないようにするための機能です。</div>
+        <label style="font-size:13px;"><input type="checkbox" id="errorReportToggle" onchange="updateErrorReportSetting()" checked> 匿名のエラー情報を送信する</label>
       </div>
       <div id="scheduleDayList"></div>
       <button onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
@@ -5667,6 +5736,18 @@
       document.addEventListener('DOMContentLoaded', () => {
         const el = document.getElementById('newYoyakuSoundToggle');
         if (el) el.checked = isNewYoyakuSoundEnabled();
+      });
+    })();
+
+    // 匿名エラー報告ON/OFF（この端末だけの設定。既定はON）
+    function updateErrorReportSetting() {
+      const checked = document.getElementById('errorReportToggle').checked;
+      localStorage.setItem('mc_error_report_optout', checked ? '0' : '1');
+    }
+    (function initErrorReportToggle() {
+      document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('errorReportToggle');
+        if (el) el.checked = window.isErrorReportingEnabled ? window.isErrorReportingEnabled() : true;
       });
     })();
 
