@@ -2949,7 +2949,13 @@
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
-      if (endWorkBtn) endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      if (endWorkBtn) {
+        endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
+        const isSingleDay = window.propDayMode !== 'multi';
+        endWorkBtn.disabled = isSingleDay;
+        endWorkBtn.style.opacity = isSingleDay ? '0.4' : '1';
+        endWorkBtn.style.cursor = isSingleDay ? 'not-allowed' : 'pointer';
+      }
       const sendLogBtn = document.getElementById('sendLogBtn');
       if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const printChoiceBtn = document.getElementById('printChoiceBtn');
@@ -6290,6 +6296,7 @@
     // 本日の作業終了（管理者のみ）
     function endWorkSession() {
       if (!window.isJobOwner) { alert('この操作は管理者のみ行えます。'); return; }
+      if (window.propDayMode !== 'multi') { alert('単日の現場では「本日の作業を終了する」は使用できません。作業が終わったら「この物件を完了にする」をお使いください。'); return; }
       const ok = confirm(
         '本日の作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
