@@ -295,7 +295,6 @@
     #loginScreen .login-error { color: #ff6060; font-size: 13px; margin-top: 16px; min-height: 18px; }
     #loginScreen .login-loading { color: #6a7280; font-size: 13px; margin-top: 16px; min-height: 18px; }
 
-    #debugPanel { position: fixed; top: 0; left: 0; width: 100%; max-height: 50vh; overflow-y: auto; background: rgba(0,0,0,0.88); color: #0f0; font-size: 10px; font-family: monospace; z-index: 99999; padding: 8px; box-sizing: border-box; white-space: pre-wrap; word-break: break-all; }
 
     /* ロゴ：マンチェスター */
     .mc-accent { color: #ff8c42; }
@@ -436,7 +435,7 @@
     const provider = new GoogleAuthProvider();
     const db = getFirestore(app);
 
-    // デバッグ用：localStorageに蓄積しつつ画面上のdebugPanelにも表示する
+    // デバッグ用：console出力とlocalStorageへの蓄積のみ行う(画面表示パネルは廃止)
     function dlog(msg) {
       const time = new Date().toLocaleTimeString('ja-JP', { hour12: false }) + '.' + new Date().getMilliseconds();
       const line = '[' + time + '] ' + msg;
@@ -448,19 +447,8 @@
       logs.push(line);
       if (logs.length > 50) logs = logs.slice(-50);
       localStorage.setItem('mc_debug_logs', JSON.stringify(logs));
-      renderDebugPanel(logs);
-    }
-    function renderDebugPanel(logs) {
-      const panel = document.getElementById('debugPanel');
-      if (panel) panel.textContent = logs.join('\n');
     }
     window.dlog = dlog;
-    (function initDebugPanel() {
-      try {
-        const logs = JSON.parse(localStorage.getItem('mc_debug_logs') || '[]');
-        renderDebugPanel(logs);
-      } catch (e) {}
-    })();
     dlog('ページ読み込み / URL=' + location.href);
 
     // ポップアップ方式でログイン（ページ遷移を伴わない）
@@ -1315,12 +1303,14 @@
       }
 
       const emailLabel = document.getElementById('userEmailLabel');
+      const emailLabelSetup = document.getElementById('userEmailLabelSetup');
 
       if (user) {
         console.log('ログイン中:', user.displayName, user.email);
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email;
+        if (emailLabelSetup) emailLabelSetup.textContent = user.email;
 
         // 会社への参加リンク（?companyInvite=コード）をタップして開いた場合、自動で参加申請する
         if (!window._companyInviteHandled) {
@@ -1495,6 +1485,7 @@
         }
       } else {
         if (emailLabel) emailLabel.textContent = '';
+        if (emailLabelSetup) emailLabelSetup.textContent = '';
         if (window.authReady) {
           const isMobile = window.innerWidth <= 1024;
           if (isMobile) {
@@ -1691,8 +1682,8 @@
         <span style="font-family:'Inter',sans-serif;font-size:19px;font-weight:800;color:white;">Man<span style="color:#ff8c42;">CHE</span>Star</span>
       </div>
       <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
-        <div id="userEmailLabel" style="color:#7a9ab0;"></div>
-        <a id="newJobLink" onclick="confirmStartNewJob()" style="color:#7a9ab0;cursor:pointer;">新しい現場を始める</a>
+        <div id="userEmailLabelSetup" style="color:#7a9ab0;"></div>
+        <a id="newJobLinkSetup" onclick="confirmStartNewJob()" style="color:#7a9ab0;cursor:pointer;">新しい現場を始める</a>
         ／
         <a onclick="confirmLogout()" style="color:#e07020;cursor:pointer;">ログアウト</a>
       </div>
@@ -2930,6 +2921,8 @@
       // 管理者専用
       const newJobLink = document.getElementById('newJobLink');
       if (newJobLink) newJobLink.style.display = isAdmin ? 'inline' : 'none';
+      const newJobLinkSetup = document.getElementById('newJobLinkSetup');
+      if (newJobLinkSetup) newJobLinkSetup.style.display = isAdmin ? 'inline' : 'none';
       const qrBtn = document.getElementById('qrInviteBtn');
       if (qrBtn) qrBtn.style.display = (isAdmin && tableGenerated) ? 'inline-block' : 'none';
       const backBtn = document.getElementById('backToSetupBtn');
