@@ -1827,15 +1827,17 @@
         <div style="font-size:15px;font-weight:700;color:#1a1a1a;" id="propDisplayName">（物件名未入力）</div>
         <div style="font-size:11px;color:#4a4a4a;margin-top:2px;">作業日：<span id="propDisplayDate"></span>　担当：<span id="propDisplayStaff"></span></div>
       </div>
-      <!-- アクションボタン -->
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-        <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📱</span> 子機を招待（QR）</button>
-        <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📅</span> スケジュール確認</button>
-        <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
-        <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
-        <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
-        <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #1a7a35;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🏁</span> この物件を完了にする</button>
-        <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #888;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🚪</span> この現場から退場</button>
+      <!-- アクションボタン（折りたたみ可能） -->
+      <div id="actionButtonsWrap">
+        <button id="actionButtonsToggle" type="button" onclick="toggleActionButtonsRow()" style="width:100%;text-align:left;font-size:14px;padding:9px 12px;background:rgba(255,255,255,0.4);color:#1a1a1a;border:1px solid rgba(0,0,0,0.12);border-radius:6px;cursor:pointer;margin-bottom:8px;">▼ 操作メニューを開く</button>
+        <div id="actionButtonsRow" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+          <button id="qrInviteBtn" onclick="openQrModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📱</span> 子機を招待（QR）</button>
+          <button id="scheduleBtn" onclick="openScheduleModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📅</span> スケジュール確認</button>
+          <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
+          <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
+          <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
+          <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #c62828;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🛑</span> 本日の作業を終了する</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2044,12 +2046,12 @@
 
   <div id="outputArea">
     <div style="display:flex;flex-wrap:wrap;gap:8px;">
-      <button id="printRyomenzuBtn" onclick="printRyomenzu()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">立面図を印刷</button>
+      <button id="printChoiceBtn" onclick="openPrintChoiceModal()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">🖨 印刷</button>
       <button onclick="exportFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
-      <button id="printFuryoBtn" onclick="printFuryo()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧を印刷</button>
       <button onclick="deleteAllSigns()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#ff8080;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">サイン画像を削除（印刷完了後）</button>
       <button id="sendLogBtn" onclick="sendLogByEmail()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#d8a8ff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">ログをメールで送る</button>
-      <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#c62828;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">本日の作業を終了する</button>
+      <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1a7a35;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🏁 この物件を完了にする</button>
+      <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#ff8c42;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🚪 この現場から退場</button>
     </div>
     <textarea id="textOutput" readonly style="background:#fff;color:#1a1a1a;width:100%;margin-top:10px;box-sizing:border-box;"></textarea>
   </div>
@@ -2085,6 +2087,20 @@
         <button id="signClear" onclick="clearSign()">クリア</button>
         <button id="signCancel" onclick="cancelSign()">キャンセル</button>
         <button id="signOk" onclick="confirmSign()">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 印刷内容を選ぶモーダル（立面図／不良一覧のどちらを印刷するか） -->
+  <div id="printChoiceModal" class="modal">
+    <div class="modal-box" style="max-width:360px;">
+      <h2>印刷する内容を選んでください</h2>
+      <div class="modal-buttons" style="flex-direction:column;">
+        <button onclick="closePrintChoiceModal(); printRyomenzu();" style="width:100%;padding:10px;">立面図を印刷</button>
+        <button onclick="closePrintChoiceModal(); printFuryo();" style="width:100%;padding:10px;">不良一覧を印刷</button>
+      </div>
+      <div class="modal-buttons" style="margin-top:10px;">
+        <button onclick="closePrintChoiceModal()">キャンセル</button>
       </div>
     </div>
   </div>
@@ -2926,6 +2942,8 @@
       if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const actionButtonsWrap = document.getElementById('actionButtonsWrap');
+      if (actionButtonsWrap) actionButtonsWrap.style.display = isAdmin ? 'block' : 'none';
       const completePropertyBtn = document.getElementById('completePropertyBtn');
       if (completePropertyBtn) completePropertyBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
@@ -2934,10 +2952,8 @@
       if (endWorkBtn) endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const sendLogBtn = document.getElementById('sendLogBtn');
       if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
-      const printRyomenzuBtn = document.getElementById('printRyomenzuBtn');
-      if (printRyomenzuBtn) printRyomenzuBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
-      const printFuryoBtn = document.getElementById('printFuryoBtn');
-      if (printFuryoBtn) printFuryoBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
+      const printChoiceBtn = document.getElementById('printChoiceBtn');
+      if (printChoiceBtn) printChoiceBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
 
       // 管理者・サブ管理者：備考パターン編集
       const notePatternManage = document.getElementById('notePatternManage');
@@ -6318,6 +6334,24 @@
       const ta = document.getElementById('textOutput');
       ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
       ta.style.display = 'block';
+    }
+
+    // ---- 印刷：内容選択モーダル（立面図／不良一覧） ----
+    function openPrintChoiceModal() {
+      document.getElementById('printChoiceModal').classList.add('active');
+    }
+    function closePrintChoiceModal() {
+      document.getElementById('printChoiceModal').classList.remove('active');
+    }
+
+    // 上部の操作ボタン列を開閉する（初期状態は畳んだまま）
+    function toggleActionButtonsRow() {
+      const row = document.getElementById('actionButtonsRow');
+      const btn = document.getElementById('actionButtonsToggle');
+      if (!row || !btn) return;
+      const isOpen = row.style.display !== 'none';
+      row.style.display = isOpen ? 'none' : 'flex';
+      btn.textContent = isOpen ? '▼ 操作メニューを開く' : '▲ 操作メニューを閉じる';
     }
 
     // ---- 印刷：号棟選択モーダル ----
