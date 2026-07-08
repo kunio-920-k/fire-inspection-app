@@ -1836,7 +1836,7 @@
           <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
           <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
           <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
-          <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #c62828;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🛑</span> 本日の作業を終了する</button>
+          <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:#ff8c42;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ffffff;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🚪</span> この現場から退場</button>
         </div>
       </div>
     </div>
@@ -2047,11 +2047,11 @@
   <div id="outputArea">
     <div style="display:flex;flex-wrap:wrap;gap:8px;">
       <button id="printChoiceBtn" onclick="openPrintChoiceModal()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">🖨 印刷</button>
-      <button onclick="exportFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
+      <button id="furyoTextToggleBtn" onclick="toggleFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
       <button onclick="deleteAllSigns()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#ff8080;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">サイン画像を削除（印刷完了後）</button>
       <button id="sendLogBtn" onclick="sendLogByEmail()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#d8a8ff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">ログをメールで送る</button>
+      <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#c62828;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">本日の作業を終了する</button>
       <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1a7a35;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🏁 この物件を完了にする</button>
-      <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#ff8c42;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🚪 この現場から退場</button>
     </div>
     <textarea id="textOutput" readonly style="background:#fff;color:#1a1a1a;width:100%;margin-top:10px;box-sizing:border-box;"></textarea>
   </div>
@@ -6329,11 +6329,19 @@
       });
     }
 
-    function exportFuryoText() {
-      const list = getFuryoList();
+    function toggleFuryoText() {
       const ta = document.getElementById('textOutput');
-      ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
-      ta.style.display = 'block';
+      const btn = document.getElementById('furyoTextToggleBtn');
+      const isShown = ta.style.display === 'block';
+      if (isShown) {
+        ta.style.display = 'none';
+        if (btn) btn.textContent = '不良一覧テキストを表示';
+      } else {
+        const list = getFuryoList();
+        ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
+        ta.style.display = 'block';
+        if (btn) btn.textContent = '不良一覧テキストをしまう';
+      }
     }
 
     // ---- 印刷：内容選択モーダル（立面図／不良一覧） ----
