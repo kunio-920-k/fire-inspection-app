@@ -3199,15 +3199,15 @@
           <div style="font-size:12px;color:#888;margin-bottom:10px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
           <div style="display:flex;gap:8px;">
             <button onclick="resumeJob('${j.jobId}')"
-              style="flex:1;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
-              この物件の続きを開始
+              style="flex:2;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
+              続きを再開
             </button>
             <button onclick="confirmMarkJobComplete('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}')"
-              style="padding:10px 12px;background:#eefbf0;color:#1a7a35;border:1px solid #b7e6c2;border-radius:6px;font-size:13px;cursor:pointer;">
+              style="flex:1;padding:10px 4px;background:#eefbf0;color:#1a7a35;border:1px solid #b7e6c2;border-radius:6px;font-size:13px;cursor:pointer;">
               ✓ 完了にする
             </button>
             <button onclick="confirmDeleteContinueJob('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}')"
-              style="padding:10px 14px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:6px;font-size:13px;cursor:pointer;">
+              style="flex:1;padding:10px 4px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:6px;font-size:13px;cursor:pointer;">
               🗑 削除
             </button>
           </div>
@@ -4180,8 +4180,10 @@
     // ホーム画面（新規登録／既存物件から新規登録／継続中の物件を選択）に戻る
     function confirmGoHomeScreen() {
       if (!confirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
-      document.getElementById('setup').style.display = 'none';
-      if (window.showStartScreen) window.showStartScreen();
+      // ここで物件IDをクリアしておかないと、更新時にこの物件（一括設定画面）へ
+      // 直接戻ってしまう（「この物件を完了にする」と同種の不具合のため、同じ対処をする）
+      localStorage.removeItem('mc_job_id');
+      location.reload();
     }
 
     // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
