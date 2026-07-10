@@ -932,6 +932,13 @@
       }).catch((e) => dlog('メモ保存エラー / ' + e.message));
     };
 
+    window.deleteMemoFromCloud = function(memoId) {
+      if (!window.currentJobId || !memoId) return Promise.resolve();
+      return deleteDoc(doc(db, 'inspections', window.currentJobId, 'memos', memoId)).catch((e) => {
+        dlog('メモ削除エラー / ' + e.message);
+      });
+    };
+
     // ---- 作業終了・子機リセット ----
     // ---- 現場一覧管理 ----
     // 保存先: users/{uid}/jobs/{jobId}
@@ -1124,7 +1131,7 @@
     window.approveCompanyMember = function(companyId, uid, isCompanyAdmin) {
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
         if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
-          throw new Error('承認は会社の登録者のみ行えます。');
+          throw new Error('承認はグループの登録者のみ行えます。');
         }
         return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
           status: 'approved',
@@ -1138,7 +1145,7 @@
     window.rejectCompanyMember = function(companyId, uid) {
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
         if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
-          throw new Error('却下は会社の登録者のみ行えます。');
+          throw new Error('却下はグループの登録者のみ行えます。');
         }
         return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
           .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
@@ -1195,7 +1202,7 @@
 
     // 現在開いている現場を、指定した会社に紐付ける（会社の管理者がこの現場に無招待で入れるようになる）
     window.linkJobToCompany = function(jobId, companyId) {
-      if (!jobId || !companyId) return Promise.reject(new Error('現場または会社が指定されていません'));
+      if (!jobId || !companyId) return Promise.reject(new Error('現場またはグループが指定されていません'));
       return updateDoc(doc(db, 'inspections', jobId), { companyId: companyId }).then(() => {
         window.currentJobCompanyId = companyId;
         if (window.saveCompanyGenbaSummary) {
@@ -1259,8 +1266,17 @@
           return Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
         });
       };
-      return Promise.all(subCols.map(deleteSubCol)).then(() => {
-        return deleteDoc(doc(db, 'inspections', jobId));
+      // グループ（会社）に紐付いていた場合、あちら側の一覧に亡霊が残らないよう先に確認しておく
+      const jobRef = doc(db, 'inspections', jobId);
+      return getDoc(jobRef).then((snap) => {
+        const companyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
+        return Promise.all(subCols.map(deleteSubCol)).then(() => {
+          return deleteDoc(jobRef);
+        }).then(() => {
+          if (companyId && window.removeCompanyGenbaSummary) {
+            return window.removeCompanyGenbaSummary(companyId, jobId);
+          }
+        });
       }).then(() => {
         if (window.currentUser) {
           return deleteDoc(doc(db, 'users', window.currentUser.uid, 'jobs', jobId));
@@ -1288,6 +1304,7 @@
         snap.forEach(d => {
           const data = d.data();
           memos.push({
+            id: d.id,
             text: data.text || '',
             author: data.author || '',
             createdAt: data.createdAt ? data.createdAt.toMillis() : 0
@@ -1355,6 +1372,33 @@
     window.currentUser = null;
 
     // 認証状態の変化を監視
+    // ホーム画面（選択画面）を表示し、一覧・ユーザー名・時計を最新状態にする。
+    // 「継続中の物件を選択」以外でホーム画面へ戻るすべての箇所から呼べるようにするための共通関数。
+    window.showStartScreen = function(user) {
+      user = user || window.currentUser;
+      if (window.loadJobList) {
+        window.loadJobList().then((jobs) => {
+          window._allJobsCache = jobs;
+          updateStartScreenJobButtons(jobs);
+        });
+      }
+      document.getElementById('startScreen').style.display = 'block';
+      refreshStartScreenCompanyStatus();
+      if (user && user.displayName) {
+        const el = document.getElementById('startUserName');
+        if (el) el.textContent = user.displayName;
+      }
+      (function tickStartClock() {
+        const now = new Date();
+        const days = ['日','月','火','水','木','金','土'];
+        const cl = document.getElementById('startClockDisp');
+        const dl = document.getElementById('startDateDisp');
+        if (cl) cl.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+        if (dl) dl.textContent = now.getFullYear() + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + String(now.getDate()).padStart(2,'0') + '（' + days[now.getDay()] + '）';
+        if (document.getElementById('startScreen').style.display !== 'none') setTimeout(tickStartClock, 1000);
+      })();
+    };
+
     onAuthStateChanged(auth, (user) => {
       window.currentUser = user || null;
       dlog('onAuthStateChanged発火 / user=' + (user ? user.email : 'null') + ' / authReady=' + window.authReady);
@@ -1404,29 +1448,7 @@
             localStorage.setItem('mc_job_id', joinId);
             dlog('子機参加 / job=' + joinId);
           } else {
-            // 選択画面を表示（過去データがあるか確認）
-            if (window.loadJobList) {
-              window.loadJobList().then((jobs) => {
-                window._allJobsCache = jobs;
-                updateStartScreenJobButtons(jobs);
-              });
-            }
-            document.getElementById('startScreen').style.display = 'block';
-            refreshStartScreenCompanyStatus();
-            // ③選択画面：ユーザー名と時計を設定
-            if (user && user.displayName) {
-              const el = document.getElementById('startUserName');
-              if (el) el.textContent = user.displayName;
-            }
-            (function tickStartClock() {
-              const now = new Date();
-              const days = ['日','月','火','水','木','金','土'];
-              const cl = document.getElementById('startClockDisp');
-              const dl = document.getElementById('startDateDisp');
-              if (cl) cl.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-              if (dl) dl.textContent = now.getFullYear() + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + String(now.getDate()).padStart(2,'0') + '（' + days[now.getDay()] + '）';
-              if (document.getElementById('startScreen').style.display !== 'none') setTimeout(tickStartClock, 1000);
-            })();
+            window.showStartScreen(user);
             return;
           }
         }
@@ -1635,7 +1657,7 @@
     <!-- 本文（中央寄せ） -->
     <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
       <!-- ステータス -->
-      <div style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <div onclick="confirmLogout()" style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;cursor:pointer;">
         <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
         <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中</div>
         <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
@@ -1677,10 +1699,6 @@
         </div>
       </div>
       <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#2a2520;margin-top:4px;">（過去データがありません）</p>
-      <!-- フッター -->
-      <div style="margin-top:24px;text-align:center;font-size:11px;">
-        <a onclick="confirmLogout()" style="color:#3a5060;cursor:pointer;">ログアウト</a>
-      </div>
     </div>
   </div>
 
@@ -1849,7 +1867,7 @@
       </div>
       <div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.5);border:1px solid rgba(0,0,0,0.12);border-radius:6px;">
         <div style="font-size:13px;color:#1a1a1a;margin-bottom:4px;">アプリの改善にご協力ください（この端末のみの設定）</div>
-        <div style="font-size:11px;color:#4a4040;margin-bottom:6px;line-height:1.5;">不具合が起きた際、氏名・現場情報・入力内容などは一切含まない匿名のエラー情報のみを開発者に自動送信します。他のユーザーが同じ不具合に困らないようにするための機能です。</div>
+        <div style="font-size:11px;color:#4a4040;margin-bottom:6px;line-height:1.5;">不具合が起きた際、氏名・現場情報・入力内容などは一切含まない匿名のエラー情報のみを開発者に自動送信します。他のユーザーが同じ不具合に困らないようにするための機能です。ご協力をお願いします。</div>
         <label style="font-size:13px;"><input type="checkbox" id="errorReportToggle" onchange="updateErrorReportSetting()" checked> 匿名のエラー情報を送信する</label>
       </div>
       <div id="scheduleDayList"></div>
@@ -2013,7 +2031,7 @@
   <div id="companyModal" class="modal">
     <div class="modal-box" style="max-width:440px;text-align:left;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-        <h2 style="margin:0;">🏢 会社</h2>
+        <h2 style="margin:0;">🏢 グループ</h2>
         <span onclick="closeCompanyModal()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
       </div>
       <div id="companyModalBody">読み込み中…</div>
@@ -2030,6 +2048,9 @@
         <h2 style="margin:0;">🏢 現場管理ダッシュボード</h2>
         <span onclick="closeOfficeDashboard()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
       </div>
+      <div style="font-weight:bold;font-size:13px;margin-bottom:6px;">📌 本日の作業</div>
+      <div id="officeDashboardTodayList" style="margin-bottom:14px;"></div>
+      <div style="font-weight:bold;font-size:13px;margin-bottom:6px;border-top:1px solid #eee;padding-top:12px;">現場一覧</div>
       <input type="text" id="officeDashboardSearch" placeholder="🔍 物件名で検索" oninput="renderOfficeDashboardList()" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;font-size:14px;">
       <div id="officeDashboardList" style="max-height:55vh;overflow-y:auto;">読み込み中…</div>
       <div class="modal-buttons" style="margin-top:14px;">
@@ -2097,7 +2118,7 @@
   <div id="memoArea" style="display:none;margin-top:0;padding:16px 20px;border-top:none;background:#182C3A;">
     <div style="font-weight:bold;font-size:16px;margin-bottom:8px;color:#fff;">現場メモ（音声入力可）</div>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
-      <input type="text" id="memoInput" placeholder="メモを入力..." style="flex:1;font-size:14px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;">
+      <input type="text" id="memoInput" placeholder="メモを入力..." style="flex:1;font-size:14px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;background:#fff;color:#1a1a1a;">
       <button id="memoVoiceBtn" onclick="toggleVoiceMemo()" style="padding:6px 12px;font-size:18px;background:#eef5ff;">🎤</button>
       <button onclick="addMemo()" style="padding:6px 12px;font-size:13px;background:#336699;color:white;border:none;border-radius:4px;">追加</button>
     </div>
@@ -3143,6 +3164,10 @@
       if (!ok) return;
       if (!window.hideJob) return;
       window.hideJob(jobId).then(() => {
+        if (jobId === window.currentJobId) {
+          localStorage.removeItem('mc_job_id');
+          window.currentJobId = null;
+        }
         if (window.loadJobList) {
           window.loadJobList().then((jobs) => {
             window._allJobsCache = jobs;
@@ -3310,8 +3335,31 @@
               このデータで新規登録する
             </button>
             ${restoreBtn}
+            <button onclick="confirmDeleteExistingJob('${j.jobId}','${name.replace(/'/g,'\\\'')}')"
+              style="width:100%;padding:9px;margin-top:6px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:6px;font-size:13px;cursor:pointer;">
+              🗑 このデータを完全に削除
+            </button>
           </div>`;
         }).join('');
+    }
+
+    // 既存物件（過去データ）一覧から現場を完全削除する
+    function confirmDeleteExistingJob(jobId, name) {
+      const ok = confirm('「' + name + '」を完全に削除します。\nこの操作は取り消せません。点検データ・サイン画像・ログなど、すべて削除されます。\n\n本当によろしいですか？');
+      if (!ok) return;
+      if (!window.deleteJobCompletely) return;
+      window.deleteJobCompletely(jobId).then(() => {
+        alert('削除しました。');
+        if (window.loadJobList) {
+          window.loadJobList().then((jobs) => {
+            window._allJobsCache = jobs;
+            renderExistingNames();
+            backToExistingNameList();
+          });
+        }
+      }).catch((e) => {
+        alert('削除に失敗しました：' + e.message);
+      });
     }
 
     // 完了にした（非表示にした）物件を、継続中の物件一覧に戻す
@@ -3387,6 +3435,34 @@
       localStorage.setItem('mc_job_id', window.currentJobId);
       if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(window.currentJobId);
       location.reload();
+    }
+
+    // スマホのネイティブ時刻ピッカー（アナログ時計風・決定ボタンなし）を避けるため、
+    // 作業日セッションの時刻は「時」「分（10分刻み）」のプルダウン2つで構成する。
+    function buildTimeSelectHTML(className, value) {
+      const parts = (value || '09:00').split(':');
+      const selH = parts[0] || '09';
+      const selM = parts[1] || '00';
+      let h = '<select class="' + className + '-h" style="font-size:13px;padding:4px 2px;border:1px solid #ccc;border-radius:4px;">';
+      for (let i = 0; i <= 23; i++) {
+        const v = String(i).padStart(2, '0');
+        h += '<option value="' + v + '"' + (v === selH ? ' selected' : '') + '>' + v + '</option>';
+      }
+      h += '</select>';
+      let m = '<select class="' + className + '-m" style="font-size:13px;padding:4px 2px;border:1px solid #ccc;border-radius:4px;">';
+      for (let i = 0; i < 60; i += 10) {
+        const v = String(i).padStart(2, '0');
+        m += '<option value="' + v + '"' + (v === selM ? ' selected' : '') + '>' + v + '</option>';
+      }
+      m += '</select>';
+      return h + '<span style="font-size:12px;color:#555;">：</span>' + m;
+    }
+    // 上記2つのselectから "HH:MM" 形式の文字列を組み立てて読み出す
+    function readTimeSelectValue(row, className) {
+      const h = row.querySelector('.' + className + '-h');
+      const m = row.querySelector('.' + className + '-m');
+      if (!h || !m) return null;
+      return h.value + ':' + m.value;
     }
 
     function buildTimeSelects() {
@@ -4105,8 +4181,7 @@
     function confirmGoHomeScreen() {
       if (!confirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
       document.getElementById('setup').style.display = 'none';
-      document.getElementById('startScreen').style.display = 'block';
-      refreshStartScreenCompanyStatus();
+      if (window.showStartScreen) window.showStartScreen();
     }
 
     // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
@@ -4116,13 +4191,11 @@
       if (!confirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
       if (!window.hideJob) return;
       window.hideJob(window.currentJobId).then(() => {
-        alert('この物件を完了にしました。');
-        document.getElementById('setup').style.display = 'none';
-        document.getElementById('propertyArea').style.display = 'none';
-        const tableWrap = document.querySelector('.table-wrap');
-        if (tableWrap) tableWrap.style.display = 'none';
-        document.getElementById('startScreen').style.display = 'block';
-        refreshStartScreenCompanyStatus();
+        // 完了した物件のIDが端末に残ったままだと、次回起動時にホーム画面へ戻れず
+        // この物件（の立面図）へ直接再入場してしまうため、ここで必ずクリアする
+        localStorage.removeItem('mc_job_id');
+        alert('この物件を完了にしました。ホーム画面に戻ります。');
+        location.reload();
       }).catch((e) => {
         alert('操作に失敗しました：' + e.message);
       });
@@ -5239,9 +5312,13 @@
       }
       list.innerHTML = memos.map(m => {
         const time = m.createdAt ? new Date(m.createdAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
-        return '<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.15);color:#e8ecef;">' +
-          '<span style="color:#9aa5b0;font-size:11px;">' + time + ' ' + m.author + '　</span>' +
-          '<span>' + m.text.replace(/</g, '&lt;') + '</span></div>';
+        return '<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.15);color:#e8ecef;display:flex;align-items:center;gap:6px;">' +
+          '<div style="flex:1;">' +
+          '<span style="color:#b8c2cc;font-size:11px;">' + time + ' ' + m.author + '　</span>' +
+          '<span>' + m.text.replace(/</g, '&lt;') + '</span>' +
+          '</div>' +
+          '<span onclick="deleteMemo(\'' + m.id + '\')" style="flex-shrink:0;color:#ff9494;cursor:pointer;font-size:15px;padding:2px 6px;">✕</span>' +
+          '</div>';
       }).join('');
       list.scrollTop = list.scrollHeight;
     };
@@ -5253,6 +5330,12 @@
       if (!text) return;
       if (window.addMemoToCloud) window.addMemoToCloud(text);
       input.value = '';
+    }
+
+    // 不要になったメモを削除する
+    function deleteMemo(memoId) {
+      if (!confirm('このメモを削除します。よろしいですか？')) return;
+      if (window.deleteMemoFromCloud) window.deleteMemoFromCloud(memoId);
     }
 
     // Enterキーでも追加できるようにする（IME変換中の確定Enterは除外）
@@ -5386,7 +5469,7 @@
     function renderScheduleDayList() {
       const container = document.getElementById('scheduleDayList');
       if (scheduleData.length === 0) {
-        container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">まだ作業日が登録されていません</p>';
+        container.innerHTML = '<p style="color:#5a5045;font-size:13px;text-align:center;">まだ作業日が登録されていません</p>';
         return;
       }
       // 対象号棟の選択ピルを作る（号棟が1つしかない現場では表示しない＝今まで通りシンプルなまま）
@@ -5410,11 +5493,9 @@
           <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
             <input type="text" class="ss-label" value="${s.label || ''}" placeholder="午前・午後など"
               style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
-            <input type="time" class="ss-timeFrom" value="${s.timeFrom || '09:00'}"
-              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
+            ${buildTimeSelectHTML('ss-timeFrom', s.timeFrom || '09:00')}
             <span style="font-size:13px;color:#555;">〜</span>
-            <input type="time" class="ss-timeTo" value="${s.timeTo || '12:00'}"
-              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
+            ${buildTimeSelectHTML('ss-timeTo', s.timeTo || '12:00')}
             <span style="font-size:13px;color:#555;">フロア</span>
             <input type="number" class="ss-floorFrom" value="${s.floorFrom}" min="1"
               style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
@@ -5457,8 +5538,8 @@
         if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
         const s = scheduleData[di].sessions[si];
         const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
-        const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
-        const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
+        const tf = readTimeSelectValue(row, 'ss-timeFrom'); if (tf) s.timeFrom = tf;
+        const tt = readTimeSelectValue(row, 'ss-timeTo'); if (tt) s.timeTo = tt;
         const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(toHankaku(ff.value)) || 1;
         const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(toHankaku(ft.value)) || 1;
       });
@@ -5610,8 +5691,8 @@
         if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
         const s = scheduleData[di].sessions[si];
         const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
-        const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
-        const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
+        const tf = readTimeSelectValue(row, 'ss-timeFrom'); if (tf) s.timeFrom = tf;
+        const tt = readTimeSelectValue(row, 'ss-timeTo'); if (tt) s.timeTo = tt;
         const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
         const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(ft.value) || 1;
       });
@@ -5970,7 +6051,28 @@
       window.loadCompanyGenbaList(companyId).then((jobs) => {
         officeDashboardJobs = jobs;
         renderOfficeDashboardList();
+        renderOfficeDashboardTodayList();
       });
+    }
+    // 本日日付と一致する現場だけを抜き出して表示する（j.dateは「2026年7月10日」形式の文字列）
+    function renderOfficeDashboardTodayList() {
+      const el = document.getElementById('officeDashboardTodayList');
+      if (!el) return;
+      const now = new Date();
+      const todayStr = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日';
+      const todayJobs = officeDashboardJobs.filter(j => j.date === todayStr);
+      if (todayJobs.length === 0) {
+        el.innerHTML = '<p style="font-size:12px;color:#888;text-align:center;padding:10px 0;">本日稼働中の現場はありません。</p>';
+        return;
+      }
+      let html = '';
+      todayJobs.forEach(j => {
+        html += '<div onclick="openOfficeDashboardJob(\'' + j.jobId + '\')" style="padding:10px 12px;border:1px solid #ffd8b0;border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fff6ec;">' +
+          '<div style="font-weight:bold;font-size:14px;">' + (j.name || '（物件名未設定）') + '</div>' +
+          '<div style="font-size:12px;color:#a05a20;margin-top:2px;">本日稼働中</div>' +
+        '</div>';
+      });
+      el.innerHTML = html;
     }
     function closeOfficeDashboard() {
       document.getElementById('officeDashboardModal').classList.remove('active');
@@ -5983,7 +6085,7 @@
         : officeDashboardJobs;
       if (filtered.length === 0) {
         listEl.innerHTML = '<p style="font-size:13px;color:#888;text-align:center;padding:20px 0;">' +
-          (officeDashboardJobs.length === 0 ? 'この会社にはまだ現場が紐付いていません。' : '該当する現場が見つかりません。') + '</p>';
+          (officeDashboardJobs.length === 0 ? 'このグループにはまだ現場が紐付いていません。' : '該当する現場が見つかりません。') + '</p>';
         return;
       }
       let html = '';
@@ -6013,7 +6115,7 @@
       if (!window.loadMyCompanyStatus) return;
       window.loadMyCompanyStatus().then((status) => {
         if (!status) {
-          card.textContent = '🏢 会社に未登録（タップして登録・参加）';
+          card.textContent = '🏢 グループ（会社などの団体）に未登録（タップして登録・参加）';
         } else if (status.status === 'pending') {
           card.textContent = '🏢 「' + status.companyName + '」へ参加申請中（承認待ち）';
         } else if (status.status === 'approved') {
@@ -6024,7 +6126,7 @@
             window._startScreenDashboardCompanyName = status.companyName;
           }
         } else {
-          card.textContent = '🏢 会社に未登録（タップして登録・参加）';
+          card.textContent = '🏢 グループ（会社などの団体）に未登録（タップして登録・参加）';
         }
       });
     }
@@ -6046,7 +6148,7 @@
         } else if (status.status === 'pending') {
           body.innerHTML =
             '<p style="font-size:14px;">「' + status.companyName + '」への参加申請中です。</p>' +
-            '<p style="font-size:12px;color:#888;">会社の代表者が承認するまでお待ちください。</p>';
+            '<p style="font-size:12px;color:#888;">グループの代表者が承認するまでお待ちください。</p>';
         } else if (status.status === 'approved') {
           renderCompanyModalApproved(body, status);
         } else {
@@ -6057,16 +6159,16 @@
 
     function renderCompanyModalNoCompany(body) {
       body.innerHTML =
-        '<p style="font-size:13px;color:#666;">まだどの会社にも登録されていません。</p>' +
+        '<p style="font-size:13px;color:#666;">まだどのグループにも登録されていません。</p>' +
         '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
-          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">会社を登録する</div>' +
-          '<p style="font-size:11px;color:#888;margin:0 0 8px;">その日のすべての現場を管理・監視できるようになります。実行した人が会社の【管理者】になります。</p>' +
-          '<input id="newCompanyNameInput" type="text" placeholder="会社名（例：くにお消防設備）" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">グループ（会社などの団体）を登録する</div>' +
+          '<p style="font-size:11px;color:#888;margin:0 0 8px;">その日のすべての現場を管理・監視できるようになります。実行した人がグループの【管理者】になります。</p>' +
+          '<input id="newCompanyNameInput" type="text" placeholder="グループ名（例：くにお消防設備）" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
           '<button onclick="submitRegisterCompany()" style="width:100%;">登録する</button>' +
         '</div>' +
         '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
           '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">招待コードで参加する</div>' +
-          '<p style="font-size:11px;color:#888;margin:0 0 8px;">会社の代表者からもらった招待コードを入力してください。承認されるまでは待機状態になります。</p>' +
+          '<p style="font-size:11px;color:#888;margin:0 0 8px;">グループの代表者からもらった招待コードを入力してください。承認されるまでは待機状態になります。</p>' +
           '<input id="joinInviteCodeInput" type="text" placeholder="招待コード" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;text-transform:uppercase;">' +
           '<button onclick="submitJoinCompany()" style="width:100%;">参加申請する</button>' +
         '</div>';
@@ -6075,10 +6177,10 @@
     function submitRegisterCompany() {
       const nameInput = document.getElementById('newCompanyNameInput');
       const name = (nameInput.value || '').trim();
-      if (!name) { alert('会社名を入力してください'); return; }
-      if (!confirm('「' + name + '」として会社を登録します。よろしいですか？')) return;
+      if (!name) { alert('グループ名を入力してください'); return; }
+      if (!confirm('「' + name + '」としてグループを登録します。よろしいですか？')) return;
       window.registerCompany(name).then(() => {
-        alert('会社を登録しました。あなたはこの会社の【管理者】です。');
+        alert('グループを登録しました。あなたはこのグループの【管理者】です。');
         refreshCompanyModal();
       }).catch((e) => alert('登録に失敗しました：' + e.message));
     }
@@ -6104,7 +6206,7 @@
 
     function renderCompanyModalApproved(body, status) {
       let html = '<p style="font-size:15px;font-weight:bold;margin:0 0 4px;">' + status.companyName + '</p>';
-      let roleText = status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）';
+      let roleText = status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（グループのダッシュボードを閲覧）';
       if (status.isOwner) roleText += ' <span style="color:#3a9bdc;font-weight:bold;">（登録者）</span>';
       html += '<p style="font-size:12px;color:#666;margin:0 0 12px;">あなたの立場：' + roleText + '</p>';
 
@@ -6116,24 +6218,25 @@
             '<button onclick="copyInviteCode()" style="padding:6px 10px;">コピー</button>' +
           '</div>' +
           '<button onclick="copyCompanyJoinLink(\'' + status.inviteCode + '\')" style="width:100%;margin-top:8px;background:#eef5ff;border-color:#8ab;color:#246;">🔗 参加リンクをコピー（タップだけで申請できます）</button>' +
+          '<button onclick="emailCompanyJoinLink(\'' + status.inviteCode + '\',\'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:8px;background:#eef5ff;border-color:#8ab;color:#246;">✉️ 参加リンクをメールで送信</button>' +
           '<button onclick="doRegenerateInviteCode(\'' + status.companyId + '\')" style="width:100%;margin-top:8px;background:#fff0f0;border-color:#c88;color:#c00;">コードを再発行する（漏洩時など）</button>' +
         '</div>';
         html += '<div id="companyMemberSection" style="margin:10px 0;">読み込み中…</div>';
         if (status.isOwner) {
           html += '<div id="companyOwnerSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
             '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">登録者（オーナー）権限の譲渡</div>' +
-            '<p style="font-size:11px;color:#888;margin:0 0 8px;">参加申請の承認・却下は登録者だけができます。本格運用時など、この権限を他の会社メンバーに譲ることができます（あなた自身は管理者のまま残ります）。</p>' +
+            '<p style="font-size:11px;color:#888;margin:0 0 8px;">参加申請の承認・却下は登録者だけができます。本格運用時など、この権限を他のグループメンバーに譲ることができます（あなた自身は管理者のまま残ります）。</p>' +
             '<div id="ownerTransferButtons">読み込み中…</div>' +
           '</div>';
         }
       } else if (!status.isOwner) {
-        html += '<p style="font-size:12px;color:#888;">参加申請の承認・却下は会社の登録者が行います。</p>';
+        html += '<p style="font-size:12px;color:#888;">参加申請の承認・却下はグループの登録者が行います。</p>';
       }
 
       const canManageJobLink = !!(window.currentJobId && (window.myRole === 'admin' || window.isJobOwner));
       if (canManageJobLink) {
         html += '<div id="jobCompanyLinkSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
-          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">今開いている現場の会社紐付け</div>' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">今開いている現場のグループ紐付け</div>' +
           '<div id="jobCompanyLinkStatus" style="font-size:12px;color:#666;">確認中…</div>' +
         '</div>';
       }
@@ -6144,9 +6247,9 @@
 
       html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee;">';
       if (status.isOwner) {
-        html += '<p style="font-size:11px;color:#888;">あなたは登録者（オーナー）のため、この会社から抜けることはできません。抜けたい場合は、先に上の「権限の譲渡」で登録者権限を他の人へ譲渡してください。</p>';
+        html += '<p style="font-size:11px;color:#888;">あなたは登録者（オーナー）のため、このグループから抜けることはできません。抜けたい場合は、先に上の「権限の譲渡」で登録者権限を他の人へ譲渡してください。</p>';
       } else {
-        html += '<button onclick="submitLeaveCompany(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;background:#fff0f0;border-color:#c88;color:#c00;">この会社から抜ける</button>';
+        html += '<button onclick="submitLeaveCompany(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;background:#fff0f0;border-color:#c88;color:#c00;">このグループから抜ける</button>';
       }
       html += '</div>';
 
@@ -6169,15 +6272,15 @@
         const escapedName = myCompanyName.replace(/'/g, "\\'");
         if (jobCompanyId && jobCompanyId === myCompanyId) {
           el.innerHTML =
-            '<p style="margin:0 0 8px;">「' + myCompanyName + '」に紐付け済みです。会社の管理者は、この現場に招待なしで入れます。</p>' +
+            '<p style="margin:0 0 8px;">「' + myCompanyName + '」に紐付け済みです。グループの管理者は、この現場に招待なしで入れます。</p>' +
             '<button onclick="submitUnlinkJobFromCompany()" style="width:100%;background:#fff0f0;border-color:#c88;color:#c00;">紐付けを解除する</button>';
         } else if (jobCompanyId) {
           el.innerHTML =
-            '<p style="margin:0 0 8px;">この現場は別の会社に紐付いています。</p>' +
+            '<p style="margin:0 0 8px;">この現場は別のグループに紐付いています。</p>' +
             '<button onclick="submitLinkJobToCompany(\'' + myCompanyId + '\', \'' + escapedName + '\')" style="width:100%;">「' + myCompanyName + '」に紐付け直す</button>';
         } else {
           el.innerHTML =
-            '<p style="margin:0 0 8px;">まだどの会社にも紐付いていません。紐付けると、会社の管理者がこの現場に招待なしで入れるようになります。</p>' +
+            '<p style="margin:0 0 8px;">まだどのグループにも紐付いていません。紐付けると、グループの管理者がこの現場に招待なしで入れるようになります。</p>' +
             '<button onclick="submitLinkJobToCompany(\'' + myCompanyId + '\', \'' + escapedName + '\')" style="width:100%;">「' + myCompanyName + '」に紐付ける</button>';
         }
       }).catch((e) => {
@@ -6187,7 +6290,7 @@
 
     function submitLinkJobToCompany(companyId, companyName) {
       if (!window.currentJobId) return;
-      if (!confirm('この現場を「' + companyName + '」に紐付けます。会社の管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
+      if (!confirm('この現場を「' + companyName + '」に紐付けます。グループの管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
       window.linkJobToCompany(window.currentJobId, companyId).then(() => {
         alert('紐付けました。');
         refreshCompanyModal();
@@ -6196,7 +6299,7 @@
 
     function submitUnlinkJobFromCompany() {
       if (!window.currentJobId) return;
-      if (!confirm('この現場の会社への紐付けを解除します。よろしいですか？')) return;
+      if (!confirm('この現場のグループへの紐付けを解除します。よろしいですか？')) return;
       window.unlinkJobFromCompany(window.currentJobId).then(() => {
         alert('紐付けを解除しました。');
         refreshCompanyModal();
@@ -6222,6 +6325,13 @@
       } else {
         prompt('このリンクをコピーして共有してください：', url);
       }
+    }
+
+    function emailCompanyJoinLink(inviteCode, companyName) {
+      const url = location.origin + location.pathname + '?companyInvite=' + encodeURIComponent(inviteCode);
+      const subject = encodeURIComponent('「' + companyName + '」への参加リンク');
+      const body = encodeURIComponent('下記のリンクをタップすると、「' + companyName + '」への参加申請ができます。\n\n' + url + '\n');
+      location.href = 'mailto:?subject=' + subject + '&body=' + body;
     }
 
     function doRegenerateInviteCode(companyId) {
@@ -6256,7 +6366,7 @@
             html += '</div>';
           });
         }
-        html += '<div style="font-weight:bold;font-size:13px;margin:12px 0 6px;">会社メンバー（' + approved.length + '人）</div>';
+        html += '<div style="font-weight:bold;font-size:13px;margin:12px 0 6px;">グループメンバー（' + approved.length + '人）</div>';
         if (approved.length === 0) {
           html += '<p style="font-size:12px;color:#888;">まだいません。</p>';
         } else {
@@ -6310,7 +6420,7 @@
       window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner));
     }
     function removeMemberUI(companyId, uid, name) {
-      if (!confirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
+      if (!confirm('「' + name + '」をグループから除名します。よろしいですか？（招待コードは変更されません）')) return;
       window.removeCompanyMember(companyId, uid).then(() => {
         loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner);
       }).catch((e) => alert(e.message));
