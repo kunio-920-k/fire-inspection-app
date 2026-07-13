@@ -420,7 +420,9 @@
       onSnapshot,
       query,
       where,
-      updateDoc
+      updateDoc,
+      disableNetwork,
+      enableNetwork
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -444,7 +446,77 @@
     // URLに ?testmode=kuniostar2026 を付けた場合のみ有効。検証が終わったら
     // このブロックとimport済みのsignInAnonymouslyの参照を丸ごと削除すること。
     const TEST_MODE = new URLSearchParams(location.search).get('testmode') === 'kuniostar2026';
+    // module scriptはスコープが独立しているため、別の<script>ブロック（beforeunload/popstate等）
+    // からも参照できるようwindowにも公開しておく
+    window.TEST_MODE = TEST_MODE;
     // ===== TESTMODE END（このコメント行までがワンセット） =====
+
+    // ===== Firestoreリアルタイム同期の再接続対策 =====
+    // 長時間のネイティブダイアログ（confirm/alert等）でJSの実行がブロックされると、
+    // Firestoreのリスニング接続（WebChannel）が切れたまま自動復帰しないことがある。
+    // 「他端末の更新が画面に反映されなくなる」不具合の主因のひとつ。
+    // 対策：(1) 各onSnapshotにエラーハンドラを付け、エラー時に接続をリセットする
+    //      (2) タブが再びアクティブになった時／オンライン復帰時にも、念のため接続をリセットする
+    window._mcReconnecting = false;
+    window.mcForceReconnect = function (reason) {
+      if (window._mcReconnecting) return;
+      window._mcReconnecting = true;
+      if (window.dlog) window.dlog('Firestore再接続を試みます / reason=' + reason);
+      disableNetwork(db)
+        .then(() => enableNetwork(db))
+        .then(() => {
+          if (window.dlog) window.dlog('Firestore再接続 完了');
+        })
+        .catch((e) => {
+          if (window.dlog) window.dlog('Firestore再接続 失敗 / ' + e.message);
+        })
+        .finally(() => {
+          window._mcReconnecting = false;
+        });
+    };
+    // onSnapshotの第3引数（エラーコールバック）として渡す共通ハンドラ
+    window.mcSnapshotErrorHandler = function (label) {
+      return function (err) {
+        if (window.dlog) window.dlog('onSnapshotエラー [' + label + '] / ' + (err && err.message));
+        window.mcForceReconnect('onSnapshotエラー:' + label);
+      };
+    };
+    // タブが再表示された時、念のため接続をリセットしておく（エラーが出ていなくても効果がある）
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') {
+        window.mcForceReconnect('タブ再表示');
+      }
+    });
+    window.addEventListener('online', function () {
+      window.mcForceReconnect('ネットワーク復帰');
+    });
+    // ===== Firestore再接続対策 END =====
+
+    // ===== window.confirm()代替の汎用モーダル =====
+    // ネイティブのconfirm()はJS実行を完全にブロックしてしまい、
+    // Claude in Chromeのような自動操作ツールから押せない・Firestore接続が切れる等の問題があるため、
+    // アプリ内の独自モーダルに置き換える。使い方は confirm() とほぼ同じで、Promise<boolean>を返す。
+    // 例: if (!(await window.showAppConfirm('よろしいですか？'))) return;
+    window.showAppConfirm = function (message) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('appConfirmModal');
+        document.getElementById('appConfirmMessage').textContent = message;
+        const okBtn = document.getElementById('appConfirmOk');
+        const cancelBtn = document.getElementById('appConfirmCancel');
+        function cleanup(result) {
+          modal.classList.remove('active');
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          resolve(result);
+        }
+        function onOk() { cleanup(true); }
+        function onCancel() { cleanup(false); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modal.classList.add('active');
+      });
+    };
+    // ===== window.confirm()代替モーダル END =====
 
     // デバッグ用：localStorageに蓄積しつつ画面上のdebugPanelにも表示する
     function dlog(msg) {
@@ -513,16 +585,16 @@
       });
     };
 
-    window.confirmLogout = function() {
-      if (confirm('ログアウトしますか？')) {
+    window.confirmLogout = async function() {
+      if (await window.showAppConfirm('ログアウトしますか？')) {
         logoutUser();
       }
     };
 
     // 現場から退場する（Googleログインは維持したまま、その現場だけ抜ける。
     // 別の現場のQR/リンクから改めて参加できるようにするため）
-    window.confirmLeaveJob = function() {
-      if (!confirm('この現場から退場します。ログイン自体は維持されるので、別の現場にまた参加できます。よろしいですか？')) return;
+    window.confirmLeaveJob = async function() {
+      if (!await window.showAppConfirm('この現場から退場します。ログイン自体は維持されるので、別の現場にまた参加できます。よろしいですか？')) return;
       localStorage.removeItem('mc_job_id');
       window.currentJobId = null;
       location.reload();
@@ -835,7 +907,7 @@
         if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
         if (window.renderMemberList) window.renderMemberList(docs);
         window.latestPresenceDocs = docs;
-      });
+      }, window.mcSnapshotErrorHandler('presence'));
     };
 
     // ---- 現場メモ管理 ----
@@ -1253,7 +1325,7 @@
         });
         memos.sort((a, b) => a.createdAt - b.createdAt);
         if (window.renderMemoList) window.renderMemoList(memos);
-      });
+      }, window.mcSnapshotErrorHandler('memo'));
     };
 
     // ---- 予約指示システム ----
@@ -1307,7 +1379,7 @@
         });
         // 管理者・サブ：予約の事前通知チェック
         if (isManager && window.checkYoyakuNotifications) window.checkYoyakuNotifications();
-      });
+      }, window.mcSnapshotErrorHandler('instruction'));
     };
 
     window.currentUser = null;
@@ -1492,7 +1564,7 @@
             } catch (e) {
               dlog('リアルタイム更新 データ解析エラー / ' + e.message);
             }
-          });
+          }, window.mcSnapshotErrorHandler('mainJob'));
 
           // 初回読み込み（サイン画像含む）
           window.loadInspectionFromCloud().then((state) => {
@@ -1816,7 +1888,7 @@
       <button onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
 
       <br>
-      <button id="singleRoomEditBtn" onclick="prepareEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:10px;font-size:13px;cursor:pointer;margin-bottom:8px;">号室を確認・編集する</button>
+      <button id="singleRoomEditBtn" onclick="prepareEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:10px;font-size:13px;cursor:pointer;margin-bottom:8px;">🔽号室を確認・編集する🔽</button>
       <div id="editArea">
         <p style="font-size:13px;color:#2a2520;margin:8px 0 4px;">各階の号室を確認・編集してください（カンマ区切り）</p>
         <div id="floorEditList"></div>
@@ -1825,6 +1897,7 @@
           <p style="font-size:12px;color:#4a4040;margin:2px 0 6px;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</p>
           <input type="text" id="hasshigoInput" class="zenkaku-ok" placeholder="例：3,5">
         </div>
+        <button type="button" onclick="closeSingleRoomEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:10px;">🔼号室編集画面をしまう🔼</button>
       </div>
       <button id="setupGenerateBtn" onclick="handleSetupGenerateClick()" class="setup-generate-btn">設定内容で立面図を作成</button>
     </div>
@@ -2037,7 +2110,7 @@
   <div id="yoyakuArea">
     <h2>予約一覧</h2>
     <div class="yoyaku-add">
-      <button onclick="openAddYoyakuModal()">＋ 予約を登録</button>
+      <button id="addYoyakuBtn" onclick="openAddYoyakuModal()">＋ 予約を登録</button>
     </div>
     <div id="notePatternManage"><a onclick="openPatternModal()">備考パターンを編集する</a></div>
     <table id="yoyakuTable">
@@ -2098,6 +2171,17 @@
     <div class="menu-item" id="roomMenuDeleteItem" style="color:#cc0000;" onclick="roomMenuSelect('delete')">この部屋を削除</div>
   </div>
 
+  <!-- 汎用の確認モーダル（window.confirm()の代替。自動操作ツールからも押せるようにするため） -->
+  <div id="appConfirmModal" class="modal">
+    <div class="modal-box" style="max-width:360px;">
+      <p id="appConfirmMessage" style="white-space:pre-wrap;font-size:14px;color:#333;margin-bottom:16px;"></p>
+      <div class="modal-buttons">
+        <button id="appConfirmCancel" style="background:#eee;">キャンセル</button>
+        <button id="appConfirmOk" style="background:#336699;color:white;">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div id="signModal" class="modal">
     <div class="modal-box">
       <h2 id="signTitle">サインをお願いします</h2>
@@ -2106,6 +2190,7 @@
       <div class="modal-buttons">
         <button id="signClear" onclick="clearSign()">クリア</button>
         <button id="signCancel" onclick="cancelSign()">キャンセル</button>
+        <button id="signNoNeeded" onclick="confirmNoSignNeeded()" style="background:#888;color:white;">サイン不要</button>
         <button id="signOk" onclick="confirmSign()">確定</button>
       </div>
     </div>
@@ -2434,7 +2519,7 @@
             '<p style="font-size:12px;color:#4a4040;margin:0 0 6px;">号室系統ごとの設備数を入力してください</p>' +
             '<div id="mb_setsubiList_' + i + '"></div>' +
           '</div>' +
-          '<button type="button" id="mb_roomEditBtn_' + i + '" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:6px;">号室を確認・編集する</button>' +
+          '<button type="button" id="mb_roomEditBtn_' + i + '" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:6px;">🔽号室を確認・編集する🔽</button>' +
           '<div id="mb_editArea_' + i + '" style="display:none;margin-top:8px;">' +
             '<p style="font-size:12px;color:#4a4040;margin:4px 0;">各階の号室を確認・編集してください（カンマ区切り）</p>' +
             '<div id="mb_floorEditList_' + i + '"></div>' +
@@ -2443,6 +2528,7 @@
               '<p style="font-size:11px;color:#4a4040;margin:2px 0 4px;">（カンマ区切り　例：3,5）　未設置の場合は空白のまま</p>' +
               '<input type="text" class="zenkaku-ok" id="mb_hasshigo_' + i + '" value="' + (prev.hasshigo || '') + '" placeholder="例：3,5" style="width:100%;box-sizing:border-box;">' +
             '</div>' +
+            '<button type="button" onclick="toggleMultiBuildingRoomEdit(' + i + ')" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:10px;">🔼号室編集画面をしまう🔼</button>' +
           '</div>' +
         '</div>';
       }
@@ -2545,11 +2631,9 @@
     // 号室リストを組み立てるが、既に編集済みの階があればその内容を保持する。
     function toggleMultiBuildingRoomEdit(i) {
       const area = document.getElementById('mb_editArea_' + i);
-      const btn = document.getElementById('mb_roomEditBtn_' + i);
       if (!area) return;
       if (area.style.display === 'block') {
         area.style.display = 'none';
-        if (btn) btn.textContent = '号室を確認・編集する';
         return;
       }
       const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
@@ -2583,7 +2667,6 @@
       }
       listEl.innerHTML = html;
       area.style.display = 'block';
-      if (btn) btn.textContent = '号室編集画面をしまう';
     }
 
     // 階数・号室数・カット設定から、号室構成（フロアごとの号室リスト）を組み立てる。
@@ -2675,8 +2758,8 @@
     }
 
     // 登録済みの棟情報から、まとめて全棟の立面図を作成する（一番下の生成ボタンから呼ばれる）
-    function generateAllRegisteredBuildings() {
-      if (!confirm(buildings.length + '棟分の立面図をまとめて作成します。よろしいですか？')) return;
+    async function generateAllRegisteredBuildings() {
+      if (!(await window.showAppConfirm(buildings.length + '棟分の立面図をまとめて作成します。よろしいですか？'))) return;
       buildings.forEach(b => {
         if (b.tableGenerated) return; // 既に生成済みなら触らない（保険）
         const floorCount = parseInt(b.setup.floorCount) || 1;
@@ -2875,11 +2958,11 @@
       deleteBuildingTab(idx);
     }
 
-    function deleteBuildingTab(idx) {
+    async function deleteBuildingTab(idx) {
       if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
       if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
       const b = buildings[idx];
-      if (!confirm((b.name || ('号棟' + (idx + 1))) + ' を削除します。この号棟の点検データも全て消えます。よろしいですか？')) return;
+      if (!await window.showAppConfirm((b.name || ('号棟' + (idx + 1))) + ' を削除します。この号棟の点検データも全て消えます。よろしいですか？')) return;
       buildings.splice(idx, 1);
       if (currentBuildingIdx >= buildings.length) currentBuildingIdx = buildings.length - 1;
       loadBuildingToView(currentBuildingIdx);
@@ -2955,7 +3038,9 @@
       const backBtn = document.getElementById('backToSetupBtn');
       if (backBtn && tableGenerated) backBtn.style.display = isAdmin ? 'block' : 'none';
       const scheduleBtn = document.getElementById('scheduleBtn');
-      if (scheduleBtn) scheduleBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      if (scheduleBtn) scheduleBtn.style.display = 'inline-block'; // 全員が確認できるように
+      const leaveJobBtn = document.getElementById('leaveJobBtn');
+      if (leaveJobBtn) leaveJobBtn.style.display = 'inline-block'; // 全員が自分で退場できるように
       const memberBtn = document.getElementById('memberBtn');
       if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const jobListBtn = document.getElementById('jobListBtn');
@@ -2963,7 +3048,9 @@
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const actionButtonsWrap = document.getElementById('actionButtonsWrap');
-      if (actionButtonsWrap) actionButtonsWrap.style.display = isAdmin ? 'block' : 'none';
+      // 「この現場から退場」「スケジュール確認」は全員が使うため、行自体は常に表示し、
+      // 個々のボタンの表示・非表示は下でそれぞれ制御する
+      if (actionButtonsWrap) actionButtonsWrap.style.display = 'block';
       const completePropertyBtn = document.getElementById('completePropertyBtn');
       if (completePropertyBtn) completePropertyBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const deleteSignsBtn = document.querySelector('button[onclick="deleteAllSigns()"]');
@@ -2980,6 +3067,9 @@
       if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const printChoiceBtn = document.getElementById('printChoiceBtn');
       if (printChoiceBtn) printChoiceBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
+      // 予約登録は管理者・サブ管理者のみ（一般作業員はスケジュールに沿って点検するだけのため）
+      const addYoyakuBtn = document.getElementById('addYoyakuBtn');
+      if (addYoyakuBtn) addYoyakuBtn.style.display = (isAdmin || isSub) ? 'inline-block' : 'none';
 
       // 管理者・サブ管理者：備考パターン編集
       const notePatternManage = document.getElementById('notePatternManage');
@@ -3078,8 +3168,8 @@
     }
 
     // 継続中一覧から現場を完全削除する（他社に移った等、もう使わない現場用）
-    function confirmDeleteContinueJob(jobId, name) {
-      const ok = confirm('「' + name + '」を完全に削除します。\nこの操作は取り消せません。点検データ・サイン画像・ログなど、すべて削除されます。\n\n本当によろしいですか？');
+    async function confirmDeleteContinueJob(jobId, name) {
+      const ok = await window.showAppConfirm('「' + name + '」を完全に削除します。\nこの操作は取り消せません。点検データ・サイン画像・ログなど、すべて削除されます。\n\n本当によろしいですか？');
       if (!ok) return;
       if (!window.deleteJobCompletely) return;
       window.deleteJobCompletely(jobId).then(() => {
@@ -3096,8 +3186,8 @@
     }
 
     // 継続中一覧から「完了」として外す（データは消えず、既存物件から選択の一覧からいつでも継続中に戻せる）
-    function confirmMarkJobComplete(jobId, name) {
-      const ok = confirm('「' + name + '」を完了にして、継続中の物件一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？');
+    async function confirmMarkJobComplete(jobId, name) {
+      const ok = await window.showAppConfirm('「' + name + '」を完了にして、継続中の物件一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？');
       if (!ok) return;
       if (!window.hideJob) return;
       window.hideJob(jobId).then(() => {
@@ -3290,8 +3380,8 @@
     }
 
     // 既存データをもとに新規登録開始
-    function startFromExisting(srcJobId, srcName) {
-      if (!confirm('「' + srcName + '」のデータをもとに新規登録を開始します。\n設備情報・住戸構成・備考パターンを引き継ぎ、全室を「未」にリセットします。\nよろしいですか？')) return;
+    async function startFromExisting(srcJobId, srcName) {
+      if (!await window.showAppConfirm('「' + srcName + '」のデータをもとに新規登録を開始します。\n設備情報・住戸構成・備考パターンを引き継ぎ、全室を「未」にリセットします。\nよろしいですか？')) return;
       closeExistingModal();
       if (!window.loadJobData) return;
       window.loadJobData(srcJobId).then((state) => {
@@ -3335,9 +3425,9 @@
       });
     }
 
-    function confirmStartNewJob() {
+    async function confirmStartNewJob() {
       if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
-      const ok = confirm('新しい現場を始めますか？\n今のデータはクラウドに保存済みなので消えませんが、画面は新しい現場用にまっさらな状態になります。');
+      const ok = await window.showAppConfirm('新しい現場を始めますか？\n今のデータはクラウドに保存済みなので消えませんが、画面は新しい現場用にまっさらな状態になります。');
       if (!ok) return;
       window.currentJobId = (window.crypto && window.crypto.randomUUID)
         ? window.crypto.randomUUID()
@@ -3461,7 +3551,7 @@
     // 備考の最終的な値を確定する。「その他」が選択されている場合はテキスト入力を使い、
     // 必要なら「選択項目に加えますか？」と確認して備考パターンに追加する。
     // 入力エラー等で確定できない場合は null を返す。
-    function resolveNoteValue(selectId, inputId) {
+    async function resolveNoteValue(selectId, inputId) {
       const sel = document.getElementById(selectId);
       const input = document.getElementById(inputId);
       if (sel.value === NOTE_OTHER_VALUE) {
@@ -3471,7 +3561,7 @@
           return null;
         }
         if (!notePatterns.includes(text)) {
-          const add = confirm('「' + text + '」を選択項目に加えますか？');
+          const add = await window.showAppConfirm('「' + text + '」を選択項目に加えますか？');
           if (add) notePatterns.push(text);
         }
         return text;
@@ -3681,10 +3771,10 @@
       renderCalendarGrid();
     }
 
-    function confirmMultiDateCalendar() {
+    async function confirmMultiDateCalendar() {
       const targetCount = parseInt(document.getElementById('propDayCount').value) || 1;
       if (calTempSelected.size !== targetCount) {
-        if (!confirm('選択した日数（' + calTempSelected.size + '日）が、指定した日数（' + targetCount + '日）と一致していません。このまま進めますか？')) return;
+        if (!await window.showAppConfirm('選択した日数（' + calTempSelected.size + '日）が、指定した日数（' + targetCount + '日）と一致していません。このまま進めますか？')) return;
       }
       window.propMultiDates = Array.from(calTempSelected).sort();
       renderPropMultiDatesSummary();
@@ -4044,6 +4134,12 @@
       }
     }
 
+    // 「🔼号室編集画面をしまう🔼」ボタン用：詳細設定表を閉じる
+    function closeSingleRoomEdit() {
+      const editArea = document.getElementById('editArea');
+      if (editArea) editArea.style.display = 'none';
+    }
+
     // 戻るボタン処理：表作成済みなら設定画面へ戻す
     function backToSetupConfirmed() {
       if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
@@ -4060,18 +4156,18 @@
     }
 
     // ホーム画面（新規登録／既存物件から新規登録／継続中の物件を選択）に戻る
-    function confirmGoHomeScreen() {
-      if (!confirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
+    async function confirmGoHomeScreen() {
+      if (!await window.showAppConfirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
       document.getElementById('setup').style.display = 'none';
       document.getElementById('startScreen').style.display = 'block';
       refreshStartScreenCompanyStatus();
     }
 
     // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
-    function confirmCompleteProperty() {
+    async function confirmCompleteProperty() {
       if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       if (!window.currentJobId) return;
-      if (!confirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
+      if (!await window.showAppConfirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
       if (!window.hideJob) return;
       window.hideJob(window.currentJobId).then(() => {
         alert('この物件を完了にしました。');
@@ -4086,7 +4182,7 @@
       });
     }
 
-    function generateTable() {
+    async function generateTable() {
       // 既存データがある状態で再生成する場合、削除される号室のデータ消失チェック
       if (tableGenerated) {
         const newRoomSet = new Set();
@@ -4110,7 +4206,7 @@
         });
 
         if (lostRooms.length > 0) {
-          const ok = confirm(
+          const ok = await window.showAppConfirm(
             lostRooms.join('・') + '号室は状態入力（入室済・不在・不良等）が記録されています。\n' +
             '今回の変更でこれらの記録が削除されます。よろしいですか？'
           );
@@ -4386,7 +4482,7 @@
       activeRoomCell = null;
     }
 
-    function roomMenuSelect(action) {
+    async function roomMenuSelect(action) {
       if (!activeRoomCell) return;
       const cell = activeRoomCell;
       closeRoomMenu();
@@ -4401,7 +4497,7 @@
         const msg = hasData
           ? room + '号室は状態入力（入室済・不在・不良等）が記録されています。本当に削除してよろしいですか？'
           : room + '号室を削除しますか？';
-        if (!confirm(msg)) return;
+        if (!await window.showAppConfirm(msg)) return;
 
         const floor = Math.floor(parseInt(room) / 100);
 
@@ -4461,7 +4557,7 @@
       return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
     }
 
-    function menuSelect(action) {
+    async function menuSelect(action) {
       if (!activeCell) return;
       const cell = activeCell;
       closeMenu();
@@ -4483,7 +4579,7 @@
             alert('サイン済みの部屋を「不在」に変更するには、管理者またはサブ管理者に依頼してください。');
             return;
           }
-          if (!confirm('この部屋はサイン済みです。本当に「不在」に変更しますか？（サイン記録は削除されます）')) return;
+          if (!await window.showAppConfirm('この部屋はサイン済みです。本当に「不在」に変更しますか？（サイン記録は削除されます）')) return;
         }
         cell.dataset.state = 'fuzai';
         cell.classList.remove('nyushitsu', 'kushitsu', 'yoyaku');
@@ -4514,7 +4610,7 @@
             alert('サイン済みの部屋を「未」に戻すには、管理者またはサブ管理者に依頼してください。');
             return;
           }
-          if (!confirm('この部屋はサイン済みです。本当に「未」に戻しますか？（サイン記録は削除されます）')) return;
+          if (!await window.showAppConfirm('この部屋はサイン済みです。本当に「未」に戻しますか？（サイン記録は削除されます）')) return;
         }
         cell.dataset.state = 'mi';
         cell.dataset.times = '[]';
@@ -4686,7 +4782,9 @@
         html += '点検中';
       } else if (state === 'nyushitsu') {
         const sign = cell.dataset.sign || cell.getAttribute('data-sign');
-        if (sign) {
+        if (sign === 'NO_SIGN_NEEDED') {
+          html += '<span style="color:#888;">サイン不要</span>';
+        } else if (sign) {
           html += '<img class="sign-img" src="' + sign + '">';
         } else {
           html += '入室済';
@@ -4770,6 +4868,29 @@
       // サイン画像をクラウドに個別保存
       if (window.saveSignToCloud) window.saveSignToCloud(buildings[currentBuildingIdx].id, cell.dataset.room, signData);
       if (window.addLog) window.addLog('入室済', { room: cell.dataset.room });
+      const signedRoom = cell.dataset.room;
+      document.getElementById('signModal').classList.remove('active');
+      signCell = null;
+      signRoom = null;
+      syncToCloud();
+      if (window.updatePresence) window.updatePresence(signedRoom);
+    }
+
+    // 「サイン不要」ボタン：物件によっては手書きサインを求めない現場があるため、
+    // サインなしで「入室済（サイン不要）」として記録する。
+    function confirmNoSignNeeded() {
+      const NO_SIGN = 'NO_SIGN_NEEDED';
+      const cell = getLiveCell(signRoom) || signCell;
+      cell.dataset.state = 'nyushitsu';
+      cell.dataset.sign = NO_SIGN;
+      cell.classList.add('nyushitsu');
+      cell.classList.remove('fuzai', 'kushitsu', 'yoyaku', 'tenkenchuu');
+      updateCellDisplay(cell);
+      if (cell.dataset.yoyakuTime) {
+        updateYoyakuRowState(cell.dataset.room, true);
+      }
+      if (window.saveSignToCloud) window.saveSignToCloud(buildings[currentBuildingIdx].id, cell.dataset.room, NO_SIGN);
+      if (window.addLog) window.addLog('入室済（サイン不要）', { room: cell.dataset.room });
       const signedRoom = cell.dataset.room;
       document.getElementById('signModal').classList.remove('active');
       signCell = null;
@@ -5822,17 +5943,17 @@
     }
 
     // 現場を切り替える
-    function switchJob(jobId) {
+    async function switchJob(jobId) {
       if (!jobId || jobId === window.currentJobId) return;
-      const ok = confirm('現場を切り替えます。\n現在の現場はクラウドに保存済みです。\nよろしいですか？');
+      const ok = await window.showAppConfirm('現場を切り替えます。\n現在の現場はクラウドに保存済みです。\nよろしいですか？');
       if (!ok) return;
       localStorage.setItem('mc_job_id', jobId);
       location.reload();
     }
 
     // 前回の現場をもとに新規作成（設備情報を引き継ぎ、状態をリセット）
-    function cloneJob(srcJobId, srcName) {
-      const ok = confirm('「' + srcName + '」をもとに新しい現場を作成します。\n設備情報・備考パターン・住戸構成を引き継ぎ、全室を「未」にリセットします。\nよろしいですか？');
+    async function cloneJob(srcJobId, srcName) {
+      const ok = await window.showAppConfirm('「' + srcName + '」をもとに新しい現場を作成します。\n設備情報・備考パターン・住戸構成を引き継ぎ、全室を「未」にリセットします。\nよろしいですか？');
       if (!ok) return;
       if (!window.loadJobData) return;
       window.loadJobData(srcJobId).then((state) => {
@@ -6018,11 +6139,11 @@
         '</div>';
     }
 
-    function submitRegisterCompany() {
+    async function submitRegisterCompany() {
       const nameInput = document.getElementById('newCompanyNameInput');
       const name = (nameInput.value || '').trim();
       if (!name) { alert('会社名を入力してください'); return; }
-      if (!confirm('「' + name + '」として会社を登録します。よろしいですか？')) return;
+      if (!await window.showAppConfirm('「' + name + '」として会社を登録します。よろしいですか？')) return;
       window.registerCompany(name).then(() => {
         alert('会社を登録しました。あなたはこの会社の【管理者】です。');
         refreshCompanyModal();
@@ -6039,8 +6160,8 @@
       }).catch((e) => alert(e.message));
     }
 
-    function submitLeaveCompany(companyId, companyName) {
-      if (!confirm('「' + companyName + '」から抜けます。\n再度参加するには、招待コードでの申請と承認が必要になります。\n\nよろしいですか？')) return;
+    async function submitLeaveCompany(companyId, companyName) {
+      if (!await window.showAppConfirm('「' + companyName + '」から抜けます。\n再度参加するには、招待コードでの申請と承認が必要になります。\n\nよろしいですか？')) return;
       window.leaveCompanySelf(companyId).then(() => {
         alert('「' + companyName + '」から抜けました。');
         refreshCompanyModal();
@@ -6131,18 +6252,18 @@
       });
     }
 
-    function submitLinkJobToCompany(companyId, companyName) {
+    async function submitLinkJobToCompany(companyId, companyName) {
       if (!window.currentJobId) return;
-      if (!confirm('この現場を「' + companyName + '」に紐付けます。会社の管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
+      if (!await window.showAppConfirm('この現場を「' + companyName + '」に紐付けます。会社の管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
       window.linkJobToCompany(window.currentJobId, companyId).then(() => {
         alert('紐付けました。');
         refreshCompanyModal();
       }).catch((e) => alert('失敗しました：' + e.message));
     }
 
-    function submitUnlinkJobFromCompany() {
+    async function submitUnlinkJobFromCompany() {
       if (!window.currentJobId) return;
-      if (!confirm('この現場の会社への紐付けを解除します。よろしいですか？')) return;
+      if (!await window.showAppConfirm('この現場の会社への紐付けを解除します。よろしいですか？')) return;
       window.unlinkJobFromCompany(window.currentJobId).then(() => {
         alert('紐付けを解除しました。');
         refreshCompanyModal();
@@ -6170,8 +6291,8 @@
       }
     }
 
-    function doRegenerateInviteCode(companyId) {
-      if (!confirm('招待コードを再発行します。古いコードは使えなくなります。よろしいですか？')) return;
+    async function doRegenerateInviteCode(companyId) {
+      if (!await window.showAppConfirm('招待コードを再発行します。古いコードは使えなくなります。よろしいですか？')) return;
       window.regenerateInviteCode(companyId).then(() => {
         alert('招待コードを再発行しました。');
         refreshCompanyModal();
@@ -6237,8 +6358,8 @@
       });
     }
 
-    function doTransferOwnership(companyId, newOwnerUid, newOwnerName) {
-      if (!confirm('登録者（オーナー）権限を「' + newOwnerName + '」に譲渡します。以後、参加申請の承認・却下はその人が行うことになります。あなたは管理者のまま残ります。よろしいですか？')) return;
+    async function doTransferOwnership(companyId, newOwnerUid, newOwnerName) {
+      if (!await window.showAppConfirm('登録者（オーナー）権限を「' + newOwnerName + '」に譲渡します。以後、参加申請の承認・却下はその人が行うことになります。あなたは管理者のまま残ります。よろしいですか？')) return;
       window.transferCompanyOwnership(companyId, newOwnerUid).then(() => {
         alert('譲渡しました。');
         refreshCompanyModal();
@@ -6248,15 +6369,15 @@
     function approveMemberUI(companyId, uid, asAdmin) {
       window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
     }
-    function rejectMemberUI(companyId, uid) {
-      if (!confirm('この参加申請を却下します。よろしいですか？')) return;
+    async function rejectMemberUI(companyId, uid) {
+      if (!await window.showAppConfirm('この参加申請を却下します。よろしいですか？')) return;
       window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
     }
     function toggleCompanyAdminUI(companyId, uid, makeAdmin) {
       window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner));
     }
-    function removeMemberUI(companyId, uid, name) {
-      if (!confirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
+    async function removeMemberUI(companyId, uid, name) {
+      if (!await window.showAppConfirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
       window.removeCompanyMember(companyId, uid).then(() => {
         loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner);
       }).catch((e) => alert(e.message));
@@ -6314,10 +6435,10 @@
     }
 
     // 本日の作業終了（管理者のみ）
-    function endWorkSession() {
+    async function endWorkSession() {
       if (!window.isJobOwner) { alert('この操作は管理者のみ行えます。'); return; }
       if (window.propDayMode !== 'multi') { alert('単日の現場では「本日の作業を終了する」は使用できません。作業が終わったら「この物件を完了にする」をお使いください。'); return; }
-      const ok = confirm(
+      const ok = await window.showAppConfirm(
         '本日の作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
         '・データはクラウドに保存されたまま残ります\n\n' +
@@ -6342,9 +6463,9 @@
     }
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
-    function deleteAllSigns() {
+    async function deleteAllSigns() {
       if (!window.deleteAllSignsFromCloud) { alert('まだログインが完了していません。'); return; }
-      const ok = confirm('全部屋のサイン画像をすべての場所から削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nこの操作は取り消せません。よろしいですか？');
+      const ok = await window.showAppConfirm('全部屋のサイン画像をすべての場所から削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nこの操作は取り消せません。よろしいですか？');
       if (!ok) return;
       // 画面上のサインも同時にクリア
       document.querySelectorAll('td.cell').forEach(cell => {
@@ -6463,7 +6584,9 @@
           if (d.state === 'kushitsu') cls += ' kushitsu';
           if (d.state === 'yoyaku' && d.yoyakuTime) cls += ' yoyaku';
           let inner = '';
-          if (d.state === 'nyushitsu' && sign) {
+          if (d.state === 'nyushitsu' && sign === 'NO_SIGN_NEEDED') {
+            inner = '<span style="font-size:9px;color:#888;">サイン不要</span>';
+          } else if (d.state === 'nyushitsu' && sign) {
             inner = '<img class="sign-img" src="' + sign + '">';
           } else if (d.state === 'kushitsu') {
             inner = '空室';
@@ -6620,13 +6743,13 @@ ${bodyHtml}
 
     // 戻るボタン対策：履歴を一段追加
     history.pushState(null, null, location.href);
-    window.addEventListener('popstate', function () {
+    window.addEventListener('popstate', async function () {
       if (window.dlog) window.dlog('popstateイベント発火 / tableGenerated=' + (typeof tableGenerated !== 'undefined' ? tableGenerated : 'undefined'));
       if (tableGenerated) {
         backToSetupConfirmed();
         history.pushState(null, null, location.href);
       } else if (document.getElementById('tableArea').innerHTML !== '') {
-        const yes = confirm('入力内容が消える可能性があります。本当に戻りますか？');
+        const yes = await window.showAppConfirm('入力内容が消える可能性があります。本当に戻りますか？');
         if (!yes) {
           history.pushState(null, null, location.href);
         }
@@ -6636,6 +6759,9 @@ ${bodyHtml}
     });
 
     window.addEventListener('beforeunload', function (e) {
+      // TESTMODE中は自動操作ツール（Claude in Chrome等）がネイティブダイアログを
+      // 操作できず先に進めなくなるため、離脱確認をスキップする。
+      if (window.TEST_MODE) return;
       if (tableGenerated) {
         e.preventDefault();
         e.returnValue = '';
