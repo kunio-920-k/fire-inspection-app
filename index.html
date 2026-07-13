@@ -1847,7 +1847,7 @@
             <input type="text" inputmode="numeric" id="floorCount" class="count-input zenkaku-ok" value="3">
           </div>
           <div style="flex:1;">
-            <div class="mc-label-new">号室数／階</div>
+            <div class="mc-label-new">室数／階</div>
             <input type="text" inputmode="numeric" id="roomCount" class="count-input zenkaku-ok" value="6">
           </div>
         </div>
@@ -2509,7 +2509,7 @@
           '<input type="text" id="mb_name_' + i + '" value="' + defaultName + '" placeholder="例：A棟" style="width:100%;box-sizing:border-box;margin-bottom:8px;">' +
           '<div style="display:flex;gap:10px;margin-bottom:8px;">' +
             '<div style="flex:1;"><div class="mc-label-new">階数</div><input type="text" inputmode="numeric" id="mb_floor_' + i + '" class="count-input zenkaku-ok" value="' + (prev.floor !== undefined ? prev.floor : '3') + '"></div>' +
-            '<div style="flex:1;"><div class="mc-label-new">号室数／階</div><input type="text" inputmode="numeric" id="mb_room_' + i + '" class="count-input zenkaku-ok" value="' + (prev.room !== undefined ? prev.room : '6') + '"></div>' +
+            '<div style="flex:1;"><div class="mc-label-new">室数／階</div><input type="text" inputmode="numeric" id="mb_room_' + i + '" class="count-input zenkaku-ok" value="' + (prev.room !== undefined ? prev.room : '6') + '"></div>' +
           '</div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4room_' + i + '" ' + (prev.cut4room ? 'checked' : '') + '> 4号室をカットする（104・204等）</label></div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4floor_' + i + '" ' + (prev.cut4floor ? 'checked' : '') + '> 4階をカットする</label></div>' +
@@ -2593,7 +2593,7 @@
         };
       });
       list.innerHTML = '';
-      for (let r = 1; r <= rooms; r++) {
+      for (let r = 1; r <= (cut4Room ? rooms + 1 : rooms); r++) {
         if (cut4Room && r === 4) continue;
         const existing = prevByR[r] || { tei: 0, sa: 0, ke: 0, gas: 0, otherLabel: '', otherCount: 0 };
         const div = document.createElement('div');
@@ -2618,7 +2618,7 @@
       for (let f = floorCount; f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const rooms = [];
-        for (let r = 1; r <= roomCount; r++) {
+        for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
           if (cut4Room && r === 4) continue;
           rooms.push(String(f * 100 + r));
         }
@@ -2631,9 +2631,11 @@
     // 号室リストを組み立てるが、既に編集済みの階があればその内容を保持する。
     function toggleMultiBuildingRoomEdit(i) {
       const area = document.getElementById('mb_editArea_' + i);
+      const btn = document.getElementById('mb_roomEditBtn_' + i);
       if (!area) return;
       if (area.style.display === 'block') {
         area.style.display = 'none';
+        if (btn) btn.textContent = '🔽号室を確認・編集する🔽';
         return;
       }
       const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
@@ -2657,7 +2659,7 @@
           roomNumbers = prevByFloor[f];
         } else {
           const arr = [];
-          for (let r = 1; r <= roomCount; r++) {
+          for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
             if (cut4Room && r === 4) continue;
             arr.push(f * 100 + r);
           }
@@ -2667,6 +2669,7 @@
       }
       listEl.innerHTML = html;
       area.style.display = 'block';
+      if (btn) btn.textContent = '号室を確認・編集する';
     }
 
     // 階数・号室数・カット設定から、号室構成（フロアごとの号室リスト）を組み立てる。
@@ -2681,7 +2684,7 @@
           rooms = normalizeListInput(customInput.value).split(',').map(r => r.trim()).filter(r => r !== '');
         } else {
           rooms = [];
-          for (let r = 1; r <= roomCount; r++) {
+          for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
             if (cut4Room && r === 4) continue;
             rooms.push(String(f * 100 + r));
           }
@@ -2778,7 +2781,7 @@
         if (b.setup.useSetsubiInfo && blockIdx !== null) {
           const roomCountForSetsubi = parseInt(b.setup.roomCount) || 1;
           const defaults = {};
-          for (let r = 1; r <= roomCountForSetsubi; r++) {
+          for (let r = 1; r <= (cut4Room ? roomCountForSetsubi + 1 : roomCountForSetsubi); r++) {
             if (cut4Room && r === 4) continue;
             const teiEl = document.getElementById('mb_tei_' + blockIdx + '_' + r);
             const saEl = document.getElementById('mb_sa_' + blockIdx + '_' + r);
@@ -3523,7 +3526,8 @@
       scheduleData.forEach(day => {
         const opt = document.createElement('option');
         opt.value = day.date;
-        opt.textContent = formatDateJP(day.date) + (day.reserveOnly ? '（予備日）' : '');
+        const allReserve = (day.sessions && day.sessions.length > 0) && day.sessions.every(s => s.reserveOnly);
+        opt.textContent = formatDateJP(day.date) + (allReserve ? '（予備日）' : '');
         selectEl.appendChild(opt);
       });
       selectEl.value = selectedValue || '';
@@ -3710,7 +3714,7 @@
         : (document.getElementById('propDate').value ? [document.getElementById('propDate').value] : []);
       if (!dates.length) return;
       dates.forEach(date => {
-        scheduleData.push({ date: date, reserveOnly: false, buildingIds: 'ALL', sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' }] });
+        scheduleData.push({ date: date, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
       });
       if (typeof renderScheduleDayList === 'function') renderScheduleDayList();
       syncToCloud();
@@ -3814,7 +3818,7 @@
       list.innerHTML = '';
 
       let suffixes = [];
-      for (let r = 1; r <= rooms; r++) {
+      for (let r = 1; r <= (cut4Room ? rooms + 1 : rooms); r++) {
         if (cut4Room && r === 4) continue;
         suffixes.push(r);
       }
@@ -3952,7 +3956,7 @@
         notePatterns = state.notePatterns;
       }
       if (state.schedule && Array.isArray(state.schedule)) {
-        scheduleData = state.schedule;
+        scheduleData = migrateScheduleDataReserveOnly(state.schedule);
       }
 
       const b = buildings[currentBuildingIdx];
@@ -4115,7 +4119,7 @@
           roomNumbers = pendingFloorValues[f];
         } else {
           roomNumbers = [];
-          for (let r = 1; r <= rooms; r++) {
+          for (let r = 1; r <= (cut4Room ? rooms + 1 : rooms); r++) {
             if (cut4Room && r === 4) continue;
             roomNumbers.push(f * 100 + r);
           }
@@ -4127,6 +4131,8 @@
         floorEditList.appendChild(div);
       }
       document.getElementById('editArea').style.display = 'block';
+      const singleBtn = document.getElementById('singleRoomEditBtn');
+      if (singleBtn) singleBtn.textContent = '号室を確認・編集する';
 
       if (document.getElementById('useSetsubiInfo').checked &&
           document.getElementById('setsubiSetupList').children.length === 0) {
@@ -4138,6 +4144,8 @@
     function closeSingleRoomEdit() {
       const editArea = document.getElementById('editArea');
       if (editArea) editArea.style.display = 'none';
+      const singleBtn = document.getElementById('singleRoomEditBtn');
+      if (singleBtn) singleBtn.textContent = '🔽号室を確認・編集する🔽';
     }
 
     // 戻るボタン処理：表作成済みなら設定画面へ戻す
@@ -5423,6 +5431,32 @@
     // scheduleData = [ { date:'2026-06-30', sessions:[ { label:'午前', floorFrom:20, floorTo:16 }, ... ] }, ... ]
     let scheduleData = [];
 
+    // 旧仕様（予備日フラグが日付単位だった頃）のデータを、セッション単位の新仕様に変換する。
+    // 日付単位でreserveOnly:trueだった場合、その日の全セッションにreserveOnly:trueを引き継ぎ、
+    // セッションが1つも無ければ予約のみの仮セッションを1つ作る。
+    function migrateScheduleDataReserveOnly(data) {
+      return (data || []).map(day => {
+        if (day.reserveOnly) {
+          const inheritedBuildingIds = day.buildingIds;
+          if (!day.sessions || day.sessions.length === 0) {
+            day.sessions = [{ label: '予約のみ', timeFrom: '', timeTo: '', floorFrom: 1, floorTo: 1, buildingIds: inheritedBuildingIds || 'ALL', reserveOnly: true }];
+          } else {
+            day.sessions.forEach(s => {
+              s.reserveOnly = true;
+              if (!s.buildingIds || s.buildingIds === 'ALL') s.buildingIds = inheritedBuildingIds || 'ALL';
+            });
+          }
+          delete day.reserveOnly;
+          delete day.buildingIds;
+        } else {
+          (day.sessions || []).forEach(s => {
+            if (s.reserveOnly === undefined) s.reserveOnly = false;
+          });
+        }
+        return day;
+      });
+    }
+
     function openScheduleModal() {
       renderScheduleReadOnly();
       document.getElementById('scheduleModal').classList.add('active');
@@ -5439,19 +5473,14 @@
         return;
       }
       container.innerHTML = scheduleData.map(day => {
-        const dayBuildingLabel = buildingLabelsForIds(day.buildingIds);
-        if (day.reserveOnly) {
-          return `
-          <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
-            <div style="font-size:14px;font-weight:bold;">${formatDateJP(day.date)}</div>
-            <div style="font-size:13px;color:#555;margin-top:4px;">予備日（予約部屋のみ）${dayBuildingLabel ? '　【' + dayBuildingLabel + '】' : ''}</div>
-          </div>`;
-        }
         const sessions = (day.sessions || []).map(s => {
           const bLabel = buildingLabelsForIds(s.buildingIds);
+          const detail = s.reserveOnly
+            ? `${s.timeFrom || ''}〜${s.timeTo || ''}　予備日（予約のみ）`
+            : `${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階`;
           return `
             <div style="font-size:13px;color:#333;padding-left:12px;margin-top:4px;">
-              ${s.label ? s.label + '　' : ''}${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階${bLabel ? '　【' + bLabel + '】' : ''}
+              ${s.label ? s.label + '　' : ''}${detail}${bLabel ? '　【' + bLabel + '】' : ''}
             </div>`;
         }).join('');
         return `
@@ -5485,7 +5514,17 @@
         return html;
       };
       container.innerHTML = scheduleData.map((day, di) => {
-        const sessions = (day.sessions || []).map((s, si) => `
+        const sessions = (day.sessions || []).map((s, si) => {
+          const reserveChecked = s.reserveOnly ? 'checked' : '';
+          const floorFieldsHtml = s.reserveOnly ? '' : `
+            <span style="font-size:13px;color:#555;">フロア</span>
+            <input type="number" class="ss-floorFrom" value="${s.floorFrom}" min="1"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
+            <span style="font-size:13px;color:#555;">階〜</span>
+            <input type="number" class="ss-floorTo" value="${s.floorTo}" min="1"
+              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
+            <span style="font-size:13px;color:#555;">階</span>`;
+          return `
           <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
             <input type="text" class="ss-label" value="${s.label || ''}" placeholder="午前・午後など"
               style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
@@ -5494,30 +5533,23 @@
             <span style="font-size:13px;color:#555;">〜</span>
             <input type="time" class="ss-timeTo" value="${s.timeTo || '12:00'}"
               style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
-            <span style="font-size:13px;color:#555;">フロア</span>
-            <input type="number" class="ss-floorFrom" value="${s.floorFrom}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
-            <span style="font-size:13px;color:#555;">階〜</span>
-            <input type="number" class="ss-floorTo" value="${s.floorTo}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
-            <span style="font-size:13px;color:#555;">階</span>
+            ${floorFieldsHtml}
+            <label style="font-size:12px;display:flex;align-items:center;gap:3px;color:#555;">
+              <input type="checkbox" ${reserveChecked} onchange="updateSessionReserve(${di},${si},this.checked)">予備日（予約のみ）
+            </label>
             <button onclick="removeSession(${di},${si})" style="font-size:12px;padding:2px 7px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">✕</button>
-          </div>${buildingPills(s.buildingIds, 'toggleSessionBuilding(' + di + ',' + si + ',')}`).join('');
-        const isReserveOnly = day.reserveOnly ? 'checked' : '';
+          </div>${buildingPills(s.buildingIds, 'toggleSessionBuilding(' + di + ',' + si + ',')}`;
+        }).join('');
         return `
           <div class="schedule-day-row" data-di="${di}" style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
               <input type="date" value="${day.date}"
                 style="font-size:14px;padding:4px 8px;border:1px solid #ccc;border-radius:4px;"
                 onchange="updateDayDate(${di},this.value)">
-              <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                <input type="checkbox" ${isReserveOnly} onchange="updateDayReserve(${di},this.checked)">予備日（予約部屋のみ）
-              </label>
               <button onclick="removeScheduleDay(${di})" style="margin-left:auto;font-size:12px;padding:2px 8px;background:#fff0f0;color:#c00;border:1px solid #fcc;border-radius:4px;">削除</button>
             </div>
-            ${day.reserveOnly ? buildingPills(day.buildingIds, 'toggleDayBuilding(' + di + ',') : ''}
-            <div id="sessions-${di}">${day.reserveOnly ? '' : sessions}</div>
-            ${day.reserveOnly ? '' : `<button onclick="addSession(${di})" style="font-size:12px;padding:4px 10px;background:#f5f5f5;border:1px dashed #999;border-radius:4px;margin-left:12px;">＋ セッションを追加</button>`}
+            <div id="sessions-${di}">${sessions || '<div style="font-size:13px;color:#aaa;padding-left:12px;">セッションがありません</div>'}</div>
+            <button onclick="addSession(${di})" style="font-size:12px;padding:4px 10px;background:#f5f5f5;border:1px dashed #999;border-radius:4px;margin-left:12px;">＋ セッションを追加</button>
           </div>`;
       }).join('');
     }
@@ -5557,7 +5589,7 @@
         const dd = String(today.getDate()).padStart(2,'0');
         defaultDate = yyyy+'-'+mm+'-'+dd;
       }
-      scheduleData.push({ date: defaultDate, reserveOnly: false, buildingIds: 'ALL', sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' }] });
+      scheduleData.push({ date: defaultDate, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
@@ -5566,15 +5598,15 @@
       renderScheduleDayList();
     }
     function updateDayDate(di, val) { scheduleData[di].date = val; }
-    function updateDayReserve(di, checked) {
+    function updateSessionReserve(di, si, checked) {
       flushScheduleDOM();
-      scheduleData[di].reserveOnly = checked;
+      scheduleData[di].sessions[si].reserveOnly = checked;
       renderScheduleDayList();
     }
     function addSession(di) {
       flushScheduleDOM();
       scheduleData[di].sessions = scheduleData[di].sessions || [];
-      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1, buildingIds: 'ALL' });
+      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false });
       renderScheduleDayList();
     }
     function removeSession(di, si) {
@@ -5603,20 +5635,6 @@
       }).filter(Boolean);
       return names.length ? names.join('・') : '（対象号棟なし）';
     }
-    function toggleDayBuilding(di, buildingId) {
-      flushScheduleDOM();
-      const day = scheduleData[di];
-      let current = (day.buildingIds && day.buildingIds !== 'ALL') ? day.buildingIds.slice() : buildings.map(b => b.id);
-      const idx = current.indexOf(buildingId);
-      if (idx >= 0) current.splice(idx, 1); else current.push(buildingId);
-      day.buildingIds = current;
-      renderScheduleDayList();
-    }
-    function setDayBuildingsAll(di) {
-      flushScheduleDOM();
-      scheduleData[di].buildingIds = 'ALL';
-      renderScheduleDayList();
-    }
     function toggleSessionBuilding(di, si, buildingId) {
       flushScheduleDOM();
       const s = scheduleData[di].sessions[si];
@@ -5641,22 +5659,19 @@
       if (!todaySchedule) return null;
       const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
 
-      if (todaySchedule.reserveOnly) {
-        if (!isBuildingIncluded(todaySchedule.buildingIds, curBuildingId)) return { none: true };
-        return { reserveOnly: true };
-      }
       const sessionsForBuilding = (todaySchedule.sessions || []).filter(s => isBuildingIncluded(s.buildingIds, curBuildingId));
       if (sessionsForBuilding.length === 0) {
         // 今日は他の号棟だけが対象で、この号棟は今日の予定に入っていない
         return { none: true };
       }
+      const toRange = (s) => s.reserveOnly ? { reserveOnly: true } : { floorFrom: s.floorFrom, floorTo: s.floorTo };
       const nowHHMM = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
       const active = sessionsForBuilding.find(s => s.timeFrom && s.timeTo && nowHHMM >= s.timeFrom && nowHHMM < s.timeTo);
-      if (active) return { floorFrom: active.floorFrom, floorTo: active.floorTo };
+      if (active) return toRange(active);
       const upcoming = sessionsForBuilding.filter(s => s.timeFrom && nowHHMM < s.timeFrom).sort((a,b) => a.timeFrom.localeCompare(b.timeFrom))[0];
-      if (upcoming) return { floorFrom: upcoming.floorFrom, floorTo: upcoming.floorTo };
+      if (upcoming) return toRange(upcoming);
       const last = sessionsForBuilding.filter(s => s.timeTo).sort((a,b) => b.timeTo.localeCompare(a.timeTo))[0];
-      if (last) return { floorFrom: last.floorFrom, floorTo: last.floorTo };
+      if (last) return toRange(last);
       return null;
     }
 
