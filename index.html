@@ -1714,6 +1714,17 @@
         </div>
       </div>
       <p id="noExistingNote" style="display:none;text-align:center;font-size:12px;color:#2a2520;margin-top:4px;">（過去データがありません）</p>
+      <!-- 物件データをアップロード -->
+      <div onclick="document.getElementById('uploadPropertyFileInput').click()" style="background:linear-gradient(150deg,#4a2f6e,#2e1c45);border-radius:8px;padding:16px 20px;margin-bottom:10px;position:relative;overflow:hidden;cursor:pointer;border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);">
+        <div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#a06cd5;border-radius:8px 0 0 8px;"></div>
+        <div style="position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(160,108,213,0.2);color:#a06cd5;">DATA</div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="font-size:24px;width:40px;text-align:center;flex-shrink:0;">📤</div>
+          <div><div style="font-size:14px;font-weight:700;color:white;margin-bottom:3px;">物件データをアップロード</div><div style="font-size:11px;color:rgba(255,255,255,0.45);">他端末・他社から受け取ったファイルを新規物件として読み込む</div></div>
+          <div style="color:rgba(255,255,255,0.3);font-size:20px;margin-left:auto;">›</div>
+        </div>
+      </div>
+      <input type="file" id="uploadPropertyFileInput" accept="application/json,.json" style="display:none;" onchange="handleUploadPropertyFile(this)">
     </div>
   </div>
 
@@ -1925,6 +1936,7 @@
           <button id="memberBtn" onclick="openMemberModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">👥</span> メンバー管理</button>
           <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
           <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
+          <button id="downloadDataBtn" onclick="downloadPropertyData()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">💾</span> 物件データをダウンロード</button>
           <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:#336699;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🚪</span> この現場から退場</button>
         </div>
       </div>
@@ -3860,6 +3872,79 @@
     // 状態が変わるたびにこれを呼ぶ。ログインしていなければ何もしない。
     function syncToCloud() {
       if (window.saveInspectionToCloud) window.saveInspectionToCloud(gatherInspectionState());
+    }
+
+    // ---- 物件データのダウンロード／アップロード ----
+    // サイン画像・不良写真は容量の都合上もともとクラウド同期対象に含めていないため、
+    // このダウンロード／アップロードにも含まれない（点検状態・不良記録テキスト・予約・スケジュール等は含む）。
+    function downloadPropertyData() {
+      const state = gatherInspectionState();
+      const payload = {
+        __manchestar_export__: true,
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        data: state
+      };
+      const propName = (state.property && state.property.name) || '物件';
+      const safeName = propName.replace(/[\\/:*?"<>|]/g, '_');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = safeName + '_' + dateStr + '.json';
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // ホーム画面「物件データをアップロード」から呼ばれる。
+    // 常に新規物件として読み込む（今開いている物件を誤って上書きしないため）。
+    async function handleUploadPropertyFile(inputEl) {
+      const file = inputEl.files && inputEl.files[0];
+      if (!file) return;
+      let payload;
+      try {
+        const text = await file.text();
+        payload = JSON.parse(text);
+      } catch (e) {
+        alert('ファイルの読み込みに失敗しました。正しいJSONファイルか確認してください。');
+        inputEl.value = '';
+        return;
+      }
+      const state = (payload && payload.__manchestar_export__ && payload.data) ? payload.data : payload;
+      if (!state || (!state.buildings && !state.setup)) {
+        alert('このファイルは物件データとして認識できませんでした。');
+        inputEl.value = '';
+        return;
+      }
+      const propName = (state.property && state.property.name) || '（名称未設定）';
+      const ok = await window.showAppConfirm(
+        '「' + propName + '」のデータを新規物件として読み込みます。\n' +
+        '（今開いている物件はそのまま残ります。全室の点検状態や予約もアップロードしたファイルの内容がそのまま反映されます。）\n' +
+        'よろしいですか？'
+      );
+      inputEl.value = '';
+      if (!ok) return;
+
+      const newJobId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+      localStorage.setItem('mc_job_id', newJobId);
+      window.currentJobId = newJobId;
+      if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
+      document.getElementById('startScreen').style.display = 'none';
+      const proceed = () => {
+        alert('物件データを読み込みました。');
+        location.reload();
+      };
+      if (window.saveInspectionToCloudNow) {
+        window.saveInspectionToCloudNow(state).then(proceed);
+      } else {
+        proceed();
+      }
     }
 
     // クラウドから読み込んだ内容で画面を復元する（loginWithGoogle成功後、自動的に呼ばれる）
@@ -6596,7 +6681,7 @@
           if (d.state === 'yoyaku' && d.yoyakuTime) cls += ' yoyaku';
           let inner = '';
           if (d.state === 'nyushitsu' && sign === 'NO_SIGN_NEEDED') {
-            inner = '<span style="font-size:9px;color:#888;">サイン不要</span>';
+            inner = '<span style="font-size:9px;color:#888;">入室済</span>';
           } else if (d.state === 'nyushitsu' && sign) {
             inner = '<img class="sign-img" src="' + sign + '">';
           } else if (d.state === 'kushitsu') {
