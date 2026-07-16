@@ -518,6 +518,61 @@
     };
     // ===== window.confirm()代替モーダル END =====
 
+    // ===== window.alert()代替の汎用モーダル =====
+    // ネイティブのwindow.showAppAlert()もconfirm()と同様にJS実行を完全にブロックし、
+    // Claude in Chrome等の自動操作を止めてしまうため、アプリ内モーダルに置き換える。
+    // Promise<void>を返す。連続で呼ばれた場合は前のモーダルが閉じてから順に表示する。
+    // 例: window.showAppAlert('保存しました。');
+    //     window.showAppAlert('完了').then(() => location.reload());
+    window._appAlertQueue = Promise.resolve();
+    window.showAppAlert = function (message) {
+      const run = () => new Promise((resolve) => {
+        const modal = document.getElementById('appAlertModal');
+        document.getElementById('appAlertMessage').textContent = message;
+        const okBtn = document.getElementById('appAlertOk');
+        function onOk() {
+          modal.classList.remove('active');
+          okBtn.removeEventListener('click', onOk);
+          resolve();
+        }
+        okBtn.addEventListener('click', onOk);
+        modal.classList.add('active');
+      });
+      const p = window._appAlertQueue.then(run);
+      window._appAlertQueue = p;
+      return p;
+    };
+    // ===== window.alert()代替モーダル END =====
+
+    // ===== window.prompt()代替の汎用モーダル =====
+    // ネイティブのprompt()も同様の理由で置き換える。
+    // Promise<string|null>を返す（キャンセル時はnull。prompt()と同じ）。
+    // 例: const name = await window.showAppPrompt('名前を入力', '初期値');
+    //     if (name === null) return;
+    window.showAppPrompt = function (message, defaultValue) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('appPromptModal');
+        document.getElementById('appPromptMessage').textContent = message;
+        const input = document.getElementById('appPromptInput');
+        input.value = (defaultValue === undefined || defaultValue === null) ? '' : defaultValue;
+        const okBtn = document.getElementById('appPromptOk');
+        const cancelBtn = document.getElementById('appPromptCancel');
+        function cleanup(result) {
+          modal.classList.remove('active');
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          resolve(result);
+        }
+        function onOk() { cleanup(input.value); }
+        function onCancel() { cleanup(null); }
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modal.classList.add('active');
+        setTimeout(() => { try { input.focus(); input.select(); } catch (e) {} }, 50);
+      });
+    };
+    // ===== window.prompt()代替モーダル END =====
+
     // デバッグ用：localStorageに蓄積しつつ画面上のdebugPanelにも表示する
     function dlog(msg) {
       const time = new Date().toLocaleTimeString('ja-JP', { hour12: false }) + '.' + new Date().getMilliseconds();
@@ -1421,10 +1476,10 @@
           const companyInviteCode = inviteUrlParams.get('companyInvite');
           if (companyInviteCode && window.requestJoinCompany) {
             window.requestJoinCompany(companyInviteCode).then((r) => {
-              alert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
+              window.showAppAlert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
               refreshStartScreenCompanyStatus();
             }).catch((e) => {
-              alert('参加申請に失敗しました：' + e.message);
+              window.showAppAlert('参加申請に失敗しました：' + e.message);
             }).finally(() => {
               // リロード時に再申請しないよう、URLからパラメータを消しておく
               history.replaceState(null, '', location.origin + location.pathname);
@@ -1548,8 +1603,7 @@
               } else {
                 localStorage.removeItem('mc_job_id');
                 if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
-                alert('本日の作業が終了しました。お疲れさまでした。');
-                location.reload();
+                window.showAppAlert('本日の作業が終了しました。お疲れさまでした。').then(() => location.reload());
                 return;
               }
             }
@@ -2190,6 +2244,28 @@
     </div>
   </div>
 
+  <!-- 汎用の通知モーダル（window.alert()の代替。自動操作ツールをブロックしないため） -->
+  <div id="appAlertModal" class="modal">
+    <div class="modal-box" style="max-width:360px;">
+      <p id="appAlertMessage" style="white-space:pre-wrap;font-size:14px;color:#333;margin-bottom:16px;"></p>
+      <div class="modal-buttons">
+        <button id="appAlertOk" style="background:#336699;color:white;">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 汎用の入力モーダル（window.prompt()の代替。自動操作ツールをブロックしないため） -->
+  <div id="appPromptModal" class="modal">
+    <div class="modal-box" style="max-width:360px;">
+      <p id="appPromptMessage" style="white-space:pre-wrap;font-size:14px;color:#333;margin-bottom:12px;"></p>
+      <input id="appPromptInput" type="text" style="width:100%;box-sizing:border-box;font-size:15px;padding:8px 10px;border:1px solid #bbb;border-radius:6px;margin-bottom:16px;">
+      <div class="modal-buttons">
+        <button id="appPromptCancel" style="background:#eee;">キャンセル</button>
+        <button id="appPromptOk" style="background:#336699;color:white;">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div id="signModal" class="modal">
     <div class="modal-box">
       <h2 id="signTitle">サインをお願いします</h2>
@@ -2754,7 +2830,7 @@
           newBuildings.push(b);
         }
       } catch (e) {
-        alert('住戸構成の登録に失敗しました：' + e.message);
+        window.showAppAlert('住戸構成の登録に失敗しました：' + e.message);
         return;
       }
       buildings = newBuildings;
@@ -2930,9 +3006,9 @@
       syncToCloud();
     }
 
-    function addBuildingTab() {
-      if (!window.isJobOwner) { alert('号棟の追加は現場を開始した人（親機）のみ行えます。'); return; }
-      const name = prompt('新しい号棟の名前を入力してください（例：A棟、1号棟 など）', '');
+    async function addBuildingTab() {
+      if (!window.isJobOwner) { window.showAppAlert('号棟の追加は現場を開始した人（親機）のみ行えます。'); return; }
+      const name = await window.showAppPrompt('新しい号棟の名前を入力してください（例：A棟、1号棟 など）', '');
       if (name === null) return;
       snapshotCurrentBuilding();
       buildings.push(makeEmptyBuilding(name.trim()));
@@ -2941,14 +3017,14 @@
       syncToCloud();
     }
 
-    function renameBuildingTab(idx) {
-      if (!window.isJobOwner) { alert('号棟名の変更は現場を開始した人（親機）のみ行えます。'); return; }
+    async function renameBuildingTab(idx) {
+      if (!window.isJobOwner) { window.showAppAlert('号棟名の変更は現場を開始した人（親機）のみ行えます。'); return; }
       const b = buildings[idx];
-      const name = prompt('号棟名を変更', b.name || '');
+      const name = await window.showAppPrompt('号棟名を変更', b.name || '');
       if (name === null) return;
       b.name = name.trim();
       const currentShort = getBuildingShortLabel(b);
-      const shortLabel = prompt('画面表示用の記号（部屋番号の頭に付けます。例：A棟→A）', currentShort);
+      const shortLabel = await window.showAppPrompt('画面表示用の記号（部屋番号の頭に付けます。例：A棟→A）', currentShort);
       if (shortLabel !== null) b.shortLabel = shortLabel.trim();
       renderBuildingTabs();
       // 部屋番号の見た目が変わるので、表示中のテーブルを再描画する
@@ -2958,20 +3034,20 @@
       syncToCloud();
     }
 
-    function deleteBuildingTabPrompt() {
-      if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
-      if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
+    async function deleteBuildingTabPrompt() {
+      if (!window.isJobOwner) { window.showAppAlert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
+      if (buildings.length <= 1) { window.showAppAlert('号棟は最低1つ必要です。'); return; }
       const listText = buildings.map((b, i) => (i + 1) + ': ' + (b.name ? b.name : ('号棟' + (i + 1)))).join('\n');
-      const input = prompt('削除する号棟の番号を入力してください\n' + listText, '');
+      const input = await window.showAppPrompt('削除する号棟の番号を入力してください\n' + listText, '');
       if (input === null) return;
       const idx = parseInt(input) - 1;
-      if (isNaN(idx) || idx < 0 || idx >= buildings.length) { alert('番号が正しくありません。'); return; }
+      if (isNaN(idx) || idx < 0 || idx >= buildings.length) { window.showAppAlert('番号が正しくありません。'); return; }
       deleteBuildingTab(idx);
     }
 
     async function deleteBuildingTab(idx) {
-      if (!window.isJobOwner) { alert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
-      if (buildings.length <= 1) { alert('号棟は最低1つ必要です。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
+      if (buildings.length <= 1) { window.showAppAlert('号棟は最低1つ必要です。'); return; }
       const b = buildings[idx];
       if (!await window.showAppConfirm((b.name || ('号棟' + (idx + 1))) + ' を削除します。この号棟の点検データも全て消えます。よろしいですか？')) return;
       buildings.splice(idx, 1);
@@ -3122,8 +3198,8 @@
 
     // 子機招待用のQRコードを表示する
     function openQrModal() {
-      if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
-      if (!window.currentJobId) { alert('まだログインが完了していません。少し待ってからもう一度お試しください。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.currentJobId) { window.showAppAlert('まだログインが完了していません。少し待ってからもう一度お試しください。'); return; }
       const url = location.origin + location.pathname + '?join=' + window.currentJobId;
       const area = document.getElementById('qrCodeArea');
       area.innerHTML = '';
@@ -3138,12 +3214,12 @@
       const url = document.getElementById('qrLinkText').textContent;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(() => {
-          alert('リンクをコピーしました');
+          window.showAppAlert('リンクをコピーしました');
         }).catch(() => {
-          alert('コピーに失敗しました。上のリンクを手動で選択してコピーしてください。');
+          window.showAppAlert('コピーに失敗しました。上のリンクを手動で選択してコピーしてください。');
         });
       } else {
-        alert('このブラウザでは自動コピーに対応していません。上のリンクを手動で選択してコピーしてください。');
+        window.showAppAlert('このブラウザでは自動コピーに対応していません。上のリンクを手動で選択してコピーしてください。');
       }
     }
 
@@ -3184,7 +3260,7 @@
       if (!ok) return;
       if (!window.deleteJobCompletely) return;
       window.deleteJobCompletely(jobId).then(() => {
-        alert('削除しました。');
+        window.showAppAlert('削除しました。');
         if (window.loadJobList) {
           window.loadJobList().then((jobs) => {
             window._allJobsCache = jobs;
@@ -3192,7 +3268,7 @@
           });
         }
       }).catch((e) => {
-        alert('削除に失敗しました：' + e.message);
+        window.showAppAlert('削除に失敗しました：' + e.message);
       });
     }
 
@@ -3210,7 +3286,7 @@
           });
         }
       }).catch((e) => {
-        alert('操作に失敗しました：' + e.message);
+        window.showAppAlert('操作に失敗しました：' + e.message);
       });
     }
     function renderContinueList() {
@@ -3377,7 +3453,7 @@
     function restoreJobToContinue(jobId, name) {
       if (!window.unhideJob) return;
       window.unhideJob(jobId).then(() => {
-        alert('「' + name + '」を継続中の物件に戻しました。');
+        window.showAppAlert('「' + name + '」を継続中の物件に戻しました。');
         if (window.loadJobList) {
           window.loadJobList().then((jobs) => {
             window._allJobsCache = jobs;
@@ -3386,7 +3462,7 @@
           });
         }
       }).catch((e) => {
-        alert('操作に失敗しました：' + e.message);
+        window.showAppAlert('操作に失敗しました：' + e.message);
       });
     }
 
@@ -3396,7 +3472,7 @@
       closeExistingModal();
       if (!window.loadJobData) return;
       window.loadJobData(srcJobId).then((state) => {
-        if (!state) { alert('データの読み込みに失敗しました。'); return; }
+        if (!state) { window.showAppAlert('データの読み込みに失敗しました。'); return; }
         const newJobId = (window.crypto && window.crypto.randomUUID)
           ? window.crypto.randomUUID()
           : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
@@ -3425,8 +3501,7 @@
         if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
         document.getElementById('startScreen').style.display = 'none';
         const proceedToSetup = () => {
-          alert('新規登録を開始します。一括設定画面を開きます。');
-          location.reload();
+          window.showAppAlert('新規登録を開始します。一括設定画面を開きます。').then(() => location.reload());
         };
         if (window.saveInspectionToCloudNow) {
           window.saveInspectionToCloudNow(newState).then(proceedToSetup);
@@ -3437,7 +3512,7 @@
     }
 
     async function confirmStartNewJob() {
-      if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       const ok = await window.showAppConfirm('新しい現場を始めますか？\n今のデータはクラウドに保存済みなので消えませんが、画面は新しい現場用にまっさらな状態になります。');
       if (!ok) return;
       window.currentJobId = (window.crypto && window.crypto.randomUUID)
@@ -3569,7 +3644,7 @@
       if (sel.value === NOTE_OTHER_VALUE) {
         const text = input.value.trim();
         if (!text) {
-          alert('備考を入力してください');
+          window.showAppAlert('備考を入力してください');
           return null;
         }
         if (!notePatterns.includes(text)) {
@@ -3910,13 +3985,13 @@
         const text = await file.text();
         payload = JSON.parse(text);
       } catch (e) {
-        alert('ファイルの読み込みに失敗しました。正しいJSONファイルか確認してください。');
+        window.showAppAlert('ファイルの読み込みに失敗しました。正しいJSONファイルか確認してください。');
         inputEl.value = '';
         return;
       }
       const state = (payload && payload.__manchestar_export__ && payload.data) ? payload.data : payload;
       if (!state || (!state.buildings && !state.setup)) {
-        alert('このファイルは物件データとして認識できませんでした。');
+        window.showAppAlert('このファイルは物件データとして認識できませんでした。');
         inputEl.value = '';
         return;
       }
@@ -4230,7 +4305,7 @@
 
     // 戻るボタン処理：表作成済みなら設定画面へ戻す
     function backToSetupConfirmed() {
-      if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       document.getElementById('tableArea').parentElement.style.display = 'none';
       document.getElementById('propertyArea').style.display = 'none';
       document.getElementById('yoyakuArea').style.display = 'none';
@@ -4253,12 +4328,12 @@
 
     // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
     async function confirmCompleteProperty() {
-      if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       if (!window.currentJobId) return;
       if (!await window.showAppConfirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
       if (!window.hideJob) return;
       window.hideJob(window.currentJobId).then(() => {
-        alert('この物件を完了にしました。');
+        window.showAppAlert('この物件を完了にしました。');
         document.getElementById('setup').style.display = 'none';
         document.getElementById('propertyArea').style.display = 'none';
         const tableWrap = document.querySelector('.table-wrap');
@@ -4266,7 +4341,7 @@
         document.getElementById('startScreen').style.display = 'block';
         refreshStartScreenCompanyStatus();
       }).catch((e) => {
-        alert('操作に失敗しました：' + e.message);
+        window.showAppAlert('操作に失敗しました：' + e.message);
       });
     }
 
@@ -4572,10 +4647,11 @@
 
     async function roomMenuSelect(action) {
       if (!activeRoomCell) return;
-      const cell = activeRoomCell;
+      // 【バグ対策】メニュー表示中の再描画で参照が古くなる問題（menuSelectと同様）
+      const cell = getLiveRoomCell(activeRoomCell.dataset.room) || activeRoomCell;
       closeRoomMenu();
       if (action === 'delete') {
-        if (!window.isJobOwner) { alert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+        if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
         const room = cell.dataset.room;
         const stateCell = document.querySelector('td.cell[data-room="' + room + '"]');
         const hasData = stateCell && (
@@ -4620,7 +4696,7 @@
         cell.classList.remove('hasshigo');
       } else if (action === 'edit') {
         const current = cell.dataset.label || cell.dataset.room;
-        const newLabel = prompt('名称を入力してください', current);
+        const newLabel = await window.showAppPrompt('名称を入力してください', current);
         if (newLabel === null) return;
         const trimmed = newLabel.trim();
         const roomPrefix = (buildings.length > 1) ? getBuildingShortLabel(buildings[currentBuildingIdx]) : '';
@@ -4647,7 +4723,11 @@
 
     async function menuSelect(action) {
       if (!activeCell) return;
-      const cell = activeCell;
+      // 【バグ対策】メニューを開いている間に他端末の同期で立面図が再描画されると、
+      // activeCellが「もう画面上には無い古い要素」を指したままになり、
+      // 不在・空室・未に戻す等の操作が画面にもクラウドにも反映されない（907号室バグ）。
+      // 点検中モーダルと同様、操作直前に部屋番号からライブなセルを取得し直す。
+      const cell = getLiveCell(activeCell.dataset.room) || activeCell;
       closeMenu();
       if (action === 'tenkenchuu') {
         cell.dataset.state = 'tenkenchuu';
@@ -4664,7 +4744,7 @@
         if (cell.dataset.state === 'nyushitsu') {
           const role = window.myRole || 'worker';
           if (role === 'worker') {
-            alert('サイン済みの部屋を「不在」に変更するには、管理者またはサブ管理者に依頼してください。');
+            window.showAppAlert('サイン済みの部屋を「不在」に変更するには、管理者またはサブ管理者に依頼してください。');
             return;
           }
           if (!await window.showAppConfirm('この部屋はサイン済みです。本当に「不在」に変更しますか？（サイン記録は削除されます）')) return;
@@ -4695,7 +4775,7 @@
         if (cell.dataset.state === 'nyushitsu') {
           const role = window.myRole || 'worker';
           if (role === 'worker') {
-            alert('サイン済みの部屋を「未」に戻すには、管理者またはサブ管理者に依頼してください。');
+            window.showAppAlert('サイン済みの部屋を「未」に戻すには、管理者またはサブ管理者に依頼してください。');
             return;
           }
           if (!await window.showAppConfirm('この部屋はサイン済みです。本当に「未」に戻しますか？（サイン記録は削除されます）')) return;
@@ -4725,6 +4805,10 @@
     // 取得し直してから操作する。
     function getLiveCell(room) {
       return document.querySelector('td.cell[data-room="' + room + '"]');
+    }
+    // 号室番号セル（td.room-number）用の同種ヘルパー
+    function getLiveRoomCell(room) {
+      return document.querySelector('td.room-number[data-room="' + room + '"]');
     }
     let tenkenCell = null;
     function openTenkenModal(cell) {
@@ -4940,7 +5024,7 @@
     function clearSign() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
     function confirmSign() {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-      if (!Array.from(data).some(v => v !== 0)) { alert('サインが入力されていません'); return; }
+      if (!Array.from(data).some(v => v !== 0)) { window.showAppAlert('サインが入力されていません'); return; }
       const signData = canvas.toDataURL('image/png');
       // サイン記入中に他端末の同期で立面図が再描画されている可能性があるため、
       // 部屋番号から改めて「今画面にある」セルを取得してから反映する
@@ -5041,7 +5125,7 @@
     function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; furyoRoom = null; }
     function confirmFuryo() {
       const text = document.getElementById('furyoText').value.trim();
-      if (!text) { alert('不良内容を入力してください'); return; }
+      if (!text) { window.showAppAlert('不良内容を入力してください'); return; }
       // 入力中に他端末の同期で立面図が再描画されている可能性があるため、
       // 部屋番号から改めて「今画面にある」セルを取得してから反映する
       const cell = getLiveCell(furyoRoom) || furyoCell;
@@ -5065,7 +5149,7 @@
 
     function openYoyaku(cell) {
       const role = window.myRole || 'worker';
-      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
+      if (role === 'worker') { window.showAppAlert('この操作はサブ管理者以上のみ行えます。'); return; }
       yoyakuCell = cell;
       buildNoteSelects();
       document.getElementById('yoyakuTitle').textContent = cell.dataset.room + ' の予約設定';
@@ -5105,14 +5189,16 @@
       const note = resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
       if (note === null) return;
       const date = document.getElementById('yoyakuModalDate').value;
-      const room = yoyakuCell.dataset.room;
-      yoyakuCell.dataset.state = 'yoyaku';
-      yoyakuCell.dataset.yoyakuTime = time;
-      yoyakuCell.dataset.yoyakuNote = note;
-      yoyakuCell.dataset.yoyakuDate = date;
-      yoyakuCell.classList.add('yoyaku');
-      yoyakuCell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'furyo');
-      updateCellDisplay(yoyakuCell);
+      // 【バグ対策】モーダル表示中の再描画で参照が古くなる問題（menuSelectと同様）
+      const cell = getLiveCell(yoyakuCell.dataset.room) || yoyakuCell;
+      const room = cell.dataset.room;
+      cell.dataset.state = 'yoyaku';
+      cell.dataset.yoyakuTime = time;
+      cell.dataset.yoyakuNote = note;
+      cell.dataset.yoyakuDate = date;
+      cell.classList.add('yoyaku');
+      cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'furyo');
+      updateCellDisplay(cell);
       removeYoyakuByRoom(room);
       yoyakuList.push({ time, room, note, date, buildingId: buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null });
       renderYoyakuTable();
@@ -5126,13 +5212,15 @@
     }
 
     function deleteYoyaku() {
-      const room = yoyakuCell.dataset.room;
-      yoyakuCell.dataset.state = 'mi';
-      yoyakuCell.dataset.yoyakuTime = '';
-      yoyakuCell.dataset.yoyakuNote = '';
-      yoyakuCell.dataset.yoyakuDate = '';
-      yoyakuCell.classList.remove('yoyaku');
-      updateCellDisplay(yoyakuCell);
+      // 【バグ対策】モーダル表示中の再描画で参照が古くなる問題（menuSelectと同様）
+      const cell = getLiveCell(yoyakuCell.dataset.room) || yoyakuCell;
+      const room = cell.dataset.room;
+      cell.dataset.state = 'mi';
+      cell.dataset.yoyakuTime = '';
+      cell.dataset.yoyakuNote = '';
+      cell.dataset.yoyakuDate = '';
+      cell.classList.remove('yoyaku');
+      updateCellDisplay(cell);
       removeYoyakuByRoom(room);
       updateYoyakuRowState(room, false);
       renderYoyakuTable();
@@ -5182,7 +5270,7 @@
     // 予約登録モーダル（号室を指定して手入力）を開く
     function openAddYoyakuModal() {
       const role = window.myRole || 'worker';
-      if (role === 'worker') { alert('この操作はサブ管理者以上のみ行えます。'); return; }
+      if (role === 'worker') { window.showAppAlert('この操作はサブ管理者以上のみ行えます。'); return; }
       buildNoteSelects();
       const buildingRow = document.getElementById('addModalBuildingRow');
       const buildingSel = document.getElementById('addModalBuilding');
@@ -5213,7 +5301,7 @@
       const time = getTimeFromSelects('addModalTimeH', 'addModalTimeM');
       const note = resolveNoteValue('addModalNote', 'addModalNoteOther');
       if (note === null) return;
-      if (!room) { alert('号室を入力してください'); return; }
+      if (!room) { window.showAppAlert('号室を入力してください'); return; }
       const date = document.getElementById('addModalDate').value;
       const buildingSel = document.getElementById('addModalBuilding');
       const buildingId = (buildings.length > 1 && buildingSel) ? buildingSel.value : (buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null);
@@ -5434,7 +5522,7 @@
       const btn = document.getElementById('memoVoiceBtn');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert('このブラウザは音声入力に対応していません。テキストで入力してください。');
+        window.showAppAlert('このブラウザは音声入力に対応していません。テキストで入力してください。');
         return;
       }
       if (voiceActive) {
@@ -5456,7 +5544,7 @@
       };
       voiceRecognition.onerror = (e) => {
         dlog('音声認識エラー / ' + e.error);
-        if (e.error !== 'no-speech') alert('音声認識エラー：' + e.error);
+        if (e.error !== 'no-speech') window.showAppAlert('音声認識エラー：' + e.error);
       };
       voiceRecognition.onend = () => {
         voiceActive = false;
@@ -5473,7 +5561,7 @@
       const btn = document.getElementById('furyoVoiceBtn');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert('このブラウザは音声入力に対応していません。テキストで入力してください。');
+        window.showAppAlert('このブラウザは音声入力に対応していません。テキストで入力してください。');
         return;
       }
       if (furyoVoiceActive) {
@@ -5497,7 +5585,7 @@
       };
       furyoVoiceRecognition.onerror = (e) => {
         dlog('音声認識エラー / ' + e.error);
-        if (e.error !== 'no-speech') alert('音声認識エラー：' + e.error);
+        if (e.error !== 'no-speech') window.showAppAlert('音声認識エラー：' + e.error);
       };
       furyoVoiceRecognition.onend = () => {
         furyoVoiceActive = false;
@@ -5792,7 +5880,7 @@
       if (window.saveInspectionToCloud) window.saveInspectionToCloud(gatherInspectionState());
       closeScheduleModal();
       applyScheduleDim();
-      alert('スケジュールを保存しました。');
+      window.showAppAlert('スケジュールを保存しました。');
     }
 
     // ---- 予約事前通知・指示システム ----
@@ -5956,7 +6044,7 @@
       window.sendInstruction(toUid, toName, currentNoticeRoom.room, currentNoticeRoom.time).then(() => {
         closeAssignModal();
         dismissNoticeBanner();
-        alert(toName + ' さんに ' + currentNoticeRoom.room + '号室の対応を依頼しました。');
+        window.showAppAlert(toName + ' さんに ' + currentNoticeRoom.room + '号室の対応を依頼しました。');
       });
     }
 
@@ -6052,7 +6140,7 @@
       if (!ok) return;
       if (!window.loadJobData) return;
       window.loadJobData(srcJobId).then((state) => {
-        if (!state) { alert('元の現場データが読み込めませんでした。'); return; }
+        if (!state) { window.showAppAlert('元の現場データが読み込めませんでした。'); return; }
         // 新しいjobIdを発行
         const newJobId = (window.crypto && window.crypto.randomUUID)
           ? window.crypto.randomUUID()
@@ -6091,8 +6179,7 @@
         localStorage.setItem('mc_goto_setup', '1');
         closeJobListModal();
         const proceedToSetup = () => {
-          alert('新しい現場を作成しました。一括設定画面を開きます。');
-          location.reload();
+          window.showAppAlert('新しい現場を作成しました。一括設定画面を開きます。').then(() => location.reload());
         };
         if (window.saveInspectionToCloudNow) {
           window.saveInspectionToCloudNow(newState).then(proceedToSetup);
@@ -6237,31 +6324,31 @@
     async function submitRegisterCompany() {
       const nameInput = document.getElementById('newCompanyNameInput');
       const name = (nameInput.value || '').trim();
-      if (!name) { alert('会社名を入力してください'); return; }
+      if (!name) { window.showAppAlert('会社名を入力してください'); return; }
       if (!await window.showAppConfirm('「' + name + '」として会社を登録します。よろしいですか？')) return;
       window.registerCompany(name).then(() => {
-        alert('会社を登録しました。あなたはこの会社の【管理者】です。');
+        window.showAppAlert('会社を登録しました。あなたはこの会社の【管理者】です。');
         refreshCompanyModal();
-      }).catch((e) => alert('登録に失敗しました：' + e.message));
+      }).catch((e) => window.showAppAlert('登録に失敗しました：' + e.message));
     }
 
     function submitJoinCompany() {
       const codeInput = document.getElementById('joinInviteCodeInput');
       const code = (codeInput.value || '').trim();
-      if (!code) { alert('招待コードを入力してください'); return; }
+      if (!code) { window.showAppAlert('招待コードを入力してください'); return; }
       window.requestJoinCompany(code).then((r) => {
-        alert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
+        window.showAppAlert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
         refreshCompanyModal();
-      }).catch((e) => alert(e.message));
+      }).catch((e) => window.showAppAlert(e.message));
     }
 
     async function submitLeaveCompany(companyId, companyName) {
       if (!await window.showAppConfirm('「' + companyName + '」から抜けます。\n再度参加するには、招待コードでの申請と承認が必要になります。\n\nよろしいですか？')) return;
       window.leaveCompanySelf(companyId).then(() => {
-        alert('「' + companyName + '」から抜けました。');
+        window.showAppAlert('「' + companyName + '」から抜けました。');
         refreshCompanyModal();
         refreshStartScreenCompanyStatus();
-      }).catch((e) => alert(e.message));
+      }).catch((e) => window.showAppAlert(e.message));
     }
 
     function renderCompanyModalApproved(body, status) {
@@ -6351,18 +6438,18 @@
       if (!window.currentJobId) return;
       if (!await window.showAppConfirm('この現場を「' + companyName + '」に紐付けます。会社の管理者はこの現場に招待なしで入れるようになります。よろしいですか？')) return;
       window.linkJobToCompany(window.currentJobId, companyId).then(() => {
-        alert('紐付けました。');
+        window.showAppAlert('紐付けました。');
         refreshCompanyModal();
-      }).catch((e) => alert('失敗しました：' + e.message));
+      }).catch((e) => window.showAppAlert('失敗しました：' + e.message));
     }
 
     async function submitUnlinkJobFromCompany() {
       if (!window.currentJobId) return;
       if (!await window.showAppConfirm('この現場の会社への紐付けを解除します。よろしいですか？')) return;
       window.unlinkJobFromCompany(window.currentJobId).then(() => {
-        alert('紐付けを解除しました。');
+        window.showAppAlert('紐付けを解除しました。');
         refreshCompanyModal();
-      }).catch((e) => alert('失敗しました：' + e.message));
+      }).catch((e) => window.showAppAlert('失敗しました：' + e.message));
     }
 
     function copyInviteCode() {
@@ -6370,9 +6457,9 @@
       if (!el) return;
       const text = el.textContent;
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => alert('招待コードをコピーしました'));
+        navigator.clipboard.writeText(text).then(() => window.showAppAlert('招待コードをコピーしました'));
       } else {
-        alert('招待コード：' + text);
+        window.showAppAlert('招待コード：' + text);
       }
     }
 
@@ -6380,16 +6467,17 @@
     function copyCompanyJoinLink(inviteCode) {
       const url = location.origin + location.pathname + '?companyInvite=' + encodeURIComponent(inviteCode);
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(url).then(() => alert('参加リンクをコピーしました。\nLINEなどで共有すると、相手はタップするだけで参加申請できます。'));
+        navigator.clipboard.writeText(url).then(() => window.showAppAlert('参加リンクをコピーしました。\nLINEなどで共有すると、相手はタップするだけで参加申請できます。'));
       } else {
-        prompt('このリンクをコピーして共有してください：', url);
+        // クリップボード非対応ブラウザ向け：入力欄にリンクを表示して手動コピーしてもらう
+        window.showAppPrompt('このリンクをコピーして共有してください：', url);
       }
     }
 
     async function doRegenerateInviteCode(companyId) {
       if (!await window.showAppConfirm('招待コードを再発行します。古いコードは使えなくなります。よろしいですか？')) return;
       window.regenerateInviteCode(companyId).then(() => {
-        alert('招待コードを再発行しました。');
+        window.showAppAlert('招待コードを再発行しました。');
         refreshCompanyModal();
       });
     }
@@ -6456,17 +6544,17 @@
     async function doTransferOwnership(companyId, newOwnerUid, newOwnerName) {
       if (!await window.showAppConfirm('登録者（オーナー）権限を「' + newOwnerName + '」に譲渡します。以後、参加申請の承認・却下はその人が行うことになります。あなたは管理者のまま残ります。よろしいですか？')) return;
       window.transferCompanyOwnership(companyId, newOwnerUid).then(() => {
-        alert('譲渡しました。');
+        window.showAppAlert('譲渡しました。');
         refreshCompanyModal();
-      }).catch((e) => alert(e.message));
+      }).catch((e) => window.showAppAlert(e.message));
     }
 
     function approveMemberUI(companyId, uid, asAdmin) {
-      window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
+      window.approveCompanyMember(companyId, uid, asAdmin).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => window.showAppAlert(e.message));
     }
     async function rejectMemberUI(companyId, uid) {
       if (!await window.showAppConfirm('この参加申請を却下します。よろしいですか？')) return;
-      window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => alert(e.message));
+      window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => window.showAppAlert(e.message));
     }
     function toggleCompanyAdminUI(companyId, uid, makeAdmin) {
       window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner));
@@ -6475,7 +6563,7 @@
       if (!await window.showAppConfirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
       window.removeCompanyMember(companyId, uid).then(() => {
         loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner);
-      }).catch((e) => alert(e.message));
+      }).catch((e) => window.showAppAlert(e.message));
     }
 
     // メンバー一覧を描画する（startPresenceWatchのonSnapshotから呼ばれる）
@@ -6515,10 +6603,10 @@
     }
 
     // 作業終了時にログをメールで送信する
-    function sendLogByEmail() {
-      const toEmail = prompt('送信先のメールアドレスを入力してください（管理者宛）');
+    async function sendLogByEmail() {
+      const toEmail = await window.showAppPrompt('送信先のメールアドレスを入力してください（管理者宛）');
       if (!toEmail) return;
-      if (!window.buildLogEmail) { alert('まだログインが完了していません。'); return; }
+      if (!window.buildLogEmail) { window.showAppAlert('まだログインが完了していません。'); return; }
       const prop = getProperty();
       window.buildLogEmail().then((body) => {
         const subject = encodeURIComponent('【点検ログ】' + prop.name + ' ' + prop.date);
@@ -6531,8 +6619,8 @@
 
     // 本日の作業終了（管理者のみ）
     async function endWorkSession() {
-      if (!window.isJobOwner) { alert('この操作は管理者のみ行えます。'); return; }
-      if (window.propDayMode !== 'multi') { alert('単日の現場では「本日の作業を終了する」は使用できません。作業が終わったら「この物件を完了にする」をお使いください。'); return; }
+      if (!window.isJobOwner) { window.showAppAlert('この操作は管理者のみ行えます。'); return; }
+      if (window.propDayMode !== 'multi') { window.showAppAlert('単日の現場では「本日の作業を終了する」は使用できません。作業が終わったら「この物件を完了にする」をお使いください。'); return; }
       const ok = await window.showAppConfirm(
         '本日の作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
@@ -6551,7 +6639,7 @@
           return window.clearDismissed ? window.clearDismissed() : Promise.resolve();
         }).then(() => {
           // 管理者自身もlocalStorageをクリアしてログアウト
-          alert('作業終了を通知しました。お疲れさまでした。');
+          window.showAppAlert('作業終了を通知しました。お疲れさまでした。');
           if (window.logoutUser) window.logoutUser();
         });
       }
@@ -6559,7 +6647,7 @@
 
     // 印刷完了後にサイン画像をクラウドから一括削除する
     async function deleteAllSigns() {
-      if (!window.deleteAllSignsFromCloud) { alert('まだログインが完了していません。'); return; }
+      if (!window.deleteAllSignsFromCloud) { window.showAppAlert('まだログインが完了していません。'); return; }
       const ok = await window.showAppConfirm('全部屋のサイン画像をすべての場所から削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nこの操作は取り消せません。よろしいですか？');
       if (!ok) return;
       // 画面上のサインも同時にクリア
@@ -6568,7 +6656,7 @@
         if (window.updateCellDisplay) window.updateCellDisplay(cell);
       });
       window.deleteAllSignsFromCloud().then(() => {
-        alert('サイン画像を削除しました。');
+        window.showAppAlert('サイン画像を削除しました。');
       });
     }
 
