@@ -3937,7 +3937,6 @@
       if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
       document.getElementById('startScreen').style.display = 'none';
       const proceed = () => {
-        alert('物件データを読み込みました。');
         location.reload();
       };
       if (window.saveInspectionToCloudNow) {
@@ -6684,6 +6683,8 @@
             inner = '<span style="font-size:9px;color:#888;">入室済</span>';
           } else if (d.state === 'nyushitsu' && sign) {
             inner = '<img class="sign-img" src="' + sign + '">';
+          } else if (d.state === 'nyushitsu') {
+            inner = '<span style="font-size:9px;color:#888;">入室済</span>';
           } else if (d.state === 'kushitsu') {
             inner = '空室';
           } else if (d.state === 'yoyaku' && d.yoyakuTime) {
