@@ -40,6 +40,7 @@
     td.cell.kushitsu { background-color: #ccc; color: #666; }
     td.cell.furyo { outline: 3px solid red; outline-offset: -3px; }
     td.cell.yoyaku { background-color: #ffb347; }
+    td.cell.yoyaku-pass { background-color: #d8cfc0; color: #4a4034; }
     td.room-number.schedule-dim { background-color: #b0b0b0 !important; color: #000; }
     td.room-number.hasshigo.schedule-dim { background-color: #4B5B7F !important; color: #fff; }
     td.room-number.yoyaku-dim { background-color: inherit !important; }
@@ -149,6 +150,10 @@
     @keyframes tenkenchuu-text-blink {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.2; }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
     }
     #contextMenu div.menu-setsubi { color: #336699; }
     #contextMenu div.menu-kushitsu { color: #666; }
@@ -1728,7 +1733,7 @@
       <!-- ステータス（タップでログアウト） -->
       <div onclick="confirmLogout()" style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;cursor:pointer;">
         <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
-        <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中<span style="color:#3a5060;margin-left:6px;">（タップでログアウト）</span></div>
+        <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中</div>
         <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
       </div>
       <!-- 会社ステータス -->
@@ -5020,7 +5025,16 @@
       clearSign();
       document.getElementById('signModal').classList.add('active');
     }
-    function cancelSign() { document.getElementById('signModal').classList.remove('active'); signCell = null; signRoom = null; }
+    function cancelSign() {
+      // 点検終了→サイン画面に進む際、finishTenken が点検中クラス（青点滅）だけを外している。
+      // ここでキャンセルして立面図に戻る場合、state は 'tenkenchuu' のまま残っているので、
+      // 部屋番号から今のセルを取り直して updateCellDisplay を呼び、青点滅表示を復元する。
+      const cell = signRoom ? getLiveCell(signRoom) : null;
+      if (cell) updateCellDisplay(cell);
+      document.getElementById('signModal').classList.remove('active');
+      signCell = null;
+      signRoom = null;
+    }
     function clearSign() { ctx.clearRect(0, 0, canvas.width, canvas.height); }
     function confirmSign() {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -5184,9 +5198,9 @@
       yoyakuCell = null;
     }
 
-    function confirmYoyaku() {
+    async function confirmYoyaku() {
       const time = getTimeFromSelects('yoyakuModalTimeH', 'yoyakuModalTimeM');
-      const note = resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
+      const note = await resolveNoteValue('yoyakuModalNote', 'yoyakuModalNoteOther');
       if (note === null) return;
       const date = document.getElementById('yoyakuModalDate').value;
       // 【バグ対策】モーダル表示中の再描画で参照が古くなる問題（menuSelectと同様）
@@ -5296,10 +5310,10 @@
       document.getElementById('yoyakuAddModal').classList.add('active');
     }
 
-    function confirmAddYoyakuModal() {
+    async function confirmAddYoyakuModal() {
       const room = toHankaku(document.getElementById('addModalRoom').value.trim());
       const time = getTimeFromSelects('addModalTimeH', 'addModalTimeM');
-      const note = resolveNoteValue('addModalNote', 'addModalNoteOther');
+      const note = await resolveNoteValue('addModalNote', 'addModalNoteOther');
       if (note === null) return;
       if (!room) { window.showAppAlert('号室を入力してください'); return; }
       const date = document.getElementById('addModalDate').value;
