@@ -5354,6 +5354,7 @@
       tbody.innerHTML = '';
       const role = window.myRole || 'worker';
       const isAdmin = role === 'admin';
+      const isWorker = role === 'worker';
       const multiBuilding = buildings.length > 1;
       const multiDay = scheduleData.length > 1;
       const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
@@ -5420,16 +5421,20 @@
           const roomLabel = badge + y.room;
           let sortCell = '';
           // 並べ替え（↓）は同じ日付グループ内でのみ機能させる（別の日の予約と入れ替わらないようにする）
-          if (!sortedMode && posInGroup < group.length - 1) {
+          if (!sortedMode && !isWorker && posInGroup < group.length - 1) {
             const nextRealIdx = group[posInGroup + 1].realIdx;
             sortCell = '<button onclick="moveYoyaku(' + realIdx + ',' + nextRealIdx + ')">↓</button>';
           }
+          // 一般権限（worker/子機）には削除ボタンを出さない（誤操作防止）。判定は関数側にもガードあり。
+          const deleteCell = isWorker
+            ? '<td></td>'
+            : '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + realIdx + ')">削除</button></td>';
           tr.innerHTML =
             '<td>' + roomLabel + '</td>' +
             '<td>' + timeLabel + '</td>' +
             '<td>' + y.note + '</td>' +
             '<td class="sort-btn">' + sortCell + '</td>' +
-            '<td><button class="yoyaku-delete" onclick="removeYoyaku(' + realIdx + ')">削除</button></td>';
+            deleteCell;
           tbody.appendChild(tr);
         });
       });
@@ -5450,6 +5455,8 @@
     }
 
     function moveYoyaku(idxA, idxB) {
+      const role = window.myRole || 'worker';
+      if (role === 'worker') { window.showAppAlert('この操作はサブ管理者以上のみ行えます。'); return; }
       if (idxA == null || idxB == null || !yoyakuList[idxA] || !yoyakuList[idxB]) return;
       const tmp = yoyakuList[idxA];
       yoyakuList[idxA] = yoyakuList[idxB];
@@ -5459,6 +5466,8 @@
     }
 
     function removeYoyaku(idx) {
+      const role = window.myRole || 'worker';
+      if (role === 'worker') { window.showAppAlert('この操作はサブ管理者以上のみ行えます。'); return; }
       const target = yoyakuList[idx];
       const room = target.room;
       const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
