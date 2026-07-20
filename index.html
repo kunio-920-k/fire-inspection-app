@@ -124,6 +124,10 @@
     .yoyaku-add input.note-input { width: 150px; }
     .yoyaku-add button { font-size: 14px; padding: 6px 14px; margin-top: 0; }
     .yoyaku-delete { font-size: 12px; padding: 2px 8px; background: #ffcccc; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; }
+    .yoyaku-sort { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; }
+    .yoyaku-sort-label { font-size: 12px; color: #555; }
+    .yoyaku-sort-btn { font-size: 13px; padding: 5px 14px; border: 1px solid #c8ccd4; background: #f2f3f5; color: #555; border-radius: 6px; cursor: pointer; }
+    .yoyaku-sort-btn.active { background: #182C3A; color: #fff; border-color: #182C3A; font-weight: bold; }
     #notePatternManage { margin-top: 8px; font-size: 13px; }
     #notePatternManage a { cursor: pointer; color: #ff8c42; text-decoration: underline; }
 
@@ -2176,6 +2180,11 @@
 
   <div id="yoyakuArea">
     <h2>予約一覧</h2>
+    <div class="yoyaku-sort">
+      <span class="yoyaku-sort-label">並び順</span>
+      <button id="yoyakuSortManual" class="yoyaku-sort-btn active" onclick="setYoyakuSort('manual')">入力順</button>
+      <button id="yoyakuSortTime" class="yoyaku-sort-btn" onclick="setYoyakuSort('time')">時間順</button>
+    </div>
     <div class="yoyaku-add">
       <button id="addYoyakuBtn" onclick="openAddYoyakuModal()">＋ 予約を登録</button>
     </div>
@@ -2435,6 +2444,9 @@
     let tableSuffixes = [];
     let hasshigoSuffixes = new Set();
     let yoyakuList = [];
+    // 予約一覧の並び順モード：'manual'（入力順・デフォルト）/ 'time'（時間順）。
+    // 端末ごとの表示切り替え。クラウド同期せず、リロードで manual に戻る。
+    let yoyakuSortMode = 'manual';
     let touchStartX = 0;
     let touchStartY = 0;
     let touchMoved = false;
@@ -5340,19 +5352,22 @@
       const multiDay = scheduleData.length > 1;
       const curBuildingId = buildings[currentBuildingIdx] ? buildings[currentBuildingIdx].id : null;
 
+      // 並び順トグルの見た目を現在のモードに合わせる
+      updateYoyakuSortButtons();
+
       let list; // [{y, realIdx}]
-      let sortedMode = false;
+      // 表示範囲：管理者（親機）×複数号棟は全号棟まとめて表示、それ以外は現在の号棟のみ（従来どおり）
       if (isAdmin && multiBuilding) {
-        // 管理者（親機）：全号棟の予約をまとめて表示（日付グループ内は時間順）
         list = yoyakuList.map((y, realIdx) => ({ y, realIdx }));
-        sortedMode = true;
       } else {
-        // 一般権限（子機）、または号棟が1つだけの現場：今表示中の号棟の予約のみ、従来通りの並び順
         list = [];
         yoyakuList.forEach((y, realIdx) => {
           if (!multiBuilding || !y.buildingId || y.buildingId === curBuildingId) list.push({ y, realIdx });
         });
       }
+      // 並び順：ユーザーが選んだモード。'time' のときのみ日付グループ内を時間順に並べ替える。
+      // 'manual'（入力順・デフォルト）のときは配列順を維持し、手動並べ替え（↓）を有効にする。
+      const sortedMode = (yoyakuSortMode === 'time');
 
       // 日付ごとにグループ分けする（日付昇順。未設定の日付は最後にまとめる）。
       // グループ内の並び順は従来ロジックをそのまま維持する：
@@ -5412,6 +5427,20 @@
           tbody.appendChild(tr);
         });
       });
+    }
+
+    // 予約一覧の並び順を切り替える（端末ごとの表示のみ。クラウド同期しない）
+    function setYoyakuSort(mode) {
+      yoyakuSortMode = (mode === 'time') ? 'time' : 'manual';
+      renderYoyakuTable();
+    }
+    // トグルボタンのアクティブ表示を現在のモードに合わせる
+    function updateYoyakuSortButtons() {
+      const bManual = document.getElementById('yoyakuSortManual');
+      const bTime = document.getElementById('yoyakuSortTime');
+      if (!bManual || !bTime) return;
+      bManual.classList.toggle('active', yoyakuSortMode !== 'time');
+      bTime.classList.toggle('active', yoyakuSortMode === 'time');
     }
 
     function moveYoyaku(idxA, idxB) {
