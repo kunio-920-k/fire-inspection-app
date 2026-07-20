@@ -3215,6 +3215,9 @@
       // （初回ロード時、号棟タブの描画がロール確定より先に走ると、
       //   ここで再描画しないとお知らせボタンが出ないままになる不具合があった）
       if (typeof renderBuildingTabs === 'function') renderBuildingTabs();
+      // 予約一覧の「削除」「↓」ボタンも権限依存で表示が変わるため、
+      // 役割が確定した/変わったタイミングで再描画する（号棟タブと同じ理由）。
+      if (typeof renderYoyakuTable === 'function') renderYoyakuTable();
     }
     window.applyOwnerUI = applyOwnerUI;
     window.applyRoleUI = applyOwnerUI;
