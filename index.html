@@ -1957,7 +1957,7 @@
         <label style="font-size:13px;"><input type="checkbox" id="newYoyakuSoundToggle" onchange="updateNewYoyakuSoundSetting()" checked> 音を鳴らす</label>
       </div>
       <div id="scheduleDayList"></div>
-      <button onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
+      <button id="addScheduleDayBtn" onclick="addScheduleDay()" type="button" style="margin-top:4px;width:100%;padding:9px;background:rgba(255,255,255,0.55);border:1px dashed #e07020;border-radius:6px;font-size:13px;color:#1a1a1a;cursor:pointer;">＋ 作業日を追加</button>
 
       <br>
       <button id="singleRoomEditBtn" onclick="prepareEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:10px;font-size:13px;cursor:pointer;margin-bottom:8px;">🔽号室を確認・編集する🔽</button>
@@ -3777,6 +3777,9 @@
       const multiArea = document.getElementById('propMultiDayArea');
       document.getElementById('propDayModeSingle').checked = (window.propDayMode !== 'multi');
       document.getElementById('propDayModeMulti').checked = (window.propDayMode === 'multi');
+      // 単日現場では作業日は1件で固定運用のため「＋作業日を追加」を隠す（複数日にしたい時は上の「複数日」を選ぶ）
+      const addDayBtn = document.getElementById('addScheduleDayBtn');
+      if (addDayBtn) addDayBtn.style.display = (window.propDayMode === 'multi') ? 'block' : 'none';
       if (window.propDayMode === 'multi') {
         propDateEl.type = 'text';
         propDateEl.style.display = 'none';
@@ -3823,7 +3826,7 @@
         : (document.getElementById('propDate').value ? [document.getElementById('propDate').value] : []);
       if (!dates.length) return;
       dates.forEach(date => {
-        scheduleData.push({ date: date, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
+        scheduleData.push({ date: date, sessions: [{ label:'', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
       });
       if (typeof renderScheduleDayList === 'function') renderScheduleDayList();
       syncToCloud();
@@ -5818,7 +5821,7 @@
         const dd = String(today.getDate()).padStart(2,'0');
         defaultDate = yyyy+'-'+mm+'-'+dd;
       }
-      scheduleData.push({ date: defaultDate, sessions: [{ label:'午前', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
+      scheduleData.push({ date: defaultDate, sessions: [{ label:'', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
       renderScheduleDayList();
     }
     function removeScheduleDay(di) {
@@ -5835,7 +5838,7 @@
     function addSession(di) {
       flushScheduleDOM();
       scheduleData[di].sessions = scheduleData[di].sessions || [];
-      scheduleData[di].sessions.push({ label:'午後', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false });
+      scheduleData[di].sessions.push({ label:'', timeFrom:'13:00', timeTo:'17:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false });
       renderScheduleDayList();
     }
     function removeSession(di, si) {
