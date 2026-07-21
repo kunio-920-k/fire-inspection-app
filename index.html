@@ -1921,8 +1921,8 @@
             <input type="text" inputmode="numeric" id="roomCount" class="count-input zenkaku-ok" value="6">
           </div>
         </div>
-        <div class="checkbox-area"><label><input type="checkbox" id="cut4Room"> 4号室をカットする（104・204等）</label></div>
-        <div class="checkbox-area"><label><input type="checkbox" id="cut4Floor"> 4階をカットする</label></div>
+        <div class="checkbox-area"><label><input type="checkbox" id="cut4Room" onchange="refreshSingleRoomEditIfOpen()"> 4号室をカットする（104・204等）</label></div>
+        <div class="checkbox-area"><label><input type="checkbox" id="cut4Floor" onchange="refreshSingleRoomEditIfOpen()"> 4階をカットする</label></div>
         <div class="checkbox-area"><label><input type="checkbox" id="useSetsubiInfo" onchange="toggleSetsubiSetup()"> 住戸内設備情報を使用する</label></div>
         <button type="button" id="setsubiToggleBtn" onclick="toggleSetsubiEditorVisible()" style="display:none;width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:4px;">設備編集画面を表示</button>
       </div>
@@ -2616,8 +2616,8 @@
             '<div style="flex:1;"><div class="mc-label-new">階数</div><input type="text" inputmode="numeric" id="mb_floor_' + i + '" class="count-input zenkaku-ok" value="' + (prev.floor !== undefined ? prev.floor : '3') + '"></div>' +
             '<div style="flex:1;"><div class="mc-label-new">室数／階</div><input type="text" inputmode="numeric" id="mb_room_' + i + '" class="count-input zenkaku-ok" value="' + (prev.room !== undefined ? prev.room : '6') + '"></div>' +
           '</div>' +
-          '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4room_' + i + '" ' + (prev.cut4room ? 'checked' : '') + '> 4号室をカットする（104・204等）</label></div>' +
-          '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4floor_' + i + '" ' + (prev.cut4floor ? 'checked' : '') + '> 4階をカットする</label></div>' +
+          '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4room_' + i + '" onchange="refreshMultiBuildingRoomEditIfOpen(' + i + ')" ' + (prev.cut4room ? 'checked' : '') + '> 4号室をカットする（104・204等）</label></div>' +
+          '<div class="checkbox-area"><label><input type="checkbox" id="mb_cut4floor_' + i + '" onchange="refreshMultiBuildingRoomEditIfOpen(' + i + ')" ' + (prev.cut4floor ? 'checked' : '') + '> 4階をカットする</label></div>' +
           '<div class="checkbox-area"><label><input type="checkbox" id="mb_setsubi_' + i + '" onchange="toggleMultiBuildingSetsubi(' + i + ')" ' + (prev.setsubi ? 'checked' : '') + '> 住戸内設備情報を使用する</label></div>' +
           '<button type="button" id="mb_setsubiToggleBtn_' + i + '" onclick="toggleMultiBuildingSetsubiEditorVisible(' + i + ')" style="display:none;width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:4px;">設備編集画面を表示</button>' +
           '<div id="mb_setsubiArea_' + i + '" style="display:none;margin:4px 0 6px;padding:8px;background:rgba(255,255,255,0.5);border-radius:6px;">' +
@@ -2743,25 +2743,37 @@
         if (btn) btn.textContent = '🔽号室を確認・編集する🔽';
         return;
       }
+      renderMultiBuildingRoomEdit(i);
+    }
+
+    // 号棟ブロックの号室編集パネルの「中身」を、現在の階数・室数・カット設定で組み立てて開く。
+    // 手入力された階（data-edited）は保持し、自動生成のままの階は新しい設定で作り直す（単一号棟と同じ思想）。
+    function renderMultiBuildingRoomEdit(i) {
+      const area = document.getElementById('mb_editArea_' + i);
+      const btn = document.getElementById('mb_roomEditBtn_' + i);
+      if (!area) return;
       const floorCount = parseInt(document.getElementById('mb_floor_' + i).value) || 1;
       const roomCount = parseInt(document.getElementById('mb_room_' + i).value) || 1;
       const cut4Room = document.getElementById('mb_cut4room_' + i).checked;
       const cut4Floor = document.getElementById('mb_cut4floor_' + i).checked;
       const listEl = document.getElementById('mb_floorEditList_' + i);
 
-      // 既に編集済みの階があれば、その入力内容を保持する
-      const prevByFloor = {};
+      // 手入力された階だけ内容を保持する（自動生成のままの階は作り直す）
+      const editedByFloor = {};
       listEl.querySelectorAll('input').forEach(inp => {
-        const f = inp.id.split('_').pop();
-        prevByFloor[f] = inp.value;
+        if (inp.dataset.edited === '1') {
+          const f = inp.id.split('_').pop();
+          editedByFloor[f] = inp.value;
+        }
       });
 
       let html = '';
       for (let f = floorCount; f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
-        let roomNumbers;
-        if (prevByFloor[f] !== undefined) {
-          roomNumbers = prevByFloor[f];
+        let roomNumbers, editedAttr = '';
+        if (editedByFloor[f] !== undefined) {
+          roomNumbers = editedByFloor[f];
+          editedAttr = ' data-edited="1"';
         } else {
           const arr = [];
           for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
@@ -2770,11 +2782,17 @@
           }
           roomNumbers = arr.join(',');
         }
-        html += '<div class="floor-edit">' + f + '階：<input type="text" class="zenkaku-ok" id="mb_floorinput_' + i + '_' + f + '" value="' + roomNumbers + '"></div>';
+        html += '<div class="floor-edit">' + f + '階：<input type="text" class="zenkaku-ok" id="mb_floorinput_' + i + '_' + f + '" value="' + roomNumbers + '" oninput="this.dataset.edited=\'1\'"' + editedAttr + '></div>';
       }
       listEl.innerHTML = html;
       area.style.display = 'block';
       if (btn) btn.textContent = '号室を確認・編集する';
+    }
+
+    // 号棟ブロックのパネルが開いている時だけ、現在の階数・室数・カット設定で組み直す
+    function refreshMultiBuildingRoomEditIfOpen(i) {
+      const area = document.getElementById('mb_editArea_' + i);
+      if (area && area.style.display === 'block') renderMultiBuildingRoomEdit(i);
     }
 
     // 階数・号室数・カット設定から、号室構成（フロアごとの号室リスト）を組み立てる。
@@ -3735,6 +3753,15 @@
         const converted = normalizeListInput(e.target.value);
         if (converted !== e.target.value) e.target.value = converted;
       }
+      // 階数・室数を変更したら、号室編集パネルが開いている場合は組み直す（＝閉じ開きの自動化）。
+      // 全角変換の後にrefreshするため、この位置に置く。
+      if (e.target.id === 'floorCount' || e.target.id === 'roomCount') {
+        refreshSingleRoomEditIfOpen();
+      }
+      // 複数号棟：各棟の階数(mb_floor_i)・室数(mb_room_i)を変更したら、その棟のパネルが開いていれば組み直す
+      if (e.target.id && (e.target.id.indexOf('mb_floor_') === 0 || e.target.id.indexOf('mb_room_') === 0)) {
+        refreshMultiBuildingRoomEditIfOpen(e.target.id.split('_').pop());
+      }
       if (PROPERTY_FIELD_IDS.includes(e.target.id)) {
         syncToCloud();
       }
@@ -4334,6 +4361,13 @@
       if (editArea) editArea.style.display = 'none';
       const singleBtn = document.getElementById('singleRoomEditBtn');
       if (singleBtn) singleBtn.textContent = '🔽号室を確認・編集する🔽';
+    }
+
+    // 号室編集パネルが開いている時だけ、現在の階数・室数・カット設定で組み直す。
+    // 「閉じて開き直す」のと同じ結果になる（prepareEditはpendingFloorValuesを尊重するため手入力は保持）。
+    function refreshSingleRoomEditIfOpen() {
+      const area = document.getElementById('editArea');
+      if (area && area.style.display === 'block' && typeof prepareEdit === 'function') prepareEdit();
     }
 
     // 戻るボタン処理：表作成済みなら設定画面へ戻す
