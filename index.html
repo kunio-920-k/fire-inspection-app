@@ -1882,8 +1882,6 @@
               <input type="date" id="propDate" onchange="applyPropertyDatesToSchedule()" style="width:100%;box-sizing:border-box;">
               <div id="propMultiDayArea" style="display:none;">
                 <div style="display:flex;gap:8px;align-items:center;margin:4px 0 6px;">
-                  <span style="font-size:13px;">日数：</span>
-                  <input type="text" inputmode="numeric" id="propDayCount" class="count-input zenkaku-ok" value="2" style="width:50px;">
                   <button type="button" onclick="openMultiDateCalendar()" style="padding:6px 12px;font-size:13px;">📅 日付を選ぶ</button>
                 </div>
                 <div id="propMultiDatesSummary" style="font-size:12px;color:#4a4040;">まだ日付が選択されていません</div>
@@ -2160,7 +2158,7 @@
   <!-- 作業日（複数日）を選ぶカレンダーモーダル -->
   <div id="multiDateCalendarModal" class="modal">
     <div class="modal-box" style="max-width:340px;">
-      <h2 style="font-size:16px;">作業日を選択（<span id="calSelectedCount">0</span>/<span id="calTargetCount">2</span>日）</h2>
+      <h2 style="font-size:16px;">作業日を選択（<span id="calSelectedCount">0</span>日選択中）</h2>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
         <button type="button" onclick="calendarMonthShift(-1)" style="padding:4px 12px;">←</button>
         <div id="calMonthLabel" style="font-weight:bold;font-size:14px;"></div>
@@ -3888,7 +3886,6 @@
         grid.appendChild(cell);
       }
       document.getElementById('calSelectedCount').textContent = calTempSelected.size;
-      document.getElementById('calTargetCount').textContent = parseInt(document.getElementById('propDayCount').value) || 1;
     }
 
     function toggleCalendarDate(dateStr) {
@@ -3898,10 +3895,7 @@
     }
 
     async function confirmMultiDateCalendar() {
-      const targetCount = parseInt(document.getElementById('propDayCount').value) || 1;
-      if (calTempSelected.size !== targetCount) {
-        if (!await window.showAppConfirm('選択した日数（' + calTempSelected.size + '日）が、指定した日数（' + targetCount + '日）と一致していません。このまま進めますか？')) return;
-      }
+      if (calTempSelected.size === 0) { window.showAppAlert('作業日を1日以上選択してください。'); return; }
       window.propMultiDates = Array.from(calTempSelected).sort();
       renderPropMultiDatesSummary();
       closeMultiDateCalendar();
@@ -5722,7 +5716,7 @@
             : `${s.timeFrom || ''}〜${s.timeTo || ''}　${s.floorFrom || ''}階〜${s.floorTo || ''}階`;
           return `
             <div style="font-size:13px;color:#333;padding-left:12px;margin-top:4px;">
-              ${s.label ? s.label + '　' : ''}${detail}${bLabel ? '　【' + bLabel + '】' : ''}
+              ${detail}${bLabel ? '　【' + bLabel + '】' : ''}
             </div>`;
         }).join('');
         return `
@@ -5768,8 +5762,6 @@
             <span style="font-size:13px;color:#555;">階</span>`;
           return `
           <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
-            <input type="text" class="ss-label" value="${s.label || ''}" placeholder="ラベル（任意）"
-              style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <input type="time" class="ss-timeFrom" value="${s.timeFrom || '09:00'}"
               style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <span style="font-size:13px;color:#555;">〜</span>
@@ -5809,7 +5801,6 @@
         const si = parseInt(row.dataset.si);
         if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
         const s = scheduleData[di].sessions[si];
-        const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
         const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
         const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
         const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(toHankaku(ff.value)) || 1;
@@ -5945,7 +5936,6 @@
         const si = parseInt(row.dataset.si);
         if (!scheduleData[di] || !scheduleData[di].sessions[si]) return;
         const s = scheduleData[di].sessions[si];
-        const lbl = row.querySelector('.ss-label'); if (lbl) s.label = lbl.value;
         const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
         const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
         const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
