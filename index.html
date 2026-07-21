@@ -1941,7 +1941,7 @@
       </div>
 
       <div class="setup-section" style="margin-top:20px;">スケジュール設定</div>
-      <p style="font-size:12px;color:#4a4040;margin:-6px 0 10px;">作業日ごとにセッション（午前・午後など）と担当フロアを設定します。</p>
+      <p style="font-size:12px;color:#4a4040;margin:-6px 0 10px;">作業日ごとにセッションと担当フロアを設定します。</p>
       <div style="margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,0.5);border:1px solid rgba(0,0,0,0.12);border-radius:6px;">
         <label style="font-size:13px;color:#1a1a1a;">予約の事前通知タイミング：
           <input type="number" id="noticeMinutes" min="1" max="60" value="5" style="width:52px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;margin:0 4px;">分前
@@ -3820,14 +3820,24 @@
     // 物件情報の作業日を、まだ何も組まれていないスケジュールに初期反映する。
     // すでにスケジュールが手動で編集されている場合は、上書きして壊さないよう何もしない。
     function applyPropertyDatesToSchedule() {
-      if (scheduleData.length > 0) return;
       const dates = window.propDayMode === 'multi'
         ? window.propMultiDates.slice()
         : (document.getElementById('propDate').value ? [document.getElementById('propDate').value] : []);
-      if (!dates.length) return;
-      dates.forEach(date => {
-        scheduleData.push({ date: date, sessions: [{ label:'', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }] });
-      });
+      if (!dates.length) return; // 日付が未選択のときは既存の枠を壊さない
+      const defaultSessions = () => [{ label:'', timeFrom:'09:00', timeTo:'12:00', floorFrom:1, floorTo:1, buildingIds: 'ALL', reserveOnly: false }];
+      // 単日で「枠が1つだけあって日付だけ違う」場合は、その枠を新しい日付に付け替える（設定を保持）
+      if (window.propDayMode !== 'multi' && scheduleData.length === 1 && dates.length === 1 && scheduleData[0].date !== dates[0]) {
+        scheduleData[0].date = dates[0];
+      } else {
+        // 選んだ日付に合わせて作り直す：既存の日はそのまま残し（セッション設定を保持）、
+        // 新しく増えた日にだけデフォルト枠を足し、選択から外した日は消す
+        const byDate = {};
+        scheduleData.forEach(d => { if (d && d.date) byDate[d.date] = d; });
+        const rebuilt = dates.map(date => byDate[date] || { date: date, sessions: defaultSessions() });
+        rebuilt.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        scheduleData.length = 0;
+        rebuilt.forEach(d => scheduleData.push(d));
+      }
       if (typeof renderScheduleDayList === 'function') renderScheduleDayList();
       syncToCloud();
     }
@@ -5758,7 +5768,7 @@
             <span style="font-size:13px;color:#555;">階</span>`;
           return `
           <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
-            <input type="text" class="ss-label" value="${s.label || ''}" placeholder="午前・午後など"
+            <input type="text" class="ss-label" value="${s.label || ''}" placeholder="ラベル（任意）"
               style="width:72px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
             <input type="time" class="ss-timeFrom" value="${s.timeFrom || '09:00'}"
               style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;">
