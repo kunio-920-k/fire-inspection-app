@@ -768,6 +768,10 @@
         } else {
           window.isJobOwner = true;
         }
+        // 【スコープ分離】「この現場を作った本人か」を、上書きされない別の変数として保持する。
+        // window.isJobOwner は applyOwnerUI で「今この現場で管理者か」に上書きされるため、
+        // 現場をまたぐ判定（個人の現場一覧に載せるか等）には使えない。
+        window.isJobRealOwner = window.isJobOwner;
         // オーナー（管理者）ならdismissedを自動リセット
         if (window.isJobOwner && snap.exists() && snap.data() && snap.data().dismissed === true) {
           setDoc(ref, { dismissed: false }, { merge: true });
@@ -776,6 +780,7 @@
       }).catch((e) => {
         dlog('オーナー確認エラー / ' + e.message);
         window.isJobOwner = true;
+        window.isJobRealOwner = true;
         window.currentJobCompanyId = null;
         return true;
       });
@@ -1032,6 +1037,31 @@
     // ---- 現場一覧管理 ----
     // 保存先: users/{uid}/jobs/{jobId}
 
+    // 【スコープ分離】この現場を個人の現場一覧（ホーム画面の「継続中の物件」）に
+    // 記録してよいかを判定する。記録してよいのは
+    //   ・この現場のオーナー本人
+    //   ・会社（組織）の承認済みメンバー
+    // の2種類だけ。現場ロールが【管理者】であっても、会社に属さない応援作業員の
+    // 一覧には残さない。残してしまうと、その人が以後ホーム画面からいつでも
+    // その現場（＝会社の他の現場）に再入場できてしまうため。
+    // 戻り値 true=記録可 / false=記録不可 / null=まだ判定材料が揃っていない（保留）
+    function canRecordJobToMyList() {
+      if (window.isJobRealOwner === true) return true;
+      const s = window._companyStatusCache;
+      if (s === undefined) return null;              // 会社所属の確認がまだ終わっていない
+      if (s && s.status === 'approved') return true; // 会社メンバー
+      if (window.isJobRealOwner === undefined) return null; // オーナー確認がまだ終わっていない
+      return false;
+    }
+
+    // 判定材料が揃うのを待って保留されていた現場一覧への記録を再試行する
+    window.flushPendingJobSummary = function() {
+      if (!window._pendingJobSummary) return;
+      const p = window._pendingJobSummary;
+      window._pendingJobSummary = null;
+      window.saveJobSummary(p.jobId, p.name, p.date);
+    };
+
     // 現場の概要情報を保存・更新する（物件名・作業日が設定された時に呼ぶ）
     window.saveJobSummary = function(jobId, name, date) {
       if (!jobId) return;
@@ -1040,6 +1070,13 @@
         window._pendingJobSummary = { jobId, name, date };
         return;
       }
+      const allowed = canRecordJobToMyList();
+      if (allowed === null) {
+        // オーナー確認・会社所属確認がまだ終わっていない → 保留して確定後に再試行する
+        window._pendingJobSummary = { jobId, name, date };
+        return;
+      }
+      if (allowed === false) return; // 応援作業員等 → 個人の現場一覧には残さない
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
       getDoc(ref).then((snap) => {
         const existing = snap.exists() ? snap.data() : {};
@@ -1193,6 +1230,30 @@
           });
         });
       }).catch((e) => { dlog('会社情報取得エラー / ' + e.message); return null; });
+    };
+
+    // 【スコープ分離】会社への所属状況をキャッシュする。
+    // 「個人の現場一覧に載せてよいか」「現場一覧ボタンを出すか」の判定で毎回
+    // Firestoreを読まないようにするため、ログイン確立時に1回だけ読んで保持する。
+    // undefined = 未取得 / null = どこにも所属していない
+    window._companyStatusCache = undefined;
+    window.refreshCompanyStatusCache = function() {
+      if (!window.loadMyCompanyStatus) {
+        window._companyStatusCache = null;
+        return Promise.resolve(null);
+      }
+      return window.loadMyCompanyStatus().then((s) => {
+        window._companyStatusCache = s || null;
+        return window._companyStatusCache;
+      }).catch(() => {
+        window._companyStatusCache = null;
+        return null;
+      }).then((s) => {
+        // 判定材料が揃ったので、保留していた処理と権限依存UIを反映し直す
+        if (window.flushPendingJobSummary) window.flushPendingJobSummary();
+        if (window.applyOwnerUI && window.currentJobId) window.applyOwnerUI();
+        return s;
+      });
     };
 
     // 承認待ちのメンバー一覧を取得する（会社の管理者用）
@@ -1465,11 +1526,19 @@
       window.currentUser = user || null;
       dlog('onAuthStateChanged発火 / user=' + (user ? user.email : 'null') + ' / authReady=' + window.authReady);
 
-      // 認証未確立で保留されていたsaveJobSummaryがあれば、ここで再試行する
+      // 【スコープ分離】ログインが確立したら、会社への所属状況を1回だけ読んでキャッシュする。
+      // 取得完了時に、保留されていたsaveJobSummaryの再試行もまとめて行われる。
+      if (user) {
+        window._companyStatusCache = undefined;
+        window.refreshCompanyStatusCache();
+      } else {
+        window._companyStatusCache = undefined;
+      }
+
+      // 認証未確立で保留されていたsaveJobSummaryがあれば、ここでも再試行する
+      // （判定材料がまだ揃っていなければ、再び保留に戻って上のキャッシュ取得完了時に処理される）
       if (user && window._pendingJobSummary) {
-        const pending = window._pendingJobSummary;
-        window._pendingJobSummary = null;
-        window.saveJobSummary(pending.jobId, pending.name, pending.date);
+        window.flushPendingJobSummary();
       }
 
       const emailLabel = document.getElementById('userEmailLabel');
@@ -1541,6 +1610,8 @@
           window.checkJobOwnership().then(() => {
             window.registerPresence();
             if (window.applyOwnerUI) window.applyOwnerUI();
+            // オーナー判定が確定したので、保留していた現場一覧への記録を再試行する
+            if (window.flushPendingJobSummary) window.flushPendingJobSummary();
           });
         }
 
@@ -3154,7 +3225,11 @@
       const memberBtn = document.getElementById('memberBtn');
       if (memberBtn) memberBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const jobListBtn = document.getElementById('jobListBtn');
-      if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      // 【スコープ分離】現場をまたぐ「現場一覧」は、この現場のオーナー本人か会社メンバーだけに出す。
+      // 現場ロールが【管理者】でも、会社に属さない応援作業員には出さない（他現場は社外秘のため）。
+      const canSeeJobList = (window.isJobRealOwner === true) ||
+        !!(window._companyStatusCache && window._companyStatusCache.status === 'approved');
+      if (jobListBtn) jobListBtn.style.display = canSeeJobList ? 'inline-block' : 'none';
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const actionButtonsWrap = document.getElementById('actionButtonsWrap');
@@ -3376,6 +3451,7 @@
       if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(window.currentJobId);
       window.ownerCheckDone = true;
       window.isJobOwner = true;
+      window.isJobRealOwner = true; // 新規作成＝この現場のオーナー本人（checkJobOwnershipを通らないため明示）
       window.myRole = 'admin';
       if (window.registerPresence) window.registerPresence();
       if (window.startPresenceWatch) window.startPresenceWatch();
@@ -6343,6 +6419,8 @@
       if (dashBtn) dashBtn.style.display = 'none';
       if (!window.loadMyCompanyStatus) return;
       window.loadMyCompanyStatus().then((status) => {
+        // 会社の登録・参加・退会の直後もここを通るので、キャッシュを最新に保つ
+        window._companyStatusCache = status || null;
         if (!status) {
           card.textContent = '🏢 会社に未登録（タップして登録・参加）';
         } else if (status.status === 'pending') {
@@ -6372,6 +6450,9 @@
       if (!window.loadMyCompanyStatus) { body.innerHTML = '<p>まだログインが完了していません。</p>'; return; }
       window.loadMyCompanyStatus().then((status) => {
         window._myCompanyStatus = status;
+        // 会社の登録・参加・退会の直後もここを通るので、キャッシュを最新に保つ
+        window._companyStatusCache = status || null;
+        if (window.applyOwnerUI && window.currentJobId) window.applyOwnerUI();
         if (!status) {
           renderCompanyModalNoCompany(body);
         } else if (status.status === 'pending') {
