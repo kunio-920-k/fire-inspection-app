@@ -2720,7 +2720,7 @@
     // （ブロックの号室編集内容が見つからない場合のフォールバック用）
     function buildDefaultFloorDataForSetup(floorCount, roomCount, cut4Room, cut4Floor) {
       const data = [];
-      for (let f = floorCount; f >= 1; f--) {
+      for (let f = (cut4Floor ? floorCount + 1 : floorCount); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const rooms = [];
         for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
@@ -2759,7 +2759,7 @@
       const listEl = document.getElementById('mb_floorEditList_' + i);
 
       let html = '';
-      for (let f = floorCount; f >= 1; f--) {
+      for (let f = (cut4Floor ? floorCount + 1 : floorCount); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const arr = [];
         for (let r = 1; r <= (cut4Room ? roomCount + 1 : roomCount); r++) {
@@ -2783,7 +2783,7 @@
     // 「号室を確認・編集する」で個別入力された階があればそれを優先し、なければデフォルトの自動採番を使う。
     function buildFloorDataForBlock(i, floorCount, roomCount, cut4Room, cut4Floor) {
       const data = [];
-      for (let f = floorCount; f >= 1; f--) {
+      for (let f = (cut4Floor ? floorCount + 1 : floorCount); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const customInput = document.getElementById('mb_floorinput_' + i + '_' + f);
         let rooms;
@@ -4311,7 +4311,7 @@
       const cut4Floor = document.getElementById('cut4Floor').checked;
       const floorEditList = document.getElementById('floorEditList');
       floorEditList.innerHTML = '';
-      for (let f = floors; f >= 1; f--) {
+      for (let f = (cut4Floor ? floors + 1 : floors); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         let roomNumbers;
         if (pendingFloorValues[f]) {
@@ -4402,7 +4402,7 @@
         const newRoomSet = new Set();
         const floors = parseInt(document.getElementById('floorCount').value);
         const cut4Floor = document.getElementById('cut4Floor').checked;
-        for (let f = floors; f >= 1; f--) {
+        for (let f = (cut4Floor ? floors + 1 : floors); f >= 1; f--) {
           if (cut4Floor && f === 4) continue;
           const input = document.getElementById('floor_' + f);
           if (!input) continue;
@@ -4485,14 +4485,14 @@
 
       // 設定画面に戻った時のために号室入力値を保存
       pendingFloorValues = {};
-      for (let f = floors; f >= 1; f--) {
+      for (let f = (cut4Floor ? floors + 1 : floors); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const input = document.getElementById('floor_' + f);
         if (input) pendingFloorValues[f] = input.value;
       }
 
       tableFloorData = [];
-      for (let f = floors; f >= 1; f--) {
+      for (let f = (cut4Floor ? floors + 1 : floors); f >= 1; f--) {
         if (cut4Floor && f === 4) continue;
         const input = document.getElementById('floor_' + f);
         if (!input) continue;
