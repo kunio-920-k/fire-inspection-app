@@ -755,6 +755,66 @@
       });
     };
 
+    // ---- 【関所】現場への入場資格の判定 ----
+    // 次の3つのうち、どれか1つでも当てはまれば入場できる。
+    //   ① オーナー   ：この現場を作った本人（inspections/{jobId}.ownerUid）
+    //   ② 会社       ：この現場が紐付いている会社の承認済みメンバー
+    //   ③ 現場メンバー：QRで参加して参加記録が作られている人（presence/{uid}）
+    // どれにも当てはまらなければ弾く。これにより、会社を除名された人や現場から外された人は、
+    // 端末や個人の現場一覧に現場IDが残っていても、その先へ進めなくなる。
+    //
+    // 【注意1】QRリンク（?join=）での入場だけは判定しない。参加記録はこれから作られるため、
+    //          ここで弾くと誰も新規参加できなくなる（QRを渡すこと自体が招待である）。
+    // 【注意2】通信エラー時は「通す」側に倒している。現場で電波が悪いだけの作業員を
+    //          締め出さないため。最終的なアクセス制御はFirestoreルール側で担保する。
+    window.checkJobAccess = function(jobId) {
+      if (!window.currentUser || !jobId) return Promise.resolve(true);
+      if (window._joinedViaLink) return Promise.resolve(true); // QR招待は関所を通さない
+      return getDoc(doc(db, 'inspections', jobId)).then((snap) => {
+        if (!snap.exists()) return true; // まだ実体の無い新規現場 → 通す
+        const d = snap.data() || {};
+        if (!d.ownerUid) return true; // オーナー未記録の現場は判定材料が無いので通す
+        if (d.ownerUid === window.currentUser.uid) return true; // ①オーナー
+
+        // ②会社（この現場が会社に紐付いていて、自分がその会社の承認済みメンバーか）
+        const viaCompany = d.companyId && window.loadMyCompanyStatus
+          ? window.loadMyCompanyStatus()
+              .then((s) => !!(s && s.status === 'approved' && s.companyId === d.companyId))
+              .catch(() => false)
+          : Promise.resolve(false);
+
+        return viaCompany.then((ok) => {
+          if (ok) return true;
+          // ③現場メンバー（参加記録があるか）
+          return getDoc(doc(db, 'inspections', jobId, 'presence', window.currentUser.uid))
+            .then((p) => p.exists())
+            .catch(() => false);
+        });
+      }).catch((e) => {
+        dlog('入場判定エラー / ' + e.message);
+        return true; // 通信エラーは安全側（通す）
+      });
+    };
+
+    // 入場資格が無かった場合の処理。端末に残った現場IDを消し、個人の現場一覧からも
+    // その現場を取り除いたうえで、ホーム画面へ戻す。
+    // これにより「継続中の物件」に残った幽霊は、押した時点で自動的に消える。
+    window.denyJobAccess = function(jobId) {
+      dlog('入場を拒否 / job=' + jobId);
+      localStorage.removeItem('mc_job_id');
+      window.currentJobId = null;
+      const cleanup = (window.currentUser && jobId)
+        ? deleteDoc(doc(db, 'users', window.currentUser.uid, 'jobs', jobId)).catch(() => {})
+        : Promise.resolve();
+      return cleanup.then(() => window.showAppAlert(
+        'この現場へのアクセス権がありません。\n' +
+        '現場から外れているか、会社から外れている可能性があります。\n\n' +
+        '再び参加する場合は、現場の管理者に招待用QRコードの再発行を依頼してください。'
+      )).then(() => {
+        location.reload();
+      });
+    };
+
     // 今ログインしている人が、この現場のオーナー（親機）かどうかを確認する
     // ownerUidがまだ記録されていない場合（古いデータ等）は、安全側に倒してオーナー扱いにする
     window.checkJobOwnership = function() {
@@ -874,15 +934,21 @@
     // ログイン時に自分のpresenceドキュメントを初期登録する（roleは初回のみworkerで登録）
     window.registerPresence = function() {
       if (!window.currentUser || !window.currentJobId) return;
-      const amOwner = !!window.isJobOwner; // 非同期処理の前に値を確定させる
+      // 【重要】ここは window.isJobOwner を使ってはいけない。
+      // あれは applyOwnerUI で「今この現場で管理者か」に上書きされる表示用フラグのため、
+      // 子機でも true になることがあり、その場合 role が admin で上書きされてしまう。
+      // 判定には、上書きされない「この現場を作った本人か」を使う。
+      const amOwner = (window.isJobRealOwner === true); // 非同期処理の前に値を確定させる
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
       const companyAdminCheck = window.checkCompanyAdminAccess ? window.checkCompanyAdminAccess() : Promise.resolve(false);
       companyAdminCheck.then((isCompanyAdminHere) => {
         getDoc(ref).then((snap) => {
           if (snap.exists() && snap.data().role && !amOwner) {
             const existing = snap.data();
-            if (isCompanyAdminHere && existing.role !== 'admin') {
+            if (isCompanyAdminHere && existing.role !== 'admin' && existing.roleSetByAdmin !== true) {
               // 既にworker/subとして参加済みだが、会社の管理者なので【管理者】へ自動格上げする
+              // （ただし、この現場のマスターが明示的に権限を指定していた場合＝roleSetByAdmin は、
+              //   現場での指定を優先し、自動格上げは行わない）
               setDoc(ref, {
                 uid: window.currentUser.uid,
                 displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
@@ -949,7 +1015,14 @@
     window.updateMemberRole = function(uid, newRole) {
       if (!window.currentJobId) return;
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', uid);
-      setDoc(ref, { role: newRole }, { merge: true }).catch((e) => dlog('role変更エラー / ' + e.message));
+      // 現場のマスターが明示的に指定した権限であることを記録する。
+      // これが立っていると、会社の管理者フラグによる自動格上げに上書きされない
+      // （会社の権限＝入場時の初期値／現場での指定＝それを上書きする、という関係）。
+      setDoc(ref, {
+        role: newRole,
+        grantedViaCompany: false,
+        roleSetByAdmin: true
+      }, { merge: true }).catch((e) => dlog('role変更エラー / ' + e.message));
     };
 
     // presence監視を開始する（ログイン後1回だけ呼ぶ）
@@ -1218,7 +1291,16 @@
           if (!companySnap.exists()) return null;
           const company = companySnap.data();
           return getDoc(doc(db, 'companies', d.companyId, 'members', window.currentUser.uid)).then((memberSnap) => {
-            const member = memberSnap.exists() ? memberSnap.data() : { status: d.companyStatus, isCompanyAdmin: false };
+            // 会社側のメンバー記録が無い＝除名済み／脱退済み。この場合は「会社とは無関係の他人」として扱う。
+            // （以前はここで users 側に残った古い companyStatus を代用していたため、
+            //   除名されても approved と誤判定され、会社の現場が見え続ける不具合があった）
+            if (!memberSnap.exists()) {
+              // users 側に取り残された会社情報を消して自己修復する（次回以降は即座に他人と判定される）
+              setDoc(doc(db, 'users', window.currentUser.uid),
+                { companyId: null, companyStatus: null }, { merge: true }).catch(() => {});
+              return null;
+            }
+            const member = memberSnap.data();
             return {
               companyId: d.companyId,
               companyName: company.name,
@@ -1522,16 +1604,21 @@
     // ===== TESTMODE END =====
 
     // 認証状態の変化を監視
-    onAuthStateChanged(auth, (user) => {
+    // ※ 関所（入場判定）の完了後に同じ初期化をやり直せるよう、名前付き関数にしている
+    onAuthStateChanged(auth, function handleAuthState(user) {
       window.currentUser = user || null;
       dlog('onAuthStateChanged発火 / user=' + (user ? user.email : 'null') + ' / authReady=' + window.authReady);
 
       // 【スコープ分離】ログインが確立したら、会社への所属状況を1回だけ読んでキャッシュする。
       // 取得完了時に、保留されていたsaveJobSummaryの再試行もまとめて行われる。
       if (user) {
-        window._companyStatusCache = undefined;
-        window.refreshCompanyStatusCache();
+        if (!window._companyStatusStarted) {
+          window._companyStatusStarted = true;
+          window._companyStatusCache = undefined;
+          window.refreshCompanyStatusCache();
+        }
       } else {
+        window._companyStatusStarted = false;
         window._companyStatusCache = undefined;
       }
 
@@ -1575,6 +1662,7 @@
           if (joinId) {
             window.currentJobId = joinId;
             localStorage.setItem('mc_job_id', joinId);
+            window._joinedViaLink = true; // QRからの新規参加 → 関所は通さない
             dlog('子機参加 / job=' + joinId);
           } else {
             // 選択画面を表示（過去データがあるか確認）
@@ -1603,6 +1691,21 @@
             return;
           }
         }
+
+        // ---- 【関所】この現場に入る資格があるかを確認する ----
+        // 判定が終わるまでは、presence登録・各種監視・クラウド読み込みへ進ませない。
+        // 「継続中の物件」からの再開も現場一覧からの切替も、いったんlocalStorageへ書いて
+        // リロードする作りになっているため、ここ1箇所で全経路をまかなえる。
+        if (!window.jobAccessCheckDone) {
+          window.jobAccessCheckDone = true;
+          window.checkJobAccess(window.currentJobId).then((ok) => {
+            if (!ok) { window.denyJobAccess(window.currentJobId); return; }
+            window.jobAccessGranted = true;
+            handleAuthState(user); // 資格が確認できたので、通常の初期化をやり直す
+          });
+          return;
+        }
+        if (!window.jobAccessGranted) return;
 
         // このセッションでのオーナー確認（1回だけ）。終わったらpresence登録→画面更新
         if (!window.ownerCheckDone) {
@@ -3191,6 +3294,8 @@
       const joinId = params.get('join');
       if (joinId) {
         localStorage.setItem('mc_job_id', joinId);
+        // QRリンクからの入場であることを記録する（関所はこの場合だけ判定を行わない）
+        window._joinedViaLink = true;
         // 次回リロード時に毎回joinを処理しないよう、URLからパラメータを消しておく
         history.replaceState(null, '', location.pathname);
         return joinId;
@@ -3232,6 +3337,9 @@
       if (jobListBtn) jobListBtn.style.display = canSeeJobList ? 'inline-block' : 'none';
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      // 物件データの持ち出しは管理者のみ（子機・応援作業員には現場のデータを丸ごと渡さない）
+      const downloadDataBtn = document.getElementById('downloadDataBtn');
+      if (downloadDataBtn) downloadDataBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const actionButtonsWrap = document.getElementById('actionButtonsWrap');
       // 「この現場から退場」「スケジュール確認」は全員が使うため、行自体は常に表示し、
       // 個々のボタンの表示・非表示は下でそれぞれ制御する
@@ -4073,6 +4181,11 @@
     // サイン画像・不良写真は容量の都合上もともとクラウド同期対象に含めていないため、
     // このダウンロード／アップロードにも含まれない（点検状態・不良記録テキスト・予約・スケジュール等は含む）。
     function downloadPropertyData() {
+      // ボタンを隠すだけではコンソール等から呼べてしまうため、関数側でも権限を確認する
+      if ((window.myRole || 'worker') !== 'admin') {
+        window.showAppAlert('物件データのダウンロードは管理者のみ行えます。');
+        return;
+      }
       const state = gatherInspectionState();
       const payload = {
         __manchestar_export__: true,
@@ -4380,6 +4493,20 @@
       applyScheduleDim();
     }
 
+    // 【バグ対策】立面図の各階の号室は「号室を確認・編集する」で作られる floor_◯ 入力欄から
+    // 読み取っている。新規設定でこの欄を一度も開かずに立面図を作ると、読み取り元が存在せず
+    // 空の立面図ができてしまう（画面だけ切り替わって表が無い状態）。
+    // そこで、欄が揃っていなければ prepareEdit() で先に生成しておく。
+    function ensureFloorEditInputs() {
+      const floors = parseInt(document.getElementById('floorCount').value);
+      if (!floors || isNaN(floors)) return;
+      const cut4Floor = document.getElementById('cut4Floor').checked;
+      for (let f = (cut4Floor ? floors + 1 : floors); f >= 1; f--) {
+        if (cut4Floor && f === 4) continue;
+        if (!document.getElementById('floor_' + f)) { prepareEdit(); return; }
+      }
+    }
+
     function prepareEdit() {
       const floors = parseInt(document.getElementById('floorCount').value);
       const rooms = parseInt(document.getElementById('roomCount').value);
@@ -4473,6 +4600,9 @@
     }
 
     async function generateTable() {
+      // 号室の読み取り元となる floor_◯ 入力欄が未生成なら、ここで作ってから進む
+      ensureFloorEditInputs();
+
       // 既存データがある状態で再生成する場合、削除される号室のデータ消失チェック
       if (tableGenerated) {
         const newRoomSet = new Set();
