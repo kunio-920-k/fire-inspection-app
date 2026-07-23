@@ -3157,6 +3157,8 @@
       if (jobListBtn) jobListBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const toSetupBtn = document.getElementById('toSetupBtn');
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      const downloadDataBtn = document.getElementById('downloadDataBtn');
+      if (downloadDataBtn) downloadDataBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const actionButtonsWrap = document.getElementById('actionButtonsWrap');
       // 「この現場から退場」「スケジュール確認」は全員が使うため、行自体は常に表示し、
       // 個々のボタンの表示・非表示は下でそれぞれ制御する
@@ -3997,6 +3999,8 @@
     // サイン画像・不良写真は容量の都合上もともとクラウド同期対象に含めていないため、
     // このダウンロード／アップロードにも含まれない（点検状態・不良記録テキスト・予約・スケジュール等は含む）。
     function downloadPropertyData() {
+      // ボタンを隠すだけではコンソールから直接呼べるため、関数側にもガードを置く
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       const state = gatherInspectionState();
       const payload = {
         __manchestar_export__: true,
