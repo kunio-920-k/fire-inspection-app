@@ -602,6 +602,24 @@
       const panel = document.getElementById('debugPanel');
       if (panel) panel.textContent = logs.join('\n');
     }
+    // 診断用パネル。URLに ?debug=1 を付けて開いた時だけ表示する（既定は非表示＝従来どおり）。
+    // 一度付ければ以降のリロードでも出続ける。消すときは ?debug=0 で開く。
+    (function setupDebugPanel() {
+      try {
+        const q = new URLSearchParams(location.search).get('debug');
+        if (q === '1') localStorage.setItem('mc_debug_panel', '1');
+        if (q === '0') localStorage.removeItem('mc_debug_panel');
+        if (localStorage.getItem('mc_debug_panel') !== '1') return;
+        const panel = document.createElement('div');
+        panel.id = 'debugPanel';
+        panel.title = 'タップで隠す';
+        panel.addEventListener('click', () => { panel.style.display = 'none'; });
+        document.addEventListener('DOMContentLoaded', () => {
+          document.body.appendChild(panel);
+          try { renderDebugPanel(JSON.parse(localStorage.getItem('mc_debug_logs') || '[]')); } catch (e) {}
+        });
+      } catch (e) {}
+    })();
     window.dlog = dlog;
     (function initDebugPanel() {
       try {
@@ -756,7 +774,10 @@
     };
 
     // 今ログインしている人が、この現場のオーナー（親機）かどうかを確認する
-    // ownerUidがまだ記録されていない場合（古いデータ等）は、安全側に倒してオーナー扱いにする
+    // 判定できない場合（ownerUid未記録・通信エラー等）は false に倒す。
+    // オーナー扱いに倒すと、通信が一瞬切れただけで子機が管理者になり、presenceにadminが
+    // 書き込まれて回線回復後も居座るため。false側なら一時的に一般扱いになるだけで、
+    // 次のリロードで正しい判定に戻る（復旧可能な側に倒す）。
     window.checkJobOwnership = function() {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve(true);
       const ref = doc(db, 'inspections', window.currentJobId);
@@ -765,8 +786,10 @@
         window.currentJobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
         if (snap.exists() && snap.data() && snap.data().ownerUid) {
           window.isJobOwner = (snap.data().ownerUid === window.currentUser.uid);
+          dlog('[診断] オーナー判定: ownerUid=' + String(snap.data().ownerUid).slice(0, 8) + ' / 自分=' + String(window.currentUser.uid).slice(0, 8) + ' → isJobOwner=' + window.isJobOwner);
         } else {
-          window.isJobOwner = true;
+          window.isJobOwner = false;
+          dlog('[診断] オーナー判定: ownerUidが無いためfalseに倒した / doc存在=' + snap.exists());
         }
         // オーナー（管理者）ならdismissedを自動リセット
         if (window.isJobOwner && snap.exists() && snap.data() && snap.data().dismissed === true) {
@@ -774,10 +797,10 @@
         }
         return window.isJobOwner;
       }).catch((e) => {
-        dlog('オーナー確認エラー / ' + e.message);
-        window.isJobOwner = true;
+        dlog('[診断] オーナー判定: エラーのためfalseに倒した / ' + e.message);
+        window.isJobOwner = false;
         window.currentJobCompanyId = null;
-        return true;
+        return false;
       });
     };
 
@@ -874,6 +897,7 @@
       const companyAdminCheck = window.checkCompanyAdminAccess ? window.checkCompanyAdminAccess() : Promise.resolve(false);
       companyAdminCheck.then((isCompanyAdminHere) => {
         getDoc(ref).then((snap) => {
+          dlog('[診断] presence登録: amOwner=' + amOwner + ' / 会社管理者=' + isCompanyAdminHere + ' / 既存role=' + (snap.exists() ? (snap.data().role || 'なし') : '未登録'));
           if (snap.exists() && snap.data().role && !amOwner) {
             const existing = snap.data();
             if (isCompanyAdminHere && existing.role !== 'admin') {
@@ -902,12 +926,14 @@
               });
             } else {
               // 既に登録済み かつ オーナーでない → roleをそのまま使う
+              dlog('[診断] presence登録: 既存roleを維持 → ' + existing.role);
               window.myRole = existing.role;
               if (window.applyRoleUI) window.applyRoleUI();
             }
           } else {
             // 未登録、またはオーナーの場合はadminで登録・上書き（会社の管理者としての無招待入室もここでadmin扱いにする）
             const initialRole = (amOwner || isCompanyAdminHere) ? 'admin' : 'worker';
+            dlog('[診断] presence登録: 上書き側に入った → initialRole=' + initialRole + '（既存roleは破棄される）');
             const presenceData = {
               uid: window.currentUser.uid,
               displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
@@ -3210,6 +3236,7 @@
       }
 
       // 権限をwindow.isJobOwnerにも反映（既存のガード処理との互換性）
+      if (window.isJobOwner !== isAdmin) dlog('[診断] applyOwnerUI: isJobOwner ' + window.isJobOwner + ' → ' + isAdmin + '（role=' + role + '）');
       window.isJobOwner = isAdmin;
 
       // 号棟タブ行（更新お知らせボタン含む）は権限で表示が変わるため、
