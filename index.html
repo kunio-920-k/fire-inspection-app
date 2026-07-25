@@ -1297,6 +1297,41 @@
       });
     };
 
+    // 「参加申請中（承認待ち）」の状態を解消する。
+    // ・自分がその会社のオーナー（作成者）なら：会社は残したまま、壊れた所属を正しい状態へ復元する。
+    //   （users側にpendingが残り、members記録が欠けた等の破損で、オーナーが承認待ちに見える場合の自己修復）
+    // ・オーナーでないなら：申請を取り消す（members記録を消し、users側の所属も消す）。
+    // 戻り値は 'restored'（オーナー復元）または 'cancelled'（申請取消）。
+    window.resolvePendingMembership = function() {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'users', window.currentUser.uid)).then((meSnap) => {
+        const companyId = meSnap.exists() ? meSnap.data().companyId : null;
+        if (!companyId) {
+          // そもそも所属情報が無い。usersの残骸だけ掃除して終わり。
+          return setDoc(doc(db, 'users', window.currentUser.uid),
+            { companyId: null, companyStatus: null }, { merge: true }).then(() => 'cancelled');
+        }
+        return getDoc(doc(db, 'companies', companyId)).then((companySnap) => {
+          const isOwner = companySnap.exists() && companySnap.data().ownerUid === window.currentUser.uid;
+          const memberRef = doc(db, 'companies', companyId, 'members', window.currentUser.uid);
+          if (isOwner) {
+            // オーナー：会社は残す。members記録を承認済み・管理者に直し、users側もapprovedへ戻す。
+            return setDoc(memberRef, {
+              uid: window.currentUser.uid,
+              displayName: window.currentUser.displayName || '',
+              status: 'approved',
+              isCompanyAdmin: true,
+              approvedAt: serverTimestamp()
+            }, { merge: true }).then(() => setDoc(doc(db, 'users', window.currentUser.uid),
+              { companyId: companyId, companyStatus: 'approved' }, { merge: true })).then(() => 'restored');
+          }
+          // 申請者：申請を取り消す。
+          return deleteDoc(memberRef).then(() => setDoc(doc(db, 'users', window.currentUser.uid),
+            { companyId: null, companyStatus: null }, { merge: true })).then(() => 'cancelled');
+        });
+      });
+    };
+
     // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
     window.regenerateInviteCode = function(companyId) {
       const newCode = generateInviteCode();
@@ -6423,7 +6458,13 @@
         } else if (status.status === 'pending') {
           body.innerHTML =
             '<p style="font-size:14px;">「' + status.companyName + '」への参加申請中です。</p>' +
-            '<p style="font-size:12px;color:#888;">会社の代表者が承認するまでお待ちください。</p>';
+            '<p style="font-size:12px;color:#888;">会社の代表者が承認するまでお待ちください。</p>' +
+            '<div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">' +
+              '<button onclick="submitResolvePending()" style="width:100%;background:#e07020;color:#fff;">' +
+              'この所属を解除する</button>' +
+              '<p style="font-size:11px;color:#888;margin:6px 0 0;">申請を取り消してどこにも所属していない状態に戻します。' +
+              'あなたがこの会社の作成者（オーナー）の場合は、作成者として正しい状態に復元します。</p>' +
+            '</div>';
         } else if (status.status === 'approved') {
           renderCompanyModalApproved(body, status);
         } else {
@@ -6468,6 +6509,17 @@
         window.showAppAlert('「' + r.companyName + '」に参加申請しました。承認をお待ちください。');
         refreshCompanyModal();
       }).catch((e) => window.showAppAlert(e.message));
+    }
+
+    async function submitResolvePending() {
+      if (!await window.showAppConfirm('この会社への所属（申請）を解除します。\nあなたが作成者（オーナー）の場合は、作成者として正しい状態に戻します。\n\nよろしいですか？')) return;
+      window.resolvePendingMembership().then((result) => {
+        if (result === 'restored') {
+          window.showAppAlert('あなたはこの会社の作成者でした。作成者として復元しました。').then(() => location.reload());
+        } else {
+          window.showAppAlert('申請を解除しました。どこにも所属していない状態に戻りました。').then(() => location.reload());
+        }
+      }).catch((e) => window.showAppAlert('解除に失敗しました：' + e.message));
     }
 
     async function submitLeaveCompany(companyId, companyName) {
