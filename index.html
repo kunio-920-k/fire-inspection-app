@@ -1332,6 +1332,20 @@
       });
     };
 
+    // 会社名を変更する。登録者（オーナー）のみ。頻繁な操作は想定していない。
+    window.renameCompany = function(companyId, newName) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      const name = (newName || '').trim();
+      if (!name) return Promise.reject(new Error('会社名を入力してください'));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists()) throw new Error('会社が見つかりません。');
+        if (snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('会社名の変更は登録者（オーナー）のみ行えます。');
+        }
+        return updateDoc(doc(db, 'companies', companyId), { name: name }).then(() => name);
+      });
+    };
+
     // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
     window.regenerateInviteCode = function(companyId) {
       const newCode = generateInviteCode();
@@ -6522,6 +6536,40 @@
       }).catch((e) => window.showAppAlert('解除に失敗しました：' + e.message));
     }
 
+    function showCompanyRenameInput() {
+      const sec = document.getElementById('companyRenameSection');
+      if (!sec) return;
+      const status = window._myCompanyStatus || {};
+      const current = (status.companyName || '').replace(/"/g, '&quot;');
+      sec.innerHTML =
+        '<div style="padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">会社名を変更する</div>' +
+          '<input id="renameCompanyInput" type="text" value="' + current + '" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button onclick="submitRenameCompany()" style="flex:1;">この名前にする</button>' +
+            '<button onclick="refreshCompanyModal()" style="flex:1;background:#f0f0f0;border-color:#ccc;color:#555;">やめる</button>' +
+          '</div>' +
+        '</div>';
+      const input = document.getElementById('renameCompanyInput');
+      if (input) { input.focus(); input.select(); }
+    }
+
+    async function submitRenameCompany() {
+      const status = window._myCompanyStatus;
+      if (!status || !status.companyId) { window.showAppAlert('会社情報が読み込めませんでした。'); return; }
+      const input = document.getElementById('renameCompanyInput');
+      const name = (input && input.value || '').trim();
+      if (!name) { window.showAppAlert('会社名を入力してください'); return; }
+      if (name === status.companyName) { refreshCompanyModal(); return; }
+      if (!await window.showAppConfirm('会社名を「' + name + '」に変更します。よろしいですか？')) return;
+      window.renameCompany(status.companyId, name).then(() => {
+        window.showAppAlert('会社名を変更しました。').then(() => {
+          refreshCompanyModal();
+          if (window.refreshStartScreenCompanyStatus) refreshStartScreenCompanyStatus();
+        });
+      }).catch((e) => window.showAppAlert('変更に失敗しました：' + e.message));
+    }
+
     async function submitLeaveCompany(companyId, companyName) {
       if (!await window.showAppConfirm('「' + companyName + '」から抜けます。\n再度参加するには、招待コードでの申請と承認が必要になります。\n\nよろしいですか？')) return;
       window.leaveCompanySelf(companyId).then(() => {
@@ -6536,6 +6584,12 @@
       let roleText = status.isCompanyAdmin ? '<span style="color:#ff8c42;font-weight:bold;">【管理者】（全現場に介入可）</span>' : '一般（会社のダッシュボードを閲覧）';
       if (status.isOwner) roleText += ' <span style="color:#3a9bdc;font-weight:bold;">（登録者）</span>';
       html += '<p style="font-size:12px;color:#666;margin:0 0 12px;">あなたの立場：' + roleText + '</p>';
+
+      if (status.isOwner) {
+        html += '<div id="companyRenameSection" style="margin:0 0 12px;">' +
+            '<button onclick="showCompanyRenameInput()" style="font-size:11px;padding:4px 10px;background:#f5f5f5;border:1px solid #ccc;color:#555;">会社名を変更する</button>' +
+          '</div>';
+      }
 
       if (status.isCompanyAdmin) {
         html += '<div style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
