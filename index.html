@@ -450,6 +450,50 @@
       appId: "1:863412425540:web:9f7f5af93b89417132bd11"
     };
 
+    // ===== 接続先の設定ミス検出 =====================================================
+    // このアプリはフォークして使う前提で配布している。各社が自分の Firebase を用意し、
+    // 上の firebaseConfig を自社のものへ差し替える必要がある。
+    // 差し替え忘れると、その会社の点検データが開発元のサーバーへ流れ込んでしまうため、
+    // 「開発用の接続先のまま、開発元以外の場所で開かれた」ときは先へ進ませない。
+    //
+    // ※開発元でホスト名が増えた場合（独自ドメイン、別のテスト環境など）は
+    //   DEV_HOSTS に追記すること。
+    const DEV_PROJECT_ID = 'manchestar-test';
+    const DEV_HOSTS = ['kunio-920-k.github.io', 'localhost', '127.0.0.1', ''];
+
+    if (firebaseConfig.projectId === DEV_PROJECT_ID && DEV_HOSTS.indexOf(location.hostname) === -1) {
+      document.body.innerHTML =
+        '<div style="position:fixed;inset:0;background:#1a1010;color:#fff;padding:28px 22px;overflow:auto;' +
+        'font-family:system-ui,-apple-system,sans-serif;line-height:1.7;">' +
+          '<div style="max-width:520px;margin:0 auto;">' +
+            '<div style="font-size:13px;font-weight:700;letter-spacing:2px;color:#ff6b6b;margin-bottom:10px;">セットアップが未完了です</div>' +
+            '<h1 style="font-size:20px;margin:0 0 18px;">接続先が開発元のままです</h1>' +
+            '<p style="font-size:14px;color:#e0d8d8;margin:0 0 16px;">' +
+              'このアプリは、会社ごとに自分の Firebase を用意して使います。' +
+              'いまは開発元のテスト用データベースを指したままなので、このまま使うと' +
+              '<strong style="color:#ffb4b4;">点検データが開発元のサーバーへ送られてしまいます。</strong>' +
+            '</p>' +
+            '<div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);' +
+            'border-radius:8px;padding:16px 18px;margin:0 0 16px;">' +
+              '<div style="font-size:13px;font-weight:700;margin-bottom:8px;">直し方</div>' +
+              '<ol style="font-size:13px;color:#e0d8d8;margin:0;padding-left:20px;">' +
+                '<li style="margin-bottom:6px;">自社の Firebase プロジェクトを作る</li>' +
+                '<li style="margin-bottom:6px;"><code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">index.html</code> を開き、' +
+                  '<code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">firebaseConfig</code> を自社のものに書き換える</li>' +
+                '<li>保存して、もう一度開く</li>' +
+              '</ol>' +
+            '</div>' +
+            '<p style="font-size:12px;color:#9a8f8f;margin:0;">' +
+              '現在の接続先：<code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">' + DEV_PROJECT_ID + '</code>' +
+              '（開発元のテスト用）<br>' +
+              '設定手順は配布ページの説明をご覧ください。' +
+            '</p>' +
+          '</div>' +
+        '</div>';
+      throw new Error('接続先が開発元のままのため、起動を中止しました。firebaseConfig を自社のものへ差し替えてください。');
+    }
+    // ==============================================================================
+
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const provider = new GoogleAuthProvider();
