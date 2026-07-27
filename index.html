@@ -1990,7 +1990,9 @@
           <span class="home-status-chev">›</span>
         </div>
         <!-- 現場管理ダッシュボード（会社の管理者のみ表示） -->
-        <button id="startScreenDashboardBtn" onclick="openOfficeDashboardFromStartScreen()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:0;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;">🏢 現場管理ダッシュボードを開く</button>
+        <div id="startScreenDashboardWrap" style="display:none;border-top:1px solid #262d3a;padding:8px 10px 10px;">
+          <button onclick="openOfficeDashboardFromStartScreen()" style="width:100%;background:#ff8c42;color:#fff;border:none;border-radius:5px;padding:9px;font-size:13px;font-weight:bold;cursor:pointer;">🏢 現場管理ダッシュボードを開く</button>
+        </div>
       </div>
       <!-- メニューラベル -->
       <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
@@ -6616,7 +6618,7 @@
       if (!card) return;
       card.style.cssText = COMPANY_ROW_BASE + 'font-size:12px;color:#6a7280;';
       card.textContent = '読み込み中…';
-      const dashBtn = document.getElementById('startScreenDashboardBtn');
+      const dashBtn = document.getElementById('startScreenDashboardWrap');
       if (dashBtn) dashBtn.style.display = 'none';
       if (!window.loadMyCompanyStatus) return;
       window.loadMyCompanyStatus().then((status) => {
