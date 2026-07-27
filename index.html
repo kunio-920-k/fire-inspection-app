@@ -157,6 +157,11 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.2; }
     }
+    /* ホーム画面の所属・ログイン枠。1枠の中に別々のタップ先が並ぶので、
+       押した瞬間に沈ませて「ここは押せる」を伝える。 */
+    .home-status-row { transition: background 0.12s; }
+    .home-status-row:active { background: rgba(255,255,255,0.06); }
+    .home-status-chev { flex-shrink: 0; color: #4a5262; font-size: 15px; line-height: 1; }
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.4; transform: scale(0.85); }
@@ -1973,15 +1978,20 @@
     </div>
     <!-- 本文（中央寄せ） -->
     <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
-      <!-- ステータス（タップでログアウト） -->
-      <div onclick="confirmLogout()" style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;margin-bottom:20px;cursor:pointer;">
-        <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
-        <div style="font-size:12px;color:#6a7280;flex:1;"><strong style="color:white;" id="startUserName"></strong> でログイン中</div>
-        <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
+      <!-- 所属・ログイン状態（会社名／ログイン中／ダッシュボードを1枠に統合） -->
+      <div style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;margin-bottom:20px;overflow:hidden;">
+        <!-- 会社（タップで会社の画面） -->
+        <div id="companyStatusCard" onclick="openCompanyModal()" class="home-status-row" style="padding:11px 12px;cursor:pointer;">🏢 読み込み中…</div>
+        <!-- ログイン（タップでログアウト） -->
+        <div onclick="confirmLogout()" class="home-status-row" style="border-top:1px solid #262d3a;padding:8px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <div style="width:7px;height:7px;border-radius:50%;background:#2ecc71;animation:pulse 2s infinite;flex-shrink:0;"></div>
+          <div style="font-size:11px;color:#6a7280;flex:1;"><strong style="color:#b8c0cc;" id="startUserName"></strong> でログイン中</div>
+          <span style="font-size:10px;color:#2ecc71;font-family:'Inter',sans-serif;font-weight:600;">ONLINE</span>
+          <span class="home-status-chev">›</span>
+        </div>
+        <!-- 現場管理ダッシュボード（会社の管理者のみ表示） -->
+        <button id="startScreenDashboardBtn" onclick="openOfficeDashboardFromStartScreen()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:0;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;">🏢 現場管理ダッシュボードを開く</button>
       </div>
-      <!-- 会社ステータス -->
-      <div id="companyStatusCard" onclick="openCompanyModal()" style="background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);border-radius:6px;padding:10px 12px;margin-bottom:10px;cursor:pointer;font-size:12px;color:#d0d0d0;">🏢 読み込み中…</div>
-      <button id="startScreenDashboardBtn" onclick="openOfficeDashboardFromStartScreen()" style="display:none;width:100%;background:#ff8c42;color:#fff;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:16px;">🏢 現場管理ダッシュボードを開く</button>
       <!-- メニューラベル -->
       <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
       <!-- 新規物件 -->
@@ -6592,9 +6602,10 @@
     }
 
     // ホーム画面の会社ステータスカードを更新する
-    // ホーム画面の会社カード。副業などで同業他社のマンチェスターと併用する場合に、
+    // ホーム画面の所属表示。ログイン状態と同じ枠に収める。
+    // 副業などで同業他社のマンチェスターと併用する場合に、
     // 「いまどっちを開いているか」が一目で分かることを優先している。
-    const COMPANY_CARD_BASE = 'border-radius:8px;padding:12px 14px;margin-bottom:10px;cursor:pointer;position:relative;overflow:hidden;';
+    const COMPANY_ROW_BASE = 'padding:11px 12px;cursor:pointer;';
 
     function companyCardEscape(s) {
       return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -6603,40 +6614,39 @@
     function refreshStartScreenCompanyStatus() {
       const card = document.getElementById('companyStatusCard');
       if (!card) return;
-      card.style.cssText = COMPANY_CARD_BASE + 'background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);color:#d0d0d0;font-size:12px;';
-      card.textContent = '🏢 読み込み中…';
+      card.style.cssText = COMPANY_ROW_BASE + 'font-size:12px;color:#6a7280;';
+      card.textContent = '読み込み中…';
       const dashBtn = document.getElementById('startScreenDashboardBtn');
       if (dashBtn) dashBtn.style.display = 'none';
       if (!window.loadMyCompanyStatus) return;
       window.loadMyCompanyStatus().then((status) => {
         const notRegistered = () => {
-          card.style.cssText = COMPANY_CARD_BASE + 'background:rgba(255,255,255,0.08);border:1px dashed rgba(255,255,255,0.25);color:#d0d0d0;font-size:12px;';
-          card.textContent = '🏢 会社に未登録（タップして登録・参加）';
+          card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;font-size:12px;color:#8a94a6;';
+          card.innerHTML = '<span style="flex:1;">🏢 会社に未登録（タップして登録・参加）</span>' +
+            '<span class="home-status-chev">›</span>';
         };
         if (!status) {
           notRegistered();
         } else if (status.status === 'pending') {
-          card.style.cssText = COMPANY_CARD_BASE + 'background:linear-gradient(150deg,#4a3a1c,#2e2311);border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);';
+          card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;';
           card.innerHTML =
-            '<div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#e0a020;border-radius:8px 0 0 8px;"></div>' +
-            '<div style="padding-left:8px;">' +
-              '<div style="font-size:9px;letter-spacing:2px;color:#e0a020;font-weight:700;margin-bottom:3px;">ショゾク</div>' +
-              '<div style="font-size:15px;font-weight:bold;color:#fff;">' + companyCardEscape(status.companyName) + '</div>' +
-              '<div style="font-size:11px;color:#c8b48a;margin-top:2px;">参加申請中（登録者の承認待ち）</div>' +
-            '</div>';
-        } else if (status.status === 'approved') {
-          card.style.cssText = COMPANY_CARD_BASE + 'background:linear-gradient(150deg,#5a3418,#33200e);border:1px solid rgba(255,255,255,0.07);box-shadow:4px 4px 10px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.08);';
-          card.innerHTML =
-            '<div style="position:absolute;left:0;top:0;width:4px;height:100%;background:#ff8c42;border-radius:8px 0 0 8px;"></div>' +
-            '<div style="padding-left:8px;display:flex;align-items:center;gap:10px;">' +
-              '<div style="flex:1;min-width:0;">' +
-                '<div style="font-size:9px;letter-spacing:2px;color:#ff8c42;font-weight:700;margin-bottom:3px;">ショゾク</div>' +
-                '<div style="font-size:17px;font-weight:bold;color:#fff;line-height:1.25;word-break:break-word;">' + companyCardEscape(status.companyName) + '</div>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:16px;font-weight:bold;color:#e0a020;line-height:1.25;word-break:break-word;">' +
+                companyCardEscape(status.companyName) +
               '</div>' +
-              '<span style="flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">' +
-                (status.isCompanyAdmin ? '管理者' : '一般') +
-              '</span>' +
-            '</div>';
+              '<div style="font-size:11px;color:#6a7280;margin-top:2px;">参加申請中（登録者の承認待ち）</div>' +
+            '</div>' +
+            '<span class="home-status-chev">›</span>';
+        } else if (status.status === 'approved') {
+          card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;';
+          card.innerHTML =
+            '<div style="flex:1;min-width:0;font-size:16px;font-weight:bold;color:#fff;line-height:1.25;word-break:break-word;">' +
+              companyCardEscape(status.companyName) +
+            '</div>' +
+            '<span style="flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">' +
+              (status.isCompanyAdmin ? '管理者' : '一般') +
+            '</span>' +
+            '<span class="home-status-chev">›</span>';
           if (status.isCompanyAdmin && dashBtn) {
             dashBtn.style.display = 'block';
             window._startScreenDashboardCompanyId = status.companyId;
