@@ -1190,16 +1190,22 @@
         if (!companyId) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
         return getDoc(doc(db, 'companies', companyId)).then((companyDoc) => {
           if (!companyDoc.exists()) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
-          return setDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid), {
-            uid: window.currentUser.uid,
-            displayName: window.currentUser.displayName || '',
-            status: 'pending',
-            isCompanyAdmin: false,
-            requestedAt: serverTimestamp()
-          }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
-            companyId: companyId,
-            companyStatus: 'pending'
-          }, { merge: true })).then(() => ({ companyId, companyName: companyDoc.data().name }));
+          // 除名された人が同じコードで戻ってこようとした場合は、ここで弾く。
+          return getDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid)).then((meSnap) => {
+            if (meSnap.exists() && meSnap.data().status === 'removed') {
+              throw new Error('この会社には参加できません。会社にお問い合わせください。');
+            }
+            return setDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid), {
+              uid: window.currentUser.uid,
+              displayName: window.currentUser.displayName || '',
+              status: 'pending',
+              isCompanyAdmin: false,
+              requestedAt: serverTimestamp()
+            }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
+              companyId: companyId,
+              companyStatus: 'pending'
+            }, { merge: true })).then(() => ({ companyId, companyName: companyDoc.data().name }));
+          });
         });
       });
     };
@@ -1214,14 +1220,55 @@
           if (!companySnap.exists()) return null;
           const company = companySnap.data();
           return getDoc(doc(db, 'companies', d.companyId, 'members', window.currentUser.uid)).then((memberSnap) => {
-            const member = memberSnap.exists() ? memberSnap.data() : { status: d.companyStatus, isCompanyAdmin: false };
+            const member = memberSnap.exists() ? memberSnap.data() : null;
+            const isOwner = company.ownerUid === window.currentUser.uid;
+
+            // 会社側に有効な記録が無い＝この人はもうこの会社の一員ではない。
+            // 以前はここで users 側の古い控え（d.companyStatus）を信じていたため、
+            // 除名・却下されても「承認待ち」のまま固まる不具合が起きていた。
+            // 会社側を正とし、控えがズレていたら本人が自分で掃除する。
+            if (!member || member.status === 'removed') {
+              if (isOwner) {
+                // オーナーだけは例外。会社は本人のものなので、記録が欠けていれば復元する。
+                return setDoc(doc(db, 'companies', d.companyId, 'members', window.currentUser.uid), {
+                  uid: window.currentUser.uid,
+                  displayName: window.currentUser.displayName || '',
+                  status: 'approved',
+                  isCompanyAdmin: true,
+                  approvedAt: serverTimestamp()
+                }, { merge: true }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
+                  companyId: d.companyId,
+                  companyStatus: 'approved'
+                }, { merge: true })).then(() => ({
+                  companyId: d.companyId,
+                  companyName: company.name,
+                  inviteCode: company.inviteCode,
+                  status: 'approved',
+                  isCompanyAdmin: true,
+                  isOwner: true
+                }));
+              }
+              // 一般の人：自分の控えを掃除して「どこにも所属していない」状態に戻す。
+              return setDoc(doc(db, 'users', window.currentUser.uid), {
+                companyId: null,
+                companyStatus: null
+              }, { merge: true }).then(() => null);
+            }
+
+            // 控えが会社側とズレていたら、ついでに直しておく（自分の記録なので自分で書ける）。
+            if (d.companyStatus !== member.status) {
+              setDoc(doc(db, 'users', window.currentUser.uid), {
+                companyStatus: member.status
+              }, { merge: true }).catch(() => null);
+            }
+
             return {
               companyId: d.companyId,
               companyName: company.name,
               inviteCode: company.inviteCode,
               status: member.status,
               isCompanyAdmin: !!member.isCompanyAdmin,
-              isOwner: company.ownerUid === window.currentUser.uid
+              isOwner: isOwner
             };
           });
         });
@@ -1259,7 +1306,8 @@
           status: 'approved',
           isCompanyAdmin: !!isCompanyAdmin,
           approvedAt: serverTimestamp()
-        }).then(() => setDoc(doc(db, 'users', uid), { companyStatus: 'approved' }, { merge: true }));
+        });
+        // users 側の控えは書かない。相手が次にアプリを開いたとき、自分で直す。
       });
     };
 
@@ -1269,25 +1317,41 @@
         if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
           throw new Error('却下は会社の登録者のみ行えます。');
         }
-        return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
-          .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+        // 却下は記録ごと消す（＝本人はまた申請できる）。除名と違って再申請を弾かない。
+        // users 側の控えは書かない。相手が次にアプリを開いたとき、自分で直す。
+        return deleteDoc(doc(db, 'companies', companyId, 'members', uid));
       });
     };
 
-    // メンバーの「会社の管理者」フラグを切り替える（管理者なら誰でも可）
+    // メンバーの「会社の管理者」フラグを切り替える。登録者（オーナー）のみ行える。
     window.setCompanyMemberAdmin = function(companyId, uid, isCompanyAdmin) {
-      return updateDoc(doc(db, 'companies', companyId, 'members', uid), { isCompanyAdmin: !!isCompanyAdmin });
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('管理者の設定は会社の登録者のみ行えます。');
+        }
+        return updateDoc(doc(db, 'companies', companyId, 'members', uid), { isCompanyAdmin: !!isCompanyAdmin });
+      });
     };
 
-    // 会社メンバーを除名する（辞職・短期依頼の終了など。招待コードは変えずに済む）
-    // 管理者なら誰でも可。ただし現オーナー（登録者）は先に権限を譲渡してからでないと除名できない。
+    // 会社メンバーを除名する（辞職・短期依頼の終了など）。登録者（オーナー）のみ行える。
+    // 記録は消さず「除名済み」の印を付けて残す。同じ人が招待コードで再申請しても自動で弾くため。
+    // この印は招待コードを再発行すると一掃される（相手はもうコードを知らないので役目が終わる）。
     window.removeCompanyMember = function(companyId, uid) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
-        if (snap.exists() && snap.data().ownerUid === uid) {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('除名は会社の登録者のみ行えます。');
+        }
+        if (snap.data().ownerUid === uid) {
           throw new Error('この人は現在の登録者（オーナー）です。先に登録者権限を他の人へ譲渡してから除名してください。');
         }
-        return deleteDoc(doc(db, 'companies', companyId, 'members', uid))
-          .then(() => setDoc(doc(db, 'users', uid), { companyId: null, companyStatus: null }, { merge: true }));
+        // users 側の控えは書かない。相手が次にアプリを開いたとき、自分で直す。
+        return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
+          status: 'removed',
+          isCompanyAdmin: false,
+          removedAt: serverTimestamp()
+        });
       });
     };
 
@@ -1383,6 +1447,16 @@
             // エラーにはせず握りつぶす（次回の再発行で改めて消える）。
             if (!oldCode || oldCode === newCode) return null;
             return deleteDoc(doc(db, 'inviteCodes', oldCode)).catch(() => null);
+          })
+          .then(() => {
+            // 除名済みの印を一掃する。除名リストが必要なのは「相手が今のコードを知っている」
+            // からであって、コードを変えた時点でその前提が消えるため。
+            const ref = collection(db, 'companies', companyId, 'members');
+            return getDocs(query(ref, where('status', '==', 'removed'))).then((snap) => {
+              const jobs = [];
+              snap.forEach((d) => jobs.push(deleteDoc(d.ref).catch(() => null)));
+              return Promise.all(jobs);
+            }).catch(() => null);
           })
           .then(() => newCode);
       });
