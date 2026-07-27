@@ -1311,6 +1311,33 @@
       });
     };
 
+    // 除名済みメンバー一覧を取得する（登録者＝オーナー用）
+    window.loadRemovedCompanyMembers = function(companyId) {
+      const ref = collection(db, 'companies', companyId, 'members');
+      return getDocs(query(ref, where('status', '==', 'removed'))).then((snap) => {
+        const list = [];
+        snap.forEach((d) => list.push(d.data()));
+        return list;
+      }).catch((e) => { dlog('除名済み一覧取得エラー / ' + e.message); return []; });
+    };
+
+    // 除名を取り消して復帰させる（誤操作の取り消し）。登録者（オーナー）のみ行える。
+    // 相手の再申請・承認は不要で、そのまま承認済みに戻す。管理者フラグは付けない。
+    window.restoreCompanyMember = function(companyId, uid) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('復帰の操作は会社の登録者のみ行えます。');
+        }
+        return updateDoc(doc(db, 'companies', companyId, 'members', uid), {
+          status: 'approved',
+          isCompanyAdmin: false,
+          removedAt: null,
+          approvedAt: serverTimestamp()
+        });
+      });
+    };
+
     // 参加申請を却下する（会社から外す。こちらも登録者のみ行える）
     window.rejectCompanyMember = function(companyId, uid) {
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
@@ -6834,8 +6861,9 @@
       const section = document.getElementById('companyMemberSection');
       Promise.all([
         window.loadPendingCompanyMembers(companyId),
-        window.loadApprovedCompanyMembers(companyId)
-      ]).then(([pending, approved]) => {
+        window.loadApprovedCompanyMembers(companyId),
+        isOwner ? window.loadRemovedCompanyMembers(companyId) : Promise.resolve([])
+      ]).then(([pending, approved, removed]) => {
         let html = '';
         if (pending.length > 0) {
           html += '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">承認待ち（' + pending.length + '件）</div>';
@@ -6860,13 +6888,31 @@
         } else {
           approved.forEach((m) => {
             html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
-              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + (m.isCompanyAdmin ? ' <span style="color:#ff8c42;font-size:11px;">【管理者】</span>' : '') + '</span>' +
-              '<span>' +
+              '<span style="font-size:13px;">' + (m.displayName || '（名前未設定）') + (m.isCompanyAdmin ? ' <span style="color:#ff8c42;font-size:11px;">【管理者】</span>' : '') + '</span>';
+            // 管理者フラグの変更と除名は登録者（オーナー）のみ。他の人にはボタンを出さない。
+            if (isOwner) {
+              html += '<span>' +
               '<button onclick="toggleCompanyAdminUI(\'' + companyId + '\',\'' + m.uid + '\',' + (!m.isCompanyAdmin) + ')" style="padding:4px 8px;font-size:12px;">' +
                 (m.isCompanyAdmin ? '管理者を外す' : '管理者にする') +
               '</button> ' +
               '<button onclick="removeMemberUI(\'' + companyId + '\',\'' + m.uid + '\',\'' + (m.displayName || '（名前未設定）').replace(/'/g, "\\'") + '\')" style="padding:4px 8px;font-size:12px;background:#fff0f0;border-color:#c88;color:#c00;">除名</button>' +
-              '</span></div>';
+              '</span>';
+            }
+            html += '</div>';
+          });
+        }
+
+        // 除名済みの一覧（登録者のみ）。誤って除名したときに、ここから取り消せる。
+        // 招待コードを再発行すると、この一覧はまとめて消える。
+        if (isOwner && removed.length > 0) {
+          html += '<div style="font-weight:bold;font-size:13px;margin:12px 0 6px;color:#c00;">除名済み（' + removed.length + '人）</div>';
+          html += '<p style="font-size:11px;color:#888;margin:0 0 6px;">この人たちは招待コードを知っていても再参加できません。' +
+            '間違えて除名した場合は「復帰」で戻せます。招待コードを再発行すると、この一覧は消えます。</p>';
+          removed.forEach((m) => {
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;">' +
+              '<span style="font-size:13px;color:#888;">' + (m.displayName || '（名前未設定）') + '</span>' +
+              '<button onclick="restoreMemberUI(\'' + companyId + '\',\'' + m.uid + '\',\'' + (m.displayName || '（名前未設定）').replace(/'/g, "\\'") + '\')" style="padding:4px 8px;font-size:12px;background:#eef7ee;border-color:#8b8;color:#2a6;">復帰させる</button>' +
+              '</div>';
           });
         }
         section.innerHTML = html;
@@ -6905,7 +6951,14 @@
       window.rejectCompanyMember(companyId, uid).then(() => loadCompanyMemberSection(companyId, true)).catch((e) => window.showAppAlert(e.message));
     }
     function toggleCompanyAdminUI(companyId, uid, makeAdmin) {
-      window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner));
+      window.setCompanyMemberAdmin(companyId, uid, makeAdmin).then(() => loadCompanyMemberSection(companyId, window._myCompanyStatus && window._myCompanyStatus.isOwner)).catch((e) => window.showAppAlert(e.message));
+    }
+    async function restoreMemberUI(companyId, uid, name) {
+      if (!await window.showAppConfirm('「' + name + '」の除名を取り消して、会社メンバーに戻します。\n本人の再申請は不要です。\n\nよろしいですか？')) return;
+      window.restoreCompanyMember(companyId, uid).then(() => {
+        window.showAppAlert('「' + name + '」を会社メンバーに戻しました。');
+        loadCompanyMemberSection(companyId, true);
+      }).catch((e) => window.showAppAlert(e.message));
     }
     async function removeMemberUI(companyId, uid, name) {
       if (!await window.showAppConfirm('「' + name + '」を会社から除名します。よろしいですか？（招待コードは変更されません）')) return;
