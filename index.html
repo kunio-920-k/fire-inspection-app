@@ -1161,7 +1161,10 @@
         ownerUid: window.currentUser.uid,
         inviteCode: inviteCode,
         createdAt: serverTimestamp()
-      }).then(() => setDoc(doc(db, 'companies', companyRef.id, 'members', window.currentUser.uid), {
+      }).then(() => setDoc(doc(db, 'inviteCodes', inviteCode), {
+        companyId: companyRef.id,
+        createdAt: serverTimestamp()
+      })).then(() => setDoc(doc(db, 'companies', companyRef.id, 'members', window.currentUser.uid), {
         uid: window.currentUser.uid,
         displayName: window.currentUser.displayName || '',
         status: 'approved',
@@ -1179,21 +1182,25 @@
       if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
       const code = (inviteCode || '').trim().toUpperCase();
       if (!code) return Promise.reject(new Error('招待コードを入力してください'));
-      const q = query(collection(db, 'companies'), where('inviteCode', '==', code));
-      return getDocs(q).then((snap) => {
-        if (snap.empty) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
-        const companyDoc = snap.docs[0];
-        const companyId = companyDoc.id;
-        return setDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid), {
-          uid: window.currentUser.uid,
-          displayName: window.currentUser.displayName || '',
-          status: 'pending',
-          isCompanyAdmin: false,
-          requestedAt: serverTimestamp()
-        }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
-          companyId: companyId,
-          companyStatus: 'pending'
-        }, { merge: true })).then(() => ({ companyId, companyName: companyDoc.data().name }));
+      // 招待コードから会社へ直接引き当てる（索引：inviteCodes/{コード} → companyId）。
+      // 会社コレクション全体を検索しない＝将来セキュリティルールで一覧取得を禁止できる。
+      return getDoc(doc(db, 'inviteCodes', code)).then((idxSnap) => {
+        if (!idxSnap.exists()) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
+        const companyId = idxSnap.data().companyId;
+        if (!companyId) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
+        return getDoc(doc(db, 'companies', companyId)).then((companyDoc) => {
+          if (!companyDoc.exists()) throw new Error('招待コードが見つかりません。確認してもう一度お試しください。');
+          return setDoc(doc(db, 'companies', companyId, 'members', window.currentUser.uid), {
+            uid: window.currentUser.uid,
+            displayName: window.currentUser.displayName || '',
+            status: 'pending',
+            isCompanyAdmin: false,
+            requestedAt: serverTimestamp()
+          }).then(() => setDoc(doc(db, 'users', window.currentUser.uid), {
+            companyId: companyId,
+            companyStatus: 'pending'
+          }, { merge: true })).then(() => ({ companyId, companyName: companyDoc.data().name }));
+        });
       });
     };
 
@@ -1346,10 +1353,39 @@
       });
     };
 
+    // 招待コードの索引（inviteCodes/{コード}）が無ければ黙って作る。
+    // この索引を導入する前に作られた会社を救済するための自己修復処理。
+    // オーナーが会社モーダルを開いたときに呼ばれる。失敗しても画面には出さない。
+    window.ensureInviteCodeIndex = function(companyId, code) {
+      if (!companyId || !code) return Promise.resolve(null);
+      return getDoc(doc(db, 'inviteCodes', code)).then((snap) => {
+        if (snap.exists() && snap.data().companyId === companyId) return null;
+        return setDoc(doc(db, 'inviteCodes', code), {
+          companyId: companyId,
+          createdAt: serverTimestamp()
+        });
+      }).catch(() => null);
+    };
+
     // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
     window.regenerateInviteCode = function(companyId) {
       const newCode = generateInviteCode();
-      return updateDoc(doc(db, 'companies', companyId), { inviteCode: newCode }).then(() => newCode);
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        const oldCode = snap.exists() ? snap.data().inviteCode : null;
+        // 先に新しい索引を作ってから会社を更新する。逆順だと、途中で失敗したときに
+        // 「会社は新コードだが索引が無い＝誰も参加できない」状態になるため。
+        return setDoc(doc(db, 'inviteCodes', newCode), {
+          companyId: companyId,
+          createdAt: serverTimestamp()
+        }).then(() => updateDoc(doc(db, 'companies', companyId), { inviteCode: newCode }))
+          .then(() => {
+            // 古い索引を消す。ここが失敗しても新コードでの参加は成立しているので、
+            // エラーにはせず握りつぶす（次回の再発行で改めて消える）。
+            if (!oldCode || oldCode === newCode) return null;
+            return deleteDoc(doc(db, 'inviteCodes', oldCode)).catch(() => null);
+          })
+          .then(() => newCode);
+      });
     };
 
     // 「登録者（オーナー）」権限を他の会社メンバーに譲渡する（現オーナーのみ実行可）
@@ -6480,6 +6516,10 @@
               'あなたがこの会社の作成者（オーナー）の場合は、作成者として正しい状態に復元します。</p>' +
             '</div>';
         } else if (status.status === 'approved') {
+          // 索引導入前に作られた会社の救済。オーナーが開いたときだけ、裏で黙って補う。
+          if (status.isOwner && window.ensureInviteCodeIndex) {
+            window.ensureInviteCodeIndex(status.companyId, status.inviteCode);
+          }
           renderCompanyModalApproved(body, status);
         } else {
           renderCompanyModalNoCompany(body);
