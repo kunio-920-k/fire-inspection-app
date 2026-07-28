@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-28-c';
+    const APP_BUILD = '2026-07-28-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1654,8 +1654,11 @@
     };
 
     // 現場を非表示にする（hidden:trueに更新するだけ、データは消さない）
-    window.hideJob = function(jobId) {
+    // 【注意】どこから呼ばれたかを必ず渡すこと。物件が継続中の一覧から消える唯一の経路であり、
+    // 心当たりの無い消え方をしたときに、経路が分からないと原因が追えない。
+    window.hideJob = function(jobId, origin) {
       if (!window.currentUser || !jobId) return Promise.resolve();
+      dlog('現場を完了扱いにする / job=' + jobId + ' / 経路=' + (origin || '不明'));
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
       return setDoc(ref, { hidden: true }, { merge: true });
     };
@@ -1663,6 +1666,7 @@
     // 非表示の現場を復活させる
     window.unhideJob = function(jobId) {
       if (!window.currentUser || !jobId) return Promise.resolve();
+      dlog('現場を継続中に戻す / job=' + jobId);
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
       return setDoc(ref, { hidden: false }, { merge: true });
     };
@@ -3655,7 +3659,7 @@
       const ok = await window.showAppConfirm('「' + name + '」を完了にして、継続中の物件一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？');
       if (!ok) return;
       if (!window.hideJob) return;
-      window.hideJob(jobId).then(() => {
+      window.hideJob(jobId, '継続中一覧の完了ボタン').then(() => {
         if (window.loadJobList) {
           window.loadJobList().then((jobs) => {
             window._allJobsCache = jobs;
@@ -4825,7 +4829,7 @@
       if (!window.currentJobId) return;
       if (!await window.showAppConfirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
       if (!window.hideJob) return;
-      window.hideJob(window.currentJobId).then(() => {
+      window.hideJob(window.currentJobId, '現場メニューの完了ボタン').then(() => {
         window.showAppAlert('この物件を完了にしました。');
         document.getElementById('setup').style.display = 'none';
         document.getElementById('propertyArea').style.display = 'none';
@@ -6685,46 +6689,30 @@
           ? window.crypto.randomUUID()
           : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
         // 引き継ぐデータを組み立てる（状態・サイン・予約・ログはリセット）
-        const newState = {
-          setup: state.setup,
-          tableFloorData: state.tableFloorData,
-          tableGenerated: state.tableGenerated,
-          tableHasshigoInput: state.tableHasshigoInput,
-          tableSuffixes: state.tableSuffixes,
-          setsubiDefaults: state.setsubiDefaults,
-          setsubiCustom: state.setsubiCustom,
-          notePatterns: state.notePatterns,
-          schedule: [],
-          yoyakuList: [],
-          // 物件名は引き継ぎ、日付・担当者はクリア
-          property: {
-            name: (state.property && state.property.name) || '',
-            date: '',
-            staff: ''
-          },
-          // 部屋情報は引き継ぐが状態はリセット
-          rooms: Object.fromEntries(
-            Object.entries(state.rooms || {}).map(([room, rd]) => [room, { label: rd.label || '', hasshigo: rd.hasshigo || '0' }])
-          ),
-          cells: Object.fromEntries(
-            Object.entries(state.cells || {}).map(([room]) => [room, { state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '' }])
-          )
-        };
+        // 「既存物件を編集」と同じ部品を使う。号棟対応でデータの入れ物が変わっているため、
+        // 古い書き方のままだと設備情報も住戸構成も引き継げず、空の現場ができる。
+        const newState = buildCarryOverState(state, srcName);
         localStorage.setItem('mc_job_id', newJobId);
         window.currentJobId = newJobId;
-        if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
-        // 複製元を非表示（過去の物件）に移動
-        if (window.hideJob) window.hideJob(srcJobId);
         localStorage.setItem('mc_goto_setup', '1');
         closeJobListModal();
-        const proceedToSetup = () => {
+
+        // 【変更】以前はここで複製元を黙って「完了」にしていた。確認も告知も無いまま
+        // 継続中の一覧から消えるため、物件が失われたように見える。複製元はそのまま残す。
+        // 同名が並ぶ件は、一覧側で「同名◯件 / 作業日」の目印を出して人が選べるようにしてある。
+
+        // 画面を開き直す前に、点検データ・現場の持ち主・現場一覧への登録を書き終えておく
+        const carriedName = (newState.property && newState.property.name) || srcName || '';
+        const jobs = [];
+        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
+        if (window.setJobOwnerIfNew) jobs.push(window.setJobOwnerIfNew(newJobId));
+        if (window.saveJobSummary) jobs.push(window.saveJobSummary(newJobId, carriedName, ''));
+
+        Promise.all(jobs).catch((e) => {
+          if (window.dlog) window.dlog('現場複製の下準備でエラー / ' + (e && e.message));
+        }).then(() => {
           window.showAppAlert('新しい現場を作成しました。一括設定画面を開きます。').then(() => location.reload());
-        };
-        if (window.saveInspectionToCloudNow) {
-          window.saveInspectionToCloudNow(newState).then(proceedToSetup);
-        } else {
-          proceedToSetup();
-        }
+        });
       });
     }
 
