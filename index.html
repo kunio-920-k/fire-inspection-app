@@ -3849,6 +3849,69 @@
       });
     }
 
+    // 既存の物件データから「引き継ぎ用の新しい状態」を組み立てる。
+    // 引き継ぐもの：号棟名・住戸構成・設備情報・立面図の作成状態・表札名・発信機の有無・備考パターン
+    // リセットするもの：全室の点検状態（未）・不良記録・作業日・担当者・予約・スケジュール
+    // 【注意】号棟対応でデータの入れ物が変わっている。設備情報や住戸構成は buildings の中にあるため、
+    // 古い形式（state.setup / state.rooms を直接見る書き方）のままだと何も引き継げず空になる。
+    function buildCarryOverState(state, srcName) {
+      const emptyCell = () => ({ state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '', yoyakuDate: '' });
+      const carryRooms = (rooms) => Object.fromEntries(
+        Object.entries(rooms || {}).map(([room, rd]) => [room, { label: (rd && rd.label) || '', hasshigo: (rd && rd.hasshigo) || '0' }])
+      );
+      const carryCells = (cells) => Object.fromEntries(
+        Object.keys(cells || {}).map((room) => [room, emptyCell()])
+      );
+      const property = {
+        name: (state.property && state.property.name) || srcName || '',
+        date: '',
+        staff: '',
+        dayMode: 'single',
+        multiDates: []
+      };
+
+      if (state.buildings && Array.isArray(state.buildings) && state.buildings.length > 0) {
+        // 新形式（号棟対応済み）
+        return {
+          property: property,
+          buildings: state.buildings.map((b) => ({
+            id: b.id,
+            name: b.name || '',
+            shortLabel: (b.shortLabel === undefined ? null : b.shortLabel),
+            setup: Object.assign(
+              { floorCount: '3', roomCount: '6', cut4Room: false, cut4Floor: false, useSetsubiInfo: false, hasshigoInput: '', pendingFloorValues: {} },
+              b.setup || {}
+            ),
+            tableFloorData: b.tableFloorData || [],
+            tableGenerated: !!b.tableGenerated,
+            setsubiDefaults: b.setsubiDefaults || {},
+            setsubiCustom: b.setsubiCustom || {},
+            rooms: carryRooms(b.rooms),
+            cells: carryCells(b.cells)
+          })),
+          currentBuildingIdx: 0,
+          notePatterns: state.notePatterns || [],
+          schedule: [],
+          yoyakuList: []
+        };
+      }
+
+      // 旧形式（号棟対応前に保存されたデータ）。読み込み側が号棟1つ分へ自動移行してくれる。
+      return {
+        property: property,
+        setup: state.setup,
+        tableFloorData: state.tableFloorData,
+        tableGenerated: state.tableGenerated,
+        setsubiDefaults: state.setsubiDefaults,
+        setsubiCustom: state.setsubiCustom,
+        notePatterns: state.notePatterns || [],
+        schedule: [],
+        yoyakuList: [],
+        rooms: carryRooms(state.rooms),
+        cells: carryCells(state.cells)
+      };
+    }
+
     // 既存データをもとに新規登録開始
     async function startFromExisting(srcJobId, srcName) {
       if (!await window.showAppConfirm('「' + srcName + '」のデータをもとに新規登録を開始します。\n設備情報・住戸構成・備考パターンを引き継ぎ、全室を「未」にリセットします。\nよろしいですか？')) return;
@@ -3859,25 +3922,7 @@
         const newJobId = (window.crypto && window.crypto.randomUUID)
           ? window.crypto.randomUUID()
           : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
-        const newState = {
-          setup: state.setup,
-          tableFloorData: state.tableFloorData,
-          tableGenerated: state.tableGenerated,
-          tableHasshigoInput: state.tableHasshigoInput,
-          tableSuffixes: state.tableSuffixes,
-          setsubiDefaults: state.setsubiDefaults,
-          setsubiCustom: state.setsubiCustom,
-          notePatterns: state.notePatterns,
-          schedule: [],
-          yoyakuList: [],
-          property: { name: (state.property && state.property.name) || srcName, date: '', staff: '' },
-          rooms: Object.fromEntries(
-            Object.entries(state.rooms || {}).map(([room, rd]) => [room, { label: rd.label || '', hasshigo: rd.hasshigo || '0' }])
-          ),
-          cells: Object.fromEntries(
-            Object.entries(state.cells || {}).map(([room]) => [room, { state: 'mi', furyo: '', times: '[]', yoyakuTime: '', yoyakuNote: '' }])
-          )
-        };
+        const newState = buildCarryOverState(state, srcName);
         localStorage.setItem('mc_job_id', newJobId);
         localStorage.setItem('mc_goto_setup', '1');
         window.currentJobId = newJobId;
