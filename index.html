@@ -724,13 +724,38 @@
       }
     };
 
-    // 現場から退場する（Googleログインは維持したまま、その現場だけ抜ける。
-    // 別の現場のQR/リンクから改めて参加できるようにするため）
+    // 現場から退場する。
+    // 会社グループのメンバーは、ログインを維持したまま現場だけ抜ける（現場を渡り歩くため）。
+    // 会社に所属していない現場作業員（単発・応援）は、そのままログアウトまで進める。
+    // 「退場＝終わり」と受け取る人が多く、ログインが残ったままになるのを防ぐため。
+    // 借りた端末をそのまま次の人へ渡す場面も想定している。
     window.confirmLeaveJob = async function() {
-      if (!await window.showAppConfirm('この現場から退場します。ログイン自体は維持されるので、別の現場にまた参加できます。よろしいですか？')) return;
+      let isCompanyMember = false;
+      try {
+        if (window.loadMyCompanyStatus) {
+          const status = await window.loadMyCompanyStatus();
+          isCompanyMember = !!(status && status.status === 'approved');
+        }
+      } catch (e) {
+        // 所属が確認できないときは、ログインを維持する側（従来動作）に倒す。
+        // 電波の悪い現場で意図せずログアウトさせないため。
+        dlog('退場時の所属確認に失敗 / ' + e.message);
+        isCompanyMember = true;
+      }
+
+      if (isCompanyMember) {
+        if (!await window.showAppConfirm('この現場から退場します。ログイン自体は維持されるので、別の現場にまた参加できます。よろしいですか？')) return;
+        localStorage.removeItem('mc_job_id');
+        window.currentJobId = null;
+        location.reload();
+        return;
+      }
+
+      if (!await window.showAppConfirm('この現場から退場します。\n\nあわせてログアウトもします。また作業する場合は、現場のQRコードを読み取って、もう一度ログインしてください。\n\nよろしいですか？')) return;
       localStorage.removeItem('mc_job_id');
       window.currentJobId = null;
-      location.reload();
+      await window.showAppAlert('この現場から退場しました。ログアウトします。');
+      logoutUser();
     };
 
     // ---- 点検データのクラウド保存・読込 ----
