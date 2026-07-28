@@ -511,6 +511,12 @@
     window.TEST_MODE = TEST_MODE;
     // ===== TESTMODE END（このコメント行までがワンセット） =====
 
+    // ===== ビルド識別 =====
+    // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
+    // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
+    const APP_BUILD = '2026-07-28-b';
+    window.APP_BUILD = APP_BUILD;
+
     // ===== Firestoreリアルタイム同期の再接続対策 =====
     // 長時間のネイティブダイアログ（confirm/alert等）でJSの実行がブロックされると、
     // Firestoreのリスニング接続（WebChannel）が切れたまま自動復帰しないことがある。
@@ -676,7 +682,7 @@
         renderDebugPanel(logs);
       } catch (e) {}
     })();
-    dlog('ページ読み込み / URL=' + location.href);
+    dlog('ページ読み込み / build=' + APP_BUILD + ' / 現場ID=' + (localStorage.getItem('mc_job_id') || 'なし') + ' / URL=' + location.href);
 
     // ポップアップ方式でログイン（ページ遷移を伴わない）
     window.loginWithGoogle = function() {
@@ -1776,6 +1782,42 @@
     }
     // ===== TESTMODE END =====
 
+    // ホーム画面に出る情報（アカウント名・会社・継続中の物件・時計）を用意する。
+    // 【重要】ホーム画面が表示される入口すべてから呼ぶこと。
+    // 以前は起動時の1か所でしか用意しておらず、現場を持った状態で起動してから
+    // ホーム画面へ戻ると、名前が空欄・物件一覧が空のまま表示されていた。
+    window.prepareStartScreen = function() {
+      const user = window.currentUser;
+      const nameEl = document.getElementById('startUserName');
+      if (nameEl) nameEl.textContent = user ? (user.displayName || user.email || 'ログイン中のアカウント') : '（未ログイン）';
+      dlog('ホーム画面準備 / build=' + APP_BUILD + ' / user=' + (user ? (user.displayName || user.email) : 'null'));
+
+      if (window.loadJobList) {
+        window.loadJobList().then((jobs) => {
+          window._allJobsCache = jobs;
+          if (window.updateStartScreenJobButtons) window.updateStartScreenJobButtons(jobs);
+          dlog('ホーム画面準備 / 現場一覧=' + jobs.length + '件');
+        });
+      } else {
+        dlog('ホーム画面準備 / loadJobListが無い');
+      }
+
+      if (window.refreshStartScreenCompanyStatus) window.refreshStartScreenCompanyStatus();
+
+      (function tickStartClock() {
+        const now = new Date();
+        const days = ['日','月','火','水','木','金','土'];
+        const cl = document.getElementById('startClockDisp');
+        const dl = document.getElementById('startDateDisp');
+        const bl = document.getElementById('startBuildDisp');
+        if (cl) cl.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+        if (dl) dl.textContent = now.getFullYear() + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + String(now.getDate()).padStart(2,'0') + '（' + days[now.getDay()] + '）';
+        if (bl) bl.textContent = 'build ' + APP_BUILD;
+        const ss = document.getElementById('startScreen');
+        if (ss && ss.style.display !== 'none') setTimeout(tickStartClock, 1000);
+      })();
+    };
+
     // 認証状態の変化を監視
     onAuthStateChanged(auth, (user) => {
       window.currentUser = user || null;
@@ -1824,31 +1866,8 @@
             localStorage.setItem('mc_job_id', joinId);
             dlog('子機参加 / job=' + joinId);
           } else {
-            // 選択画面を表示（過去データがあるか確認）
-            if (window.loadJobList) {
-              window.loadJobList().then((jobs) => {
-                window._allJobsCache = jobs;
-                updateStartScreenJobButtons(jobs);
-              });
-            }
             document.getElementById('startScreen').style.display = 'block';
-            refreshStartScreenCompanyStatus();
-            // ③選択画面：ユーザー名と時計を設定
-            // 表示名が取れないアカウント（メール認証・匿名など）でも空欄にならないよう、
-            // 表示名 → メールアドレス の順に落とす
-            {
-              const el = document.getElementById('startUserName');
-              if (el) el.textContent = user.displayName || user.email || 'ログイン中のアカウント';
-            }
-            (function tickStartClock() {
-              const now = new Date();
-              const days = ['日','月','火','水','木','金','土'];
-              const cl = document.getElementById('startClockDisp');
-              const dl = document.getElementById('startDateDisp');
-              if (cl) cl.textContent = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
-              if (dl) dl.textContent = now.getFullYear() + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + String(now.getDate()).padStart(2,'0') + '（' + days[now.getDay()] + '）';
-              if (document.getElementById('startScreen').style.display !== 'none') setTimeout(tickStartClock, 1000);
-            })();
+            window.prepareStartScreen();
             return;
           }
         }
@@ -2050,6 +2069,7 @@
       <div style="text-align:right;font-size:11px;color:#7a9ab0;line-height:1.6;">
         <div id="startClockDisp" style="font-size:13px;color:white;font-family:'Inter',sans-serif;font-weight:600;"></div>
         <div id="startDateDisp"></div>
+        <div id="startBuildDisp" style="font-size:9px;color:#4a6070;"></div>
       </div>
     </div>
     <!-- 本文（中央寄せ） -->
@@ -4792,7 +4812,7 @@
       if (!await window.showAppConfirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
       document.getElementById('setup').style.display = 'none';
       document.getElementById('startScreen').style.display = 'block';
-      refreshStartScreenCompanyStatus();
+      if (window.prepareStartScreen) window.prepareStartScreen();
     }
 
     // この物件を「完了」にして、継続中の物件一覧から外す（データは消えず、いつでも戻せる）
@@ -4808,7 +4828,7 @@
         const tableWrap = document.querySelector('.table-wrap');
         if (tableWrap) tableWrap.style.display = 'none';
         document.getElementById('startScreen').style.display = 'block';
-        refreshStartScreenCompanyStatus();
+        if (window.prepareStartScreen) window.prepareStartScreen();
       }).catch((e) => {
         window.showAppAlert('操作に失敗しました：' + e.message);
       });
