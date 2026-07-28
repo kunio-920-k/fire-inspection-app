@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-28-b';
+    const APP_BUILD = '2026-07-28-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1796,7 +1796,11 @@
         window.loadJobList().then((jobs) => {
           window._allJobsCache = jobs;
           if (window.updateStartScreenJobButtons) window.updateStartScreenJobButtons(jobs);
-          dlog('ホーム画面準備 / 現場一覧=' + jobs.length + '件');
+          const active = jobs.filter(j => !j.hidden);
+          const newest = jobs[0];
+          dlog('ホーム画面準備 / 現場一覧=' + jobs.length + '件 / 継続中=' + active.length + '件'
+            + ' / 最新=「' + (newest ? (newest.name || '名前なし') : 'なし') + '」'
+            + (newest ? ' 完了扱い=' + (newest.hidden ? 'はい' : 'いいえ') : ''));
         });
       } else {
         dlog('ホーム画面準備 / loadJobListが無い');
