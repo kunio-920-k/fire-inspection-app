@@ -821,15 +821,18 @@
     };
 
     // 現場の作成者（オーナー）情報を、初めてその現場IDが作られた時だけ書き込む
+    // 【注意】書き込みが終わるまでのPromiseを返す。新しい現場を作った直後に画面を開き直す処理は、
+    // これを待たずにリロードすると「持ち主が未記録の現場」を読みに行くことになり、
+    // 自分が作った現場なのに子機（作業員）扱いで開いてしまう。必ず待つこと。
     window.setJobOwnerIfNew = function(jobId) {
-      if (!window.currentUser || !jobId) return;
+      if (!window.currentUser || !jobId) return Promise.resolve();
       const ref = doc(db, 'inspections', jobId);
       // 作成者が会社に承認済みで所属していれば、新しい現場を自動でその会社に紐付ける
       // （あとから会社モーダルの操作で手動での紐付け・解除も可能）
       const companyLookup = window.loadMyCompanyStatus
         ? window.loadMyCompanyStatus().then((s) => (s && s.status === 'approved') ? s.companyId : null).catch(() => null)
         : Promise.resolve(null);
-      companyLookup.then((companyId) => {
+      return companyLookup.then((companyId) => {
         const data = {
           ownerUid: window.currentUser.uid,
           ownerEmail: window.currentUser.email || ''
@@ -1133,17 +1136,19 @@
     // 保存先: users/{uid}/jobs/{jobId}
 
     // 現場の概要情報を保存・更新する（物件名・作業日が設定された時に呼ぶ）
+    // 【注意】書き込みが終わるまでのPromiseを返す。新しい現場を作った直後にここを通しておかないと、
+    // 「継続中の物件」一覧に出てこない（一覧は users/{uid}/jobs だけを見ているため）。
     window.saveJobSummary = function(jobId, name, date) {
-      if (!jobId) return;
+      if (!jobId) return Promise.resolve();
       if (!window.currentUser) {
         // 認証がまだ整っていない → 保留しておき、認証確立後に自動リトライする
         window._pendingJobSummary = { jobId, name, date };
-        return;
+        return Promise.resolve();
       }
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
-      getDoc(ref).then((snap) => {
+      return getDoc(ref).then((snap) => {
         const existing = snap.exists() ? snap.data() : {};
-        setDoc(ref, {
+        return setDoc(ref, {
           jobId: jobId,
           name: name || '（物件名未設定）',
           date: date || '',
@@ -1829,9 +1834,11 @@
             document.getElementById('startScreen').style.display = 'block';
             refreshStartScreenCompanyStatus();
             // ③選択画面：ユーザー名と時計を設定
-            if (user && user.displayName) {
+            // 表示名が取れないアカウント（メール認証・匿名など）でも空欄にならないよう、
+            // 表示名 → メールアドレス の順に落とす
+            {
               const el = document.getElementById('startUserName');
-              if (el) el.textContent = user.displayName;
+              if (el) el.textContent = user.displayName || user.email || 'ログイン中のアカウント';
             }
             (function tickStartClock() {
               const now = new Date();
@@ -3926,16 +3933,23 @@
         localStorage.setItem('mc_job_id', newJobId);
         localStorage.setItem('mc_goto_setup', '1');
         window.currentJobId = newJobId;
-        if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
         document.getElementById('startScreen').style.display = 'none';
-        const proceedToSetup = () => {
+
+        // 画面を開き直す前に、次の3つを必ず書き終えておく。
+        // ・点検データ本体
+        // ・現場の持ち主（これを待たずにリロードすると自分が子機扱いで開いてしまう）
+        // ・現場一覧への登録（ここで入れておかないと「継続中の物件」に出てこない）
+        const carriedName = (newState.property && newState.property.name) || srcName || '';
+        const jobs = [];
+        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
+        if (window.setJobOwnerIfNew) jobs.push(window.setJobOwnerIfNew(newJobId));
+        if (window.saveJobSummary) jobs.push(window.saveJobSummary(newJobId, carriedName, ''));
+
+        Promise.all(jobs).catch((e) => {
+          if (window.dlog) window.dlog('新規登録の下準備でエラー / ' + (e && e.message));
+        }).then(() => {
           window.showAppAlert('新規登録を開始します。一括設定画面を開きます。').then(() => location.reload());
-        };
-        if (window.saveInspectionToCloudNow) {
-          window.saveInspectionToCloudNow(newState).then(proceedToSetup);
-        } else {
-          proceedToSetup();
-        }
+        });
       });
     }
 
