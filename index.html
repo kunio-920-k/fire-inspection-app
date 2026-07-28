@@ -3649,13 +3649,32 @@
         container.innerHTML = '<p style="color:#aaa;font-size:13px;text-align:center;">継続中の物件がありません</p>';
         return;
       }
+      // 同じ物件名が複数ある場合は目印を付ける。
+      // 去年ぶんと今年ぶんが両方「継続中」に残る、「既存物件から新規登録」で複製した、
+      // といった経路で普通に起こる。日付の読み比べを強いると必ず取り違えが出るため、
+      // 「同名が何件あるか」と「何番目に新しいか」を行そのものに書く。
+      const nameCount = {};
+      jobs.forEach(j => { const k = j.name || ''; nameCount[k] = (nameCount[k] || 0) + 1; });
+      const nameSeen = {};
+
       container.innerHTML = jobs.map(j => {
         const updatedAt = j.updatedAt ? new Date(j.updatedAt.toMillis()).toLocaleDateString('ja-JP') : '';
-        return `<div style="border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:8px;background:white;">
-          <div style="font-weight:bold;font-size:15px;margin-bottom:4px;">${j.name}</div>
+        const key = j.name || '';
+        const dup = nameCount[key] > 1;
+        nameSeen[key] = (nameSeen[key] || 0) + 1;
+        const order = nameSeen[key]; // 更新が新しい順に 1, 2, 3...
+        const dupBadge = dup
+          ? `<span style="display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:3px;background:#fff3e0;color:#c1610a;border:1px solid #f0c48a;margin-left:6px;vertical-align:middle;">同名${nameCount[key]}件中 ${order}番目に新しい</span>`
+          : '';
+        const dupNote = dup
+          ? `<div style="font-size:12px;color:#c1610a;background:#fff8ef;border:1px solid #f0c48a;border-radius:4px;padding:6px 8px;margin-bottom:8px;">⚠️ 同じ物件名が${nameCount[key]}件あります。作業日と更新日を確かめてから開いてください。</div>`
+          : '';
+        return `<div style="border:1px solid ${dup ? '#f0c48a' : '#ddd'};border-radius:6px;padding:12px;margin-bottom:8px;background:white;">
+          <div style="font-weight:bold;font-size:15px;margin-bottom:4px;">${j.name}${dupBadge}</div>
           <div style="font-size:12px;color:#888;margin-bottom:10px;">作業日：${j.date || '未設定'}　更新：${updatedAt}</div>
+          ${dupNote}
           <div style="display:flex;gap:8px;">
-            <button onclick="resumeJob('${j.jobId}')"
+            <button onclick="${dup ? `confirmResumeDuplicateJob('${j.jobId}','${(j.name || '').replace(/'/g,"\\'")}','${j.date || '未設定'}','${updatedAt}',${nameCount[key]},${order})` : `resumeJob('${j.jobId}')`}"
               style="flex:1;padding:10px;background:#336699;color:white;border:none;border-radius:6px;font-size:14px;font-weight:bold;cursor:pointer;">
               この物件の続きを開始
             </button>
@@ -3670,6 +3689,21 @@
           </div>
         </div>`;
       }).join('');
+    }
+
+    // 同名の物件が複数あるときは、開く前に「どれを開こうとしているか」を一度確認させる。
+    // 名前だけ見て違う年度の現場を開き、そのまま点検を書き込んでしまう事故を防ぐため。
+    async function confirmResumeDuplicateJob(jobId, name, date, updatedAt, total, order) {
+      const ok = await window.showAppConfirm(
+        '同じ物件名が' + total + '件あります。開こうとしているのは次の1件です。\n\n' +
+        '物件名：' + name + '\n' +
+        '作業日：' + date + '\n' +
+        '更新日：' + (updatedAt || '不明') + '\n' +
+        '（' + total + '件中 ' + order + '番目に新しいもの）\n\n' +
+        'この物件で間違いありませんか？'
+      );
+      if (!ok) return;
+      resumeJob(jobId);
     }
 
     // 継続中の物件を選択して開始
@@ -6714,7 +6748,11 @@
             '<div style="flex:1;min-width:0;font-size:16px;font-weight:bold;color:#fff;line-height:1.25;word-break:break-word;">' +
               companyCardEscape(status.companyName) +
             '</div>' +
-            '<span style="flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px;background:rgba(255,140,66,0.2);color:#ff8c42;">' +
+            '<span style="flex-shrink:0;font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px;' +
+              (status.isCompanyAdmin
+                ? 'background:rgba(255,140,66,0.2);color:#ff8c42;'
+                : 'background:rgba(90,170,230,0.2);color:#6ab4e8;') +
+            '">' +
               (status.isCompanyAdmin ? '管理者' : '一般') +
             '</span>' +
             '<span class="home-status-chev">›</span>';
