@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-28-d';
+    const APP_BUILD = '2026-07-29-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -841,7 +841,9 @@
       return companyLookup.then((companyId) => {
         const data = {
           ownerUid: window.currentUser.uid,
-          ownerEmail: window.currentUser.email || ''
+          ownerEmail: window.currentUser.email || '',
+          // 作ったその日は子機の参加を受け付けた状態で始める（作った直後に「再開」を押させないため）
+          openUntil: window.makeOpenUntilToday()
         };
         if (companyId) {
           data.companyId = companyId;
@@ -856,6 +858,33 @@
       });
     };
 
+    // ---- 現場の開閉（子機の参加受付） ----
+    // inspections/{jobId}.openUntil に「いつまで子機の参加を受け付けるか」を記録する。
+    // ・管理者が「子機の参加を再開する」を押す → その日の23:59:59が入る
+    // ・日付が変われば、誰も何もしなくても自動的に閉じる（押し忘れ対策）
+    // ・「本日の作業を終了する」を押す → 即座に閉じる
+    // 【重要】管理者（オーナー）と会社の管理者は、閉じていても今までどおり出入りできる。
+    // 事務所に戻ってから進捗や翌日の予約を確認する用途があるため、ここを塞いではいけない。
+    window.makeOpenUntilToday = function() {
+      const d = new Date();
+      d.setHours(23, 59, 59, 999);
+      return d;
+    };
+    window.isJobOpenNow = function() {
+      return !!window.jobOpenUntil && Date.now() < window.jobOpenUntil;
+    };
+    window.openJobForToday = function() {
+      if (!window.currentJobId) return Promise.resolve();
+      const until = window.makeOpenUntilToday();
+      return setDoc(doc(db, 'inspections', window.currentJobId), { openUntil: until }, { merge: true })
+        .then(() => { window.jobOpenUntil = until.getTime(); dlog('現場を開いた / ' + until.toLocaleString()); });
+    };
+    window.closeJobNow = function() {
+      if (!window.currentJobId) return Promise.resolve();
+      return setDoc(doc(db, 'inspections', window.currentJobId), { openUntil: null }, { merge: true })
+        .then(() => { window.jobOpenUntil = 0; dlog('現場を閉じた'); });
+    };
+
     // 今ログインしている人が、この現場のオーナー（親機）かどうかを確認する
     // 判定できない場合（ownerUid未記録・通信エラー等）は false に倒す。
     // オーナー扱いに倒すと、通信が一瞬切れただけで子機が管理者になり、presenceにadminが
@@ -867,6 +896,11 @@
       return getDoc(ref).then((snap) => {
         // この現場がどの会社に紐付いているかを、あとで registerPresence 等が使えるように保持しておく
         window.currentJobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
+        // 開閉状態を読み取る。ここを読めた時だけ jobMetaLoaded を立てる。
+        // 通信エラーで読めなかった場合に「閉じている」と誤判定して締め出さないため。
+        window.jobMetaLoaded = true;
+        const ou = (snap.exists() && snap.data() && snap.data().openUntil) || null;
+        window.jobOpenUntil = (ou && ou.toMillis) ? ou.toMillis() : 0;
         if (snap.exists() && snap.data() && snap.data().ownerUid) {
           window.isJobOwner = (snap.data().ownerUid === window.currentUser.uid);
           dlog('[診断] オーナー判定: ownerUid=' + String(snap.data().ownerUid).slice(0, 8) + ' / 自分=' + String(window.currentUser.uid).slice(0, 8) + ' → isJobOwner=' + window.isJobOwner);
@@ -883,6 +917,7 @@
         dlog('[診断] オーナー判定: エラーのためfalseに倒した / ' + e.message);
         window.isJobOwner = false;
         window.currentJobCompanyId = null;
+        window.jobMetaLoaded = false; // 読めていない → 開閉の判定はしない（締め出さない）
         return false;
       });
     };
@@ -1883,9 +1918,28 @@
         // このセッションでのオーナー確認（1回だけ）。終わったらpresence登録→画面更新
         if (!window.ownerCheckDone) {
           window.ownerCheckDone = true;
-          window.checkJobOwnership().then(() => {
-            window.registerPresence();
-            if (window.applyOwnerUI) window.applyOwnerUI();
+          window.checkJobOwnership().then((isOwner) => {
+            // 現場が閉じている場合、子機は入れない。
+            // 管理者（オーナー）と会社の管理者は、閉じていても今までどおり入れる。
+            const bypass = isOwner
+              ? Promise.resolve(true)
+              : (window.checkCompanyAdminAccess ? window.checkCompanyAdminAccess() : Promise.resolve(false));
+            return bypass.then((allowed) => {
+              if (!allowed && window.jobMetaLoaded && !window.isJobOpenNow()) {
+                dlog('[診断] 閉じている現場のため入場を中止 / job=' + window.currentJobId);
+                localStorage.removeItem('mc_job_id');
+                window.currentJobId = null;
+                return window.showAppAlert(
+                  'この現場は現在閉じています。\n\n' +
+                  '管理者が現場を開いてから、もう一度QRコードを読み取ってください。'
+                ).then(() => {
+                  // ?join= が付いたままリロードすると再び同じ判定に入るため、URLから外す
+                  location.replace(location.origin + location.pathname);
+                });
+              }
+              window.registerPresence();
+              if (window.applyOwnerUI) window.applyOwnerUI();
+            });
           });
         }
 
@@ -1946,6 +2000,11 @@
             // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
             if (Date.now() - window._lastLocalSaveAt < 2000) return;
             if (!snap.exists() || !snap.data()) return;
+
+            // 開閉状態の変化を取り込む（他端末で「再開」「本日終了」が押された場合）
+            const ouLive = snap.data().openUntil || null;
+            window.jobOpenUntil = (ouLive && ouLive.toMillis) ? ouLive.toMillis() : 0;
+            if (window.updateOpenJobBtn) window.updateOpenJobBtn();
 
             // 作業終了フラグを検知 → 管理者以外はリセットしてログアウト
             // （役割がまだ確定していない一瞬のタイミングで誤って弾いてしまわないよう、
@@ -2576,6 +2635,7 @@
       <button id="furyoTextToggleBtn" onclick="toggleFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
       <button onclick="deleteAllSigns()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#ff8080;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">サイン画像を削除（印刷完了後）</button>
       <button id="sendLogBtn" onclick="sendLogByEmail()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#d8a8ff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">ログをメールで送る</button>
+      <button id="openJobBtn" onclick="reopenJobForToday()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1565c0;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🔓 子機の参加を再開する</button>
       <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#c62828;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">本日の作業を終了する</button>
       <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1a7a35;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🏁 この物件を完了にする</button>
     </div>
@@ -3528,6 +3588,7 @@
         endWorkBtn.style.opacity = isSingleDay ? '0.4' : '1';
         endWorkBtn.style.cursor = isSingleDay ? 'not-allowed' : 'pointer';
       }
+      if (window.updateOpenJobBtn) window.updateOpenJobBtn();
       const sendLogBtn = document.getElementById('sendLogBtn');
       if (sendLogBtn) sendLogBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const printChoiceBtn = document.getElementById('printChoiceBtn');
@@ -7266,6 +7327,42 @@
       });
     }
 
+    // 子機の参加を再開する（管理者のみ）。その日の23:59まで有効。
+    async function reopenJobForToday() {
+      if (!window.isJobOwner) { window.showAppAlert('この操作は管理者のみ行えます。'); return; }
+      if (!window.currentJobId) { window.showAppAlert('まだログインが完了していません。'); return; }
+      if (window.isJobOpenNow && window.isJobOpenNow()) {
+        window.showAppAlert('この現場は現在、子機の参加を受け付けています。\n本日23:59を過ぎると自動的に閉じます。');
+        return;
+      }
+      const ok = await window.showAppConfirm(
+        '子機の参加を再開します。\n\n' +
+        '・本日23:59まで、QRコードから子機が参加できます\n' +
+        '・日付が変われば自動的に閉じます\n' +
+        '・「本日の作業を終了する」を押せば、その場で閉じます\n\n' +
+        'よろしいですか？'
+      );
+      if (!ok) return;
+      await window.openJobForToday();
+      if (window.updateOpenJobBtn) window.updateOpenJobBtn();
+      window.showAppAlert('子機の参加を再開しました。（本日23:59まで）');
+    }
+    window.reopenJobForToday = reopenJobForToday;
+
+    // 「子機の参加を再開する」ボタンの見た目を、今の開閉状態に合わせて更新する
+    window.updateOpenJobBtn = function() {
+      const btn = document.getElementById('openJobBtn');
+      if (!btn) return;
+      const isAdmin = (window.myRole || (window.isJobOwner ? 'admin' : 'worker')) === 'admin';
+      if (!isAdmin) { btn.style.display = 'none'; return; }
+      btn.style.display = 'inline-block';
+      const open = window.isJobOpenNow && window.isJobOpenNow();
+      btn.textContent = open ? '🔓 子機の参加：受付中（本日23:59まで）' : '🔓 子機の参加を再開する';
+      btn.style.background = open ? 'rgba(255,255,255,0.12)' : '#1565c0';
+      btn.style.opacity = open ? '0.6' : '1';
+      btn.style.cursor = open ? 'default' : 'pointer';
+    };
+
     // 本日の作業終了（管理者のみ）
     async function endWorkSession() {
       if (!window.isJobOwner) { window.showAppAlert('この操作は管理者のみ行えます。'); return; }
@@ -7273,10 +7370,15 @@
       const ok = await window.showAppConfirm(
         '本日の作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
+        '・以後、子機はQRコードからも参加できなくなります\n' +
+        '　（翌朝「子機の参加を再開する」で開けます）\n' +
         '・データはクラウドに保存されたまま残ります\n\n' +
         'この操作は取り消せません。よろしいですか？'
       );
       if (!ok) return;
+      // 子機の参加受付を閉じる（退場させるだけでなく、再入場も止める）
+      if (window.closeJobNow) await window.closeJobNow();
+      if (window.updateOpenJobBtn) window.updateOpenJobBtn();
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
           if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
