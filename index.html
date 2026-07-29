@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-29-c';
+    const APP_BUILD = '2026-07-30-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -771,16 +771,24 @@
     // メインスクリプト側（gatherInspectionState）が集めたデータを受け取って保存する。
     // 短時間に連続で呼ばれた場合は最後の1回だけ実際に書き込む（連打対策）。
     let saveTimer = null;
+
+    // 【重要】新しい現場を作るときの書き込み順を保証するための関門。
+    // セキュリティルールが「持ち主の書かれていない現場は作れない」と定めているため、
+    // 現場のドキュメントを最初に作るのは必ず setJobOwnerIfNew でなければならない。
+    // 点検データの保存が先に着いてしまうとサーバーに拒まれ、その保存が失われる。
+    // setJobOwnerIfNew が走ったときだけ待ちが入り、それ以外（子機が既存の現場に入る等）は素通りする。
+    window._jobOwnerReady = Promise.resolve();
+
     window.saveInspectionToCloud = function (stateObj) {
       if (!window.currentUser || !window.currentJobId) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         const ref = doc(db, 'inspections', window.currentJobId);
-        setDoc(ref, {
+        window._jobOwnerReady.then(() => setDoc(ref, {
           data: JSON.stringify(stateObj),
           updatedAt: serverTimestamp(),
           lastEditedBy: window.currentUser.email || ''
-        }, { merge: true }).then(() => {
+        }, { merge: true })).then(() => {
           dlog('クラウド保存OK / job=' + window.currentJobId);
         }).catch((e) => {
           dlog('クラウド保存エラー / ' + e.message);
@@ -795,11 +803,11 @@
       if (!window.currentUser || !window.currentJobId) return Promise.resolve();
       clearTimeout(saveTimer);
       const ref = doc(db, 'inspections', window.currentJobId);
-      return setDoc(ref, {
+      return window._jobOwnerReady.then(() => setDoc(ref, {
         data: JSON.stringify(stateObj),
         updatedAt: serverTimestamp(),
         lastEditedBy: window.currentUser.email || ''
-      }, { merge: true }).then(() => {
+      }, { merge: true })).then(() => {
         dlog('クラウド即時保存OK / job=' + window.currentJobId);
       }).catch((e) => {
         dlog('クラウド即時保存エラー / ' + e.message);
@@ -840,7 +848,7 @@
       const companyLookup = window.loadMyCompanyStatus
         ? window.loadMyCompanyStatus().then((s) => (s && s.status === 'approved') ? s.companyId : null).catch(() => null)
         : Promise.resolve(null);
-      return companyLookup.then((companyId) => {
+      const ownerWrite = companyLookup.then((companyId) => {
         const data = {
           ownerUid: window.currentUser.uid,
           ownerEmail: window.currentUser.email || '',
@@ -858,6 +866,10 @@
       }).catch((e) => {
         dlog('現場オーナー設定エラー / ' + e.message);
       });
+      // 点検データの保存より先にこの書き込みを終わらせる（上の window._jobOwnerReady の説明を参照）。
+      // 上で .catch まで付けているのでこのPromiseは必ず成功side で終わる＝保存が永久に止まることはない。
+      window._jobOwnerReady = ownerWrite;
+      return ownerWrite;
     };
 
     // ---- 現場の開閉（子機の参加受付） ----
