@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-a';
+    const APP_BUILD = '2026-07-30-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -843,33 +843,42 @@
     window.setJobOwnerIfNew = function(jobId) {
       if (!window.currentUser || !jobId) return Promise.resolve();
       const ref = doc(db, 'inspections', jobId);
-      // 作成者が会社に承認済みで所属していれば、新しい現場を自動でその会社に紐付ける
-      // （あとから会社モーダルの操作で手動での紐付け・解除も可能）
-      const companyLookup = window.loadMyCompanyStatus
-        ? window.loadMyCompanyStatus().then((s) => (s && s.status === 'approved') ? s.companyId : null).catch(() => null)
-        : Promise.resolve(null);
-      const ownerWrite = companyLookup.then((companyId) => {
-        const data = {
-          ownerUid: window.currentUser.uid,
-          ownerEmail: window.currentUser.email || '',
-          // 作ったその日は子機の参加を受け付けた状態で始める（作った直後に「再開」を押させないため）
-          openUntil: window.makeOpenUntilToday()
-        };
-        if (companyId) {
-          data.companyId = companyId;
-          window.currentJobCompanyId = companyId;
-          if (window.saveCompanyGenbaSummary) window.saveCompanyGenbaSummary(companyId, jobId, '', '');
-        }
-        return setDoc(ref, data, { merge: true });
-      }).then(() => {
+
+      // 【重要】持ち主の書き込みを、この現場への「一番最初の書き込み」にする。
+      // セキュリティルールが「持ち主の書かれていない現場は作れない」と定めているため、
+      // 先に会社の所属を調べてから書くと、その数往復のあいだに点検データの保存が先着し、
+      // それがサーバーに弾かれて現場そのものが出来上がらない。
+      // まず持ち主だけを書き、会社への紐付けは後から足す。
+      const ownerWrite = setDoc(ref, {
+        ownerUid: window.currentUser.uid,
+        ownerEmail: window.currentUser.email || '',
+        // 作ったその日は子機の参加を受け付けた状態で始める（作った直後に「再開」を押させないため）
+        openUntil: window.makeOpenUntilToday()
+      }, { merge: true }).then(() => {
         dlog('現場オーナー設定OK / job=' + jobId);
       }).catch((e) => {
         dlog('現場オーナー設定エラー / ' + e.message);
       });
-      // 点検データの保存より先にこの書き込みを終わらせる（上の window._jobOwnerReady の説明を参照）。
+
+      // 点検データの保存はここまで待てばよい（会社の紐付けまでは待たせない）。
       // 上で .catch まで付けているのでこのPromiseは必ず成功side で終わる＝保存が永久に止まることはない。
       window._jobOwnerReady = ownerWrite;
-      return ownerWrite;
+
+      // 作成者が会社に承認済みで所属していれば、新しい現場を自動でその会社に紐付ける
+      // （あとから会社モーダルの操作で手動での紐付け・解除も可能）
+      return ownerWrite.then(() => {
+        if (!window.loadMyCompanyStatus) return null;
+        return window.loadMyCompanyStatus()
+          .then((s) => (s && s.status === 'approved') ? s.companyId : null)
+          .catch(() => null);
+      }).then((companyId) => {
+        if (!companyId) return;
+        window.currentJobCompanyId = companyId;
+        if (window.saveCompanyGenbaSummary) window.saveCompanyGenbaSummary(companyId, jobId, '', '');
+        return setDoc(ref, { companyId: companyId }, { merge: true })
+          .then(() => { dlog('現場の会社紐付けOK / job=' + jobId); })
+          .catch((e) => { dlog('現場の会社紐付けエラー / ' + e.message); });
+      });
     };
 
     // ---- 現場の開閉（子機の参加受付） ----
@@ -910,9 +919,12 @@
       return getDoc(ref).then((snap) => {
         // この現場がどの会社に紐付いているかを、あとで registerPresence 等が使えるように保持しておく
         window.currentJobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
-        // 開閉状態を読み取る。ここを読めた時だけ jobMetaLoaded を立てる。
+        // 開閉状態を読み取る。中身を読めた時だけ jobMetaLoaded を立てる。
         // 通信エラーで読めなかった場合に「閉じている」と誤判定して締め出さないため。
-        window.jobMetaLoaded = true;
+        // 【重要】現場のドキュメントがまだ無い場合も「閉じている」と判定してはいけない。
+        // 作成直後や作りかけではこの状態があり得て、ここで閉じている扱いにすると
+        // 作った本人が自分の現場に入れなくなる。
+        window.jobMetaLoaded = snap.exists();
         const ou = (snap.exists() && snap.data() && snap.data().openUntil) || null;
         window.jobOpenUntil = (ou && ou.toMillis) ? ou.toMillis() : 0;
         if (snap.exists() && snap.data() && snap.data().ownerUid) {
@@ -1697,6 +1709,7 @@
     // 現場データを取得する（複製用）
     window.loadJobData = function(jobId) {
       if (!jobId) return Promise.resolve(null);
+      window._lastJobLoadDenied = false;
       const ref = doc(db, 'inspections', jobId);
       return getDoc(ref).then((snap) => {
         if (!snap.exists()) return null;
@@ -1708,7 +1721,13 @@
         if (!d || !d.data) return null;
         try { return JSON.parse(d.data); }
         catch (e) { return null; }
-      }).catch(() => null);
+      }).catch((e) => {
+        // 「サーバーに拒まれた」＝持ち主の記録が無い古い現場。呼び出し側で案内を出し分ける。
+        const denied = !!(e && (e.code === 'permission-denied' || /permission|insufficient/i.test(e.message || '')));
+        window._lastJobLoadDenied = denied;
+        dlog('現場データ読込エラー / ' + (denied ? 'サーバーに拒まれた' : (e && e.message)) + ' / job=' + jobId);
+        return null;
+      });
     };
 
     // 現場を非表示にする（hidden:trueに更新するだけ、データは消さない）
@@ -1727,6 +1746,15 @@
       dlog('現場を継続中に戻す / job=' + jobId);
       const ref = doc(db, 'users', window.currentUser.uid, 'jobs', jobId);
       return setDoc(ref, { hidden: false }, { merge: true });
+    };
+
+    // 現場を「自分の一覧からだけ」外す（データ本体は消さない）。
+    // 自分が作成した現場でない場合、データ本体はサーバーが削除を拒む。
+    // それでも自分の一覧は自分で片付けられるべきなので、その受け皿として使う。
+    window.removeJobFromMyList = function(jobId) {
+      if (!window.currentUser || !jobId) return Promise.resolve();
+      dlog('現場を一覧から外す / job=' + jobId);
+      return deleteDoc(doc(db, 'users', window.currentUser.uid, 'jobs', jobId));
     };
 
     // 現場データを完全削除する（サブコレクション含む）
@@ -3965,8 +3993,55 @@
               このデータで新規登録する
             </button>
             ${restoreBtn}
+            <button onclick="confirmDeleteExistingJob('${j.jobId}','${j.name.replace(/'/g,'\\\'')}')"
+              style="width:100%;padding:9px;margin-top:6px;background:#fff0f0;color:#c00;border:1px solid #c88;border-radius:6px;font-size:13px;cursor:pointer;">
+              この過去データを削除する
+            </button>
           </div>`;
         }).join('');
+    }
+
+    // 既存物件の一覧から、その過去データを削除する。
+    // 【注意】持ち主の記録が無い古い現場は、サーバーが読み書きを拒むため本体を消せない。
+    // その場合はせめて一覧から外し、本体はコンソールから消す旨を案内する。
+    async function confirmDeleteExistingJob(jobId, name) {
+      const ok = await window.showAppConfirm(
+        '「' + name + '」のこの過去データを削除します。\n' +
+        'この操作は取り消せません。点検データ・サイン画像・ログなど、すべて削除されます。\n\n' +
+        '本当によろしいですか？'
+      );
+      if (!ok) return;
+
+      const refresh = () => {
+        if (!window.loadJobList) return;
+        return window.loadJobList().then((jobs) => {
+          window._allJobsCache = jobs;
+          if (jobs.filter(j => j.name === name).length > 0) {
+            showExistingDates(name);
+          } else {
+            backToExistingNameList();
+            renderExistingNames();
+          }
+        });
+      };
+
+      if (!window.deleteJobCompletely) return;
+      window.deleteJobCompletely(jobId).then(() => {
+        window.showAppAlert('削除しました。').then(refresh);
+      }).catch(() => {
+        if (!window.removeJobFromMyList) {
+          window.showAppAlert('削除に失敗しました。');
+          return;
+        }
+        window.removeJobFromMyList(jobId).then(() => {
+          window.showAppAlert(
+            'あなたの一覧から外しました。\n\n' +
+            'この現場のデータそのものは残ります。データを削除できるのは、この現場を作成した本人と会社の管理者だけです。'
+          ).then(refresh);
+        }).catch((e) => {
+          window.showAppAlert('削除に失敗しました：' + e.message);
+        });
+      });
     }
 
     // 完了にした（非表示にした）物件を、継続中の物件一覧に戻す
@@ -4055,7 +4130,13 @@
       closeExistingModal();
       if (!window.loadJobData) return;
       window.loadJobData(srcJobId).then((state) => {
-        if (!state) { window.showAppAlert('データの読み込みに失敗しました。'); return; }
+        if (!state) {
+          window.showAppAlert(window._lastJobLoadDenied
+            ? 'このデータは読み込めませんでした。\n\nこの現場のデータを開く権限がありません。'
+              + '現場を作成した本人か、会社の管理者に確認してください。'
+            : 'データの読み込みに失敗しました。\n\n通信状態を確認して、もう一度お試しください。');
+          return;
+        }
         const newJobId = (window.crypto && window.crypto.randomUUID)
           ? window.crypto.randomUUID()
           : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
@@ -4071,8 +4152,11 @@
         // ・現場一覧への登録（ここで入れておかないと「継続中の物件」に出てこない）
         const carriedName = (newState.property && newState.property.name) || srcName || '';
         const jobs = [];
-        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
+        // 【重要】持ち主の登録を先に呼ぶこと。saveInspectionToCloudNow は呼ばれたその瞬間に
+        // 関門（window._jobOwnerReady）を読むため、順番が逆だと関門が効かず、
+        // 点検データの保存が先着してサーバーに弾かれる。
         if (window.setJobOwnerIfNew) jobs.push(window.setJobOwnerIfNew(newJobId));
+        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
         if (window.saveJobSummary) jobs.push(window.saveJobSummary(newJobId, carriedName, ''));
 
         Promise.all(jobs).catch((e) => {
@@ -6806,8 +6890,11 @@
         // 画面を開き直す前に、点検データ・現場の持ち主・現場一覧への登録を書き終えておく
         const carriedName = (newState.property && newState.property.name) || srcName || '';
         const jobs = [];
-        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
+        // 【重要】持ち主の登録を先に呼ぶこと。saveInspectionToCloudNow は呼ばれたその瞬間に
+        // 関門（window._jobOwnerReady）を読むため、順番が逆だと関門が効かず、
+        // 点検データの保存が先着してサーバーに弾かれる。
         if (window.setJobOwnerIfNew) jobs.push(window.setJobOwnerIfNew(newJobId));
+        if (window.saveInspectionToCloudNow) jobs.push(window.saveInspectionToCloudNow(newState));
         if (window.saveJobSummary) jobs.push(window.saveJobSummary(newJobId, carriedName, ''));
 
         Promise.all(jobs).catch((e) => {
