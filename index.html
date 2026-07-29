@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-29-a';
+    const APP_BUILD = '2026-07-29-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -719,7 +719,9 @@
     window.logoutUser = function() {
       localStorage.removeItem('mc_job_id');
       window.currentJobId = null;
-      signOut(auth).catch((error) => {
+      // 【注意】signOutの完了を返す。呼び出し側がリロードする場合、
+      // 待たずにリロードするとログアウトが確定せずログイン状態が残ることがある。
+      return signOut(auth).catch((error) => {
         console.error('ログアウトエラー:', error);
       });
     };
@@ -1931,7 +1933,7 @@
                 window.currentJobId = null;
                 return window.showAppAlert(
                   'この現場は現在閉じています。\n\n' +
-                  '管理者が現場を開いてから、もう一度QRコードを読み取ってください。'
+                  '管理者が現場を開いてから、QRコードまたは招待リンクをもう一度開いてください。'
                 ).then(() => {
                   // ?join= が付いたままリロードすると再び同じ判定に入るため、URLから外す
                   location.replace(location.origin + location.pathname);
@@ -2018,7 +2020,9 @@
               } else {
                 localStorage.removeItem('mc_job_id');
                 if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
-                window.showAppAlert('本日の作業が終了しました。お疲れさまでした。').then(() => location.reload());
+                window.showAppAlert('本日の作業が終了しました。お疲れさまでした。')
+                  .then(() => window.logoutUser ? window.logoutUser() : null)
+                  .then(() => location.reload());
                 return;
               }
             }
@@ -2635,7 +2639,6 @@
       <button id="furyoTextToggleBtn" onclick="toggleFuryoText()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#fff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">不良一覧テキストを表示</button>
       <button onclick="deleteAllSigns()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#ff8080;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">サイン画像を削除（印刷完了後）</button>
       <button id="sendLogBtn" onclick="sendLogByEmail()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:rgba(255,255,255,0.12);color:#d8a8ff;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;">ログをメールで送る</button>
-      <button id="openJobBtn" onclick="reopenJobForToday()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1565c0;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🔓 子機の参加を再開する</button>
       <button id="endWorkBtn" onclick="endWorkSession()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#c62828;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">本日の作業を終了する</button>
       <button id="completePropertyBtn" onclick="confirmCompleteProperty()" style="flex:1;min-width:120px;font-size:14px;padding:9px 10px;background:#1a7a35;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-radius:6px;cursor:pointer;">🏁 この物件を完了にする</button>
     </div>
@@ -2833,6 +2836,7 @@
     <div class="modal-box">
       <h2>子機を招待</h2>
       <p style="font-size:13px;color:#666;">このQRコードを子機のカメラ（読み取りアプリ）で読み取ってもらうと、同じ現場のデータに参加できます。子機側もGoogleでのログインが必要です。</p>
+      <p id="qrOpenStatus" style="font-size:13px;font-weight:bold;color:#1565c0;margin:8px 0 0;"></p>
       <div id="qrCodeArea" style="display:flex;justify-content:center;margin:14px 0;"></div>
       <p id="qrLinkText" style="font-size:11px;color:#888;word-break:break-all;"></p>
       <div class="modal-buttons">
@@ -3639,15 +3643,31 @@
     window.applyOwnerUI = applyOwnerUI;
     window.applyRoleUI = applyOwnerUI;
 
-    // 子機招待用のQRコードを表示する
-    function openQrModal() {
+    // 子機招待用のQRコードを表示する。
+    // 現場が閉じている場合は、ここで確認のうえ開いてからQRを表示する
+    // （朝の管理者の動作を「子機を招待を押す」だけに揃えるため、開閉の操作をここに集約している）
+    async function openQrModal() {
       if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       if (!window.currentJobId) { window.showAppAlert('まだログインが完了していません。少し待ってからもう一度お試しください。'); return; }
+      if (!(window.isJobOpenNow && window.isJobOpenNow())) {
+        const ok = await window.showAppConfirm(
+          'この現場は現在、子機の参加を受け付けていません。\n\n' +
+          '今から受付を開始しますか？\n\n' +
+          '・本日23:59まで、QRコードから子機が参加できます\n' +
+          '・日付が変われば自動的に閉じます\n' +
+          '・「本日の作業を終了する」を押せば、その場で閉じます'
+        );
+        if (!ok) return;
+        await window.openJobForToday();
+        if (window.updateOpenJobBtn) window.updateOpenJobBtn();
+      }
       const url = location.origin + location.pathname + '?join=' + window.currentJobId;
       const area = document.getElementById('qrCodeArea');
       area.innerHTML = '';
       new QRCode(area, { text: url, width: 200, height: 200 });
       document.getElementById('qrLinkText').textContent = url;
+      const st = document.getElementById('qrOpenStatus');
+      if (st) st.textContent = '受付中：本日23:59まで';
       document.getElementById('qrModal').classList.add('active');
     }
     function closeQrModal() {
@@ -7327,40 +7347,15 @@
       });
     }
 
-    // 子機の参加を再開する（管理者のみ）。その日の23:59まで有効。
-    async function reopenJobForToday() {
-      if (!window.isJobOwner) { window.showAppAlert('この操作は管理者のみ行えます。'); return; }
-      if (!window.currentJobId) { window.showAppAlert('まだログインが完了していません。'); return; }
-      if (window.isJobOpenNow && window.isJobOpenNow()) {
-        window.showAppAlert('この現場は現在、子機の参加を受け付けています。\n本日23:59を過ぎると自動的に閉じます。');
-        return;
-      }
-      const ok = await window.showAppConfirm(
-        '子機の参加を再開します。\n\n' +
-        '・本日23:59まで、QRコードから子機が参加できます\n' +
-        '・日付が変われば自動的に閉じます\n' +
-        '・「本日の作業を終了する」を押せば、その場で閉じます\n\n' +
-        'よろしいですか？'
-      );
-      if (!ok) return;
-      await window.openJobForToday();
-      if (window.updateOpenJobBtn) window.updateOpenJobBtn();
-      window.showAppAlert('子機の参加を再開しました。（本日23:59まで）');
-    }
-    window.reopenJobForToday = reopenJobForToday;
-
-    // 「子機の参加を再開する」ボタンの見た目を、今の開閉状態に合わせて更新する
+    // 「子機を招待」ボタンの文言を、今の受付状況に合わせて更新する。
+    // 表示・非表示そのものは applyOwnerUI が管理者かどうかで決めているので、ここでは触らない。
     window.updateOpenJobBtn = function() {
-      const btn = document.getElementById('openJobBtn');
+      const btn = document.getElementById('qrInviteBtn');
       if (!btn) return;
-      const isAdmin = (window.myRole || (window.isJobOwner ? 'admin' : 'worker')) === 'admin';
-      if (!isAdmin) { btn.style.display = 'none'; return; }
-      btn.style.display = 'inline-block';
       const open = window.isJobOpenNow && window.isJobOpenNow();
-      btn.textContent = open ? '🔓 子機の参加：受付中（本日23:59まで）' : '🔓 子機の参加を再開する';
-      btn.style.background = open ? 'rgba(255,255,255,0.12)' : '#1565c0';
-      btn.style.opacity = open ? '0.6' : '1';
-      btn.style.cursor = open ? 'default' : 'pointer';
+      btn.innerHTML = open
+        ? '<span style="font-size:20px;">📱</span> 子機を招待（QR）'
+        : '<span style="font-size:20px;">🔓</span> 子機を招待（現場を開く）';
     };
 
     // 本日の作業終了（管理者のみ）
@@ -7389,8 +7384,11 @@
         }).then(() => {
           return window.clearDismissed ? window.clearDismissed() : Promise.resolve();
         }).then(() => {
-          // 管理者自身もlocalStorageをクリアしてログアウト
-          window.showAppAlert('作業終了を通知しました。お疲れさまでした。');
+          // 【注意】お知らせを閉じきってからログアウトすること。
+          // 待たずにログアウトすると、お知らせの箱が画面に残ったまま次の画面へ進み、
+          // 次回ログイン時に「作業終了…」が唐突に出てくる。
+          return window.showAppAlert('作業終了を通知しました。お疲れさまでした。');
+        }).then(() => {
           if (window.logoutUser) window.logoutUser();
         });
       }
