@@ -514,7 +514,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-29-b';
+    const APP_BUILD = '2026-07-29-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -916,10 +916,19 @@
         }
         return window.isJobOwner;
       }).catch((e) => {
-        dlog('[診断] オーナー判定: エラーのためfalseに倒した / ' + e.message);
+        // 「サーバーに拒まれた」と「通信エラーで読めなかった」を区別する。
+        // 拒まれた＝この現場は自分には開かれていない、と確定できるので閉じている扱いにする。
+        // 区別せず素通りさせると、子機が中身を読めないまま画面だけ進んで固まる。
+        const denied = !!(e && (e.code === 'permission-denied' || /permission|insufficient/i.test(e.message || '')));
+        dlog('[診断] オーナー判定: ' + (denied ? 'サーバーに拒まれた' : 'エラーのためfalseに倒した') + ' / ' + e.message);
         window.isJobOwner = false;
         window.currentJobCompanyId = null;
-        window.jobMetaLoaded = false; // 読めていない → 開閉の判定はしない（締め出さない）
+        if (denied) {
+          window.jobMetaLoaded = true;
+          window.jobOpenUntil = 0;
+        } else {
+          window.jobMetaLoaded = false; // 読めていない → 開閉の判定はしない（締め出さない）
+        }
         return false;
       });
     };
@@ -7366,14 +7375,13 @@
         '本日の作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
         '・以後、子機はQRコードからも参加できなくなります\n' +
-        '　（翌朝「子機の参加を再開する」で開けます）\n' +
+        '　（翌朝「子機を招待」で開けます）\n' +
         '・データはクラウドに保存されたまま残ります\n\n' +
         'この操作は取り消せません。よろしいですか？'
       );
       if (!ok) return;
-      // 子機の参加受付を閉じる（退場させるだけでなく、再入場も止める）
-      if (window.closeJobNow) await window.closeJobNow();
-      if (window.updateOpenJobBtn) window.updateOpenJobBtn();
+      // 【重要】閉じるのは、子機が「終了」の合図を受け取ったあと。
+      // 先に閉じると、その瞬間に子機はサーバーから切り離され、合図が届かなくなる。
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
           if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
@@ -7384,6 +7392,10 @@
         }).then(() => {
           return window.clearDismissed ? window.clearDismissed() : Promise.resolve();
         }).then(() => {
+          // 子機が退場しきったので、ここで参加受付を閉じる（再入場も止める）
+          return window.closeJobNow ? window.closeJobNow() : Promise.resolve();
+        }).then(() => {
+          if (window.updateOpenJobBtn) window.updateOpenJobBtn();
           // 【注意】お知らせを閉じきってからログアウトすること。
           // 待たずにログアウトすると、お知らせの箱が画面に残ったまま次の画面へ進み、
           // 次回ログイン時に「作業終了…」が唐突に出てくる。
