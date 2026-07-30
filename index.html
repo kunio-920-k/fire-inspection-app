@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-e';
+    const APP_BUILD = '2026-07-30-f';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -943,10 +943,6 @@
           window.isJobOwner = false;
           dlog('[診断] オーナー判定: ownerUidが無いためfalseに倒した / doc存在=' + snap.exists());
         }
-        // オーナー（管理者）ならdismissedを自動リセット
-        if (window.isJobOwner && snap.exists() && snap.data() && snap.data().dismissed === true) {
-          setDoc(ref, { dismissed: false }, { merge: true });
-        }
         return window.isJobOwner;
       }).catch((e) => {
         // 「サーバーに拒まれた」と「通信エラーで読めなかった」を区別する。
@@ -1083,7 +1079,6 @@
               }, { merge: true }).then(() => {
                 window.myRole = 'admin';
                 if (window.applyRoleUI) window.applyRoleUI();
-                if (window.clearDismissed) window.clearDismissed();
               });
             } else if (!isCompanyAdminHere && existing.role === 'admin' && existing.grantedViaCompany === true) {
               // 会社経由で得ていた【管理者】権限だが、今はもう対象外（会社から抜けた・除名された・
@@ -1118,8 +1113,6 @@
             setDoc(ref, presenceData, { merge: true }).then(() => {
               window.myRole = initialRole;
               if (window.applyRoleUI) window.applyRoleUI();
-              // 管理者ならdismissedをリセット
-              if (initialRole === 'admin' && window.clearDismissed) window.clearDismissed();
             });
           }
         }).catch((e) => dlog('presence初期登録エラー / ' + e.message));
@@ -1735,10 +1728,6 @@
       return getDoc(ref).then((snap) => {
         if (!snap.exists()) return null;
         const d = snap.data();
-        // 管理者（オーナー）ならdismissedを自動リセット
-        if (d && d.dismissed === true && window.isJobOwner) {
-          setDoc(ref, { dismissed: false }, { merge: true });
-        }
         if (!d || !d.data) return null;
         try { return JSON.parse(d.data); }
         catch (e) { return null; }
@@ -1797,16 +1786,19 @@
       });
     };
 
+    // 解散の合図。
+    // 【設計 2026-07-30-f】合図は消さない。dismissedAt（解散した時刻）を書くだけ。
+    // 以前は dismissed を true にして2秒後に false へ戻していたが、その2秒に立ち会えない子機
+    // （ポケットの中・画面が消えている・別アプリを開いている）は合図を見逃していた。
+    // 現場ではそれが普通の状態なので、合図を残しておき、子機は画面を見た時点で気づく形にした。
+    // 子機は「現場に入った時点の dismissedAt」を覚えていて、それより新しい値になったら降りる。
+    // 時刻そのものは比べない（端末の時計のずれを持ち込まないため）。値が変わったかどうかだけを見る。
+    // ※旧版が使っていた dismissed（true/false）はもう書かない。古い版の端末に残っていても
+    //   「何も起きない」側に倒れるため、全員が締め出される事故にならない。
     window.dismissAllWorkers = function() {
       if (!window.currentJobId) return Promise.resolve();
       const ref = doc(db, 'inspections', window.currentJobId);
-      return setDoc(ref, { dismissed: true, dismissedAt: serverTimestamp() }, { merge: true });
-    };
-
-    window.clearDismissed = function() {
-      if (!window.currentJobId) return Promise.resolve();
-      const ref = doc(db, 'inspections', window.currentJobId);
-      return setDoc(ref, { dismissed: false }, { merge: true });
+      return setDoc(ref, { dismissedAt: serverTimestamp() }, { merge: true });
     };
 
     window.startMemoWatch = function() {
@@ -2069,25 +2061,30 @@
           window.applyCloudSigns = applyCloudSigns;
 
           onSnapshot(jobRef, (snap) => {
-            // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
-            if (Date.now() - window._lastLocalSaveAt < 2000) return;
             if (!snap.exists() || !snap.data()) return;
 
-            // 開閉状態の変化を取り込む（他端末で「再開」「本日終了」が押された場合）
-            const ouLive = snap.data().openUntil || null;
-            window.jobOpenUntil = (ouLive && ouLive.toMillis) ? ouLive.toMillis() : 0;
-            if (window.updateOpenJobBtn) window.updateOpenJobBtn();
-
-            // 作業終了フラグを検知 → 管理者以外はリセットしてログアウト
-            // （役割がまだ確定していない一瞬のタイミングで誤って弾いてしまわないよう、
-            //   myRoleが未確定のうちは何もしない＝role確定後の判定に委ねる）
-            if (snap.data().dismissed === true) {
+            // ---- 解散の合図の判定 ----
+            // 【重要】この判定は下の「自分の書き込みの反響を無視する」より前に置く。
+            // 解散の合図を書くのは親機だけなので、自分の反響と取り違えることはない。
+            // 反響の判定より後ろに置くと、入場直後に何か保存した子機が最初の一回を取りこぼし、
+            // 覚える値が解散後のものになってしまう（＝合図に気づけない）。
+            const dAt = snap.data().dismissedAt;
+            const dMs = (dAt && dAt.toMillis) ? dAt.toMillis() : 0;
+            const base = window._dismissBaseline;
+            if (!base || base.jobId !== window.currentJobId) {
+              // この現場で初めて見た値を「入場時の値」として覚える。ここでは降りない。
+              // 現場が変わったときも覚え直す（別の現場の値と比べて誤って降りないようにする）。
+              window._dismissBaseline = { jobId: window.currentJobId, at: dMs };
+            } else if (dMs > base.at) {
+              // 入場時より新しい合図 → 解散が出ている。
+              // 管理者（現場の持ち主・会社の管理者）は降りない。値だけ覚え直す。
               if (window.myRole === 'admin' || window.isJobOwner) {
-                // 管理者は自動でリセット
-                if (window.clearDismissed) window.clearDismissed();
+                window._dismissBaseline = { jobId: window.currentJobId, at: dMs };
               } else if (window.myRole === undefined) {
-                // 役割確定前 → 何もしない（誤って弾かない）
+                // 役割がまだ確定していない一瞬 → 何もしない。確定後の判定に委ねる
+                // （覚え直しもしない。ここで覚え直すと合図を見失う）
               } else {
+                window._dismissBaseline = { jobId: window.currentJobId, at: dMs };
                 localStorage.removeItem('mc_job_id');
                 if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
                 window.showAppAlert('本日の作業が終了しました。お疲れさまでした。')
@@ -2096,6 +2093,14 @@
                 return;
               }
             }
+
+            // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
+            if (Date.now() - window._lastLocalSaveAt < 2000) return;
+
+            // 開閉状態の変化を取り込む（他端末で「再開」「本日終了」が押された場合）
+            const ouLive = snap.data().openUntil || null;
+            window.jobOpenUntil = (ouLive && ouLive.toMillis) ? ouLive.toMillis() : 0;
+            if (window.updateOpenJobBtn) window.updateOpenJobBtn();
 
             if (!snap.data().data) return;
             try {
@@ -3898,8 +3903,6 @@
     function resumeJob(jobId) {
       localStorage.setItem('mc_job_id', jobId);
       window.currentJobId = jobId;
-      // dismissedフラグを念のためリセット（管理者が次回入れなくなるのを防ぐ）
-      if (window.clearDismissed) window.clearDismissed();
       closeContinueModal();
       document.getElementById('startScreen').style.display = 'none';
       location.reload();
@@ -5043,16 +5046,10 @@
       )) return;
       if (!window.hideJob) return;
       try {
-        // 【重要】閉じるのは、子機が「終了」の合図を受け取ったあと。
-        // 先に閉じると、その瞬間に子機はサーバーから切り離され、合図が届かなくなる。
         // 通常このボタンを押す時点では「本日の作業を終了する」で解散済みのため、
         // ここでの解散は、押し忘れて直接完了へ進んだ場合の保険。
-        // 誰も残っていなければ2秒待つだけで何も起きない。
-        if (window.dismissAllWorkers) {
-          await window.dismissAllWorkers();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          if (window.clearDismissed) await window.clearDismissed();
-        }
+        // 誰も残っていなければ何も起きない。
+        if (window.dismissAllWorkers) await window.dismissAllWorkers();
         if (window.closeJobNow) await window.closeJobNow();
         if (window.updateOpenJobBtn) window.updateOpenJobBtn();
         await window.hideJob(window.currentJobId, '現場メニューの完了ボタン');
@@ -7526,8 +7523,9 @@
         'この操作は取り消せません。よろしいですか？'
       );
       if (!ok) return;
-      // 【重要】閉じるのは、子機が「終了」の合図を受け取ったあと。
-      // 先に閉じると、その瞬間に子機はサーバーから切り離され、合図が届かなくなる。
+      // 【変更 2026-07-30-f】待ち時間は無くなった。
+      // 合図を消さない作りにしたので、「子機が受け取るまで待つ」必要がない。
+      // 受付を先に閉じても、子機は次に画面を見た時点で合図に気づく。
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
           if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
@@ -7535,14 +7533,7 @@
           // リセットは値を変えるだけで表示に手を付けないので、
           // 描き直さないと更新ハイライトのボタンがONのまま残って見える。
           renderBuildingTabs();
-          // 他端末が「作業終了」の通知を確実に受け取れるよう少し待ってから、
-          // dismissedフラグのリセットを完了させる（この処理が終わるまではアラートを出さない＝
-          // タブを閉じられてもリセット漏れが起きないようにするため）
-          return new Promise((resolve) => setTimeout(resolve, 2000));
-        }).then(() => {
-          return window.clearDismissed ? window.clearDismissed() : Promise.resolve();
-        }).then(() => {
-          // 子機が退場しきったので、ここで参加受付を閉じる（再入場も止める）
+          // 参加受付を閉じる（再入場も止める）
           return window.closeJobNow ? window.closeJobNow() : Promise.resolve();
         }).then(() => {
           if (window.updateOpenJobBtn) window.updateOpenJobBtn();
