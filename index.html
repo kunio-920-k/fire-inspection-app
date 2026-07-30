@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-d';
+    const APP_BUILD = '2026-07-30-e';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -3656,11 +3656,11 @@
       if (deleteSignsBtn) deleteSignsBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const endWorkBtn = document.getElementById('endWorkBtn');
       if (endWorkBtn) {
+        // 単日・複数日のどちらでも使える。
+        // 「本日の作業を終了する」＝その日のグループ作業の解散（子機を帰す）。
+        // 「この物件を完了にする」＝事務作業まで終えて継続中の一覧から外すこと。
+        // 意味が別なので、単日だからといって前者を塞がない。
         endWorkBtn.style.display = isAdmin ? 'inline-block' : 'none';
-        const isSingleDay = window.propDayMode !== 'multi';
-        endWorkBtn.disabled = isSingleDay;
-        endWorkBtn.style.opacity = isSingleDay ? '0.4' : '1';
-        endWorkBtn.style.cursor = isSingleDay ? 'not-allowed' : 'pointer';
       }
       if (window.updateOpenJobBtn) window.updateOpenJobBtn();
       const sendLogBtn = document.getElementById('sendLogBtn');
@@ -5034,19 +5034,38 @@
     async function confirmCompleteProperty() {
       if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
       if (!window.currentJobId) return;
-      if (!await window.showAppConfirm('この物件を完了にして、「継続中の物件」一覧から外します。\nデータは消えません。「既存物件から選択」から、いつでも継続中に戻せます。\n\nよろしいですか？')) return;
+      if (!await window.showAppConfirm(
+        'この物件を完了にして、「継続中の物件」一覧から外します。\n\n' +
+        '・まだ参加している子機があればログアウトされます\n' +
+        '・以後、子機はQRコードからも参加できなくなります\n' +
+        '・データは消えません。「既存物件から選択」から、いつでも継続中に戻せます\n\n' +
+        'よろしいですか？'
+      )) return;
       if (!window.hideJob) return;
-      window.hideJob(window.currentJobId, '現場メニューの完了ボタン').then(() => {
-        window.showAppAlert('この物件を完了にしました。');
+      try {
+        // 【重要】閉じるのは、子機が「終了」の合図を受け取ったあと。
+        // 先に閉じると、その瞬間に子機はサーバーから切り離され、合図が届かなくなる。
+        // 通常このボタンを押す時点では「本日の作業を終了する」で解散済みのため、
+        // ここでの解散は、押し忘れて直接完了へ進んだ場合の保険。
+        // 誰も残っていなければ2秒待つだけで何も起きない。
+        if (window.dismissAllWorkers) {
+          await window.dismissAllWorkers();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (window.clearDismissed) await window.clearDismissed();
+        }
+        if (window.closeJobNow) await window.closeJobNow();
+        if (window.updateOpenJobBtn) window.updateOpenJobBtn();
+        await window.hideJob(window.currentJobId, '現場メニューの完了ボタン');
+        await window.showAppAlert('この物件を完了にしました。');
         document.getElementById('setup').style.display = 'none';
         document.getElementById('propertyArea').style.display = 'none';
         const tableWrap = document.querySelector('.table-wrap');
         if (tableWrap) tableWrap.style.display = 'none';
         document.getElementById('startScreen').style.display = 'block';
         if (window.prepareStartScreen) window.prepareStartScreen();
-      }).catch((e) => {
+      } catch (e) {
         window.showAppAlert('操作に失敗しました：' + e.message);
-      });
+      }
     }
 
     // 号室の入力欄（floor_◯）は prepareEdit() でしか作られない。号室編集パネルを一度も
@@ -7497,12 +7516,12 @@
     // 本日の作業終了（管理者のみ）
     async function endWorkSession() {
       if (!window.isJobOwner) { window.showAppAlert('この操作は管理者のみ行えます。'); return; }
-      if (window.propDayMode !== 'multi') { window.showAppAlert('単日の現場では「本日の作業を終了する」は使用できません。作業が終わったら「この物件を完了にする」をお使いください。'); return; }
       const ok = await window.showAppConfirm(
-        '本日の作業を終了します。\n\n' +
+        '本日のグループ作業を終了します。\n\n' +
         '・管理者以外の全端末がログアウトされます\n' +
         '・以後、子機はQRコードからも参加できなくなります\n' +
-        '　（翌朝「子機を招待」で開けます）\n' +
+        '　（再開するときは「子機を招待」で開けます）\n' +
+        '・この端末はログインしたままです。印刷や確認はこのまま続けられます\n' +
         '・データはクラウドに保存されたまま残ります\n\n' +
         'この操作は取り消せません。よろしいですか？'
       );
@@ -7512,6 +7531,10 @@
       if (window.dismissAllWorkers) {
         window.dismissAllWorkers().then(() => {
           if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
+          // 【追加 2026-07-30-e】親機がログアウトしなくなったため、画面を描き直す。
+          // リセットは値を変えるだけで表示に手を付けないので、
+          // 描き直さないと更新ハイライトのボタンがONのまま残って見える。
+          renderBuildingTabs();
           // 他端末が「作業終了」の通知を確実に受け取れるよう少し待ってから、
           // dismissedフラグのリセットを完了させる（この処理が終わるまではアラートを出さない＝
           // タブを閉じられてもリセット漏れが起きないようにするため）
@@ -7523,12 +7546,12 @@
           return window.closeJobNow ? window.closeJobNow() : Promise.resolve();
         }).then(() => {
           if (window.updateOpenJobBtn) window.updateOpenJobBtn();
-          // 【注意】お知らせを閉じきってからログアウトすること。
-          // 待たずにログアウトすると、お知らせの箱が画面に残ったまま次の画面へ進み、
-          // 次回ログイン時に「作業終了…」が唐突に出てくる。
-          return window.showAppAlert('作業終了を通知しました。お疲れさまでした。');
-        }).then(() => {
-          if (window.logoutUser) window.logoutUser();
+          // 【変更 2026-07-30-e】ここで親機をログアウトさせない。
+          // このボタンの意味は「その日のグループ作業の解散」であって、管理者の終業ではない。
+          // 解散のあとも、施設管理人への説明・進捗の印刷・翌日の予約確認といった作業が残る。
+          // 現場を閉じても管理者と会社の管理者は出入りできる設計（closeJobNow の項を参照）なので、
+          // このまま操作を続けられる。
+          return window.showAppAlert('子機に作業終了を通知しました。お疲れさまでした。\n\nこの端末はそのまま操作を続けられます。');
         });
       }
     }
