@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-f';
+    const APP_BUILD = '2026-07-30-g';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -707,7 +707,10 @@
           loadingEl.textContent = '';
           if (result && result.user) {
             // ログイン履歴をFirestoreに記録する（使用頻度の把握用）
+            // uid は必須。セキュリティルールが「本人の記録か」をこれで確かめている
+            // （段階3-B）。外すと記録が通らなくなる。
             addDoc(collection(db, 'login_logs'), {
+              uid: result.user.uid,
               email: result.user.email || '',
               displayName: result.user.displayName || '',
               timestamp: serverTimestamp()
