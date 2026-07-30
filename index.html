@@ -52,13 +52,21 @@
     #editArea { margin-top: 15px; padding: 10px; border: 1px solid #ccc; display: none; }
     .fuzai-time { font-size: 10px; color: #333; display: block; margin-top: 2px; }
     .furyo-mark { font-size: 10px; color: red; display: block; }
+    /* 作業員の現在位置マーカー。色だけでは青と緑の判別がつかないため、色と形の組合せで区別する。
+       4色 × 4形 = 16人まで重複しない。形はセルの中でもメンバー一覧でも同じものを使う。 */
     .presence-dot {
       position: absolute; top: 3px; right: 3px;
-      width: 9px; height: 9px; border-radius: 50%;
-      border: 1px solid rgba(255,255,255,0.8);
+      width: 13px; height: 13px;
       animation: presence-blink 1.2s ease-in-out infinite;
       pointer-events: none;
     }
+    .mc-mark { box-sizing: border-box; }
+    .mc-mark.shape-circle   { border-radius: 50%; border: 1.5px solid #fff; }
+    .mc-mark.shape-square   { border-radius: 2px;  border: 1.5px solid #fff; }
+    .mc-mark.shape-diamond  { border: 1.5px solid #fff; transform: rotate(45deg); }
+    /* 三角は切り抜きで作るため枠線が乗らない。白の縁取りは影で代用する */
+    .mc-mark.shape-triangle { clip-path: polygon(50% 0%, 100% 100%, 0% 100%); filter: drop-shadow(0 0 1.5px rgba(255,255,255,0.95)); }
+    .member-mark { display: inline-block; width: 14px; height: 14px; flex-shrink: 0; }
     @keyframes presence-blink {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.25; }
@@ -198,7 +206,8 @@
     }
     #memberModal .member-desc { padding: 14px 18px 0; font-size: 12px; color: #6a7280; margin-bottom: 4px; }
     #memberModal #memberList { padding: 4px 18px 0; }
-    #memberModal .member-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #2a3040; }
+    #memberModal .member-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid #2a3040; }
+    #memberModal .member-name-wrap { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
     #memberModal .member-row:last-child { border-bottom: none; }
     #memberModal .member-name { font-size:13px; color:white; }
     #memberModal .member-email { font-size:11px; color:#6a7280; margin-top:2px; }
@@ -514,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-c';
+    const APP_BUILD = '2026-07-30-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1038,7 +1047,17 @@
     // 保存先: inspections/{jobId}/presence/{uid}
     // 操作のたびに自分の最終操作部屋を書き込み、他端末がonSnapshotで受け取る
 
-    const PRESENCE_COLORS = ['#e53935', '#1e88e5', '#43a047', '#fb8c00'];
+    // 緑は青と紛れるため使わない（色覚のタイプによっては原理的に判別できない組合せ）
+    const PRESENCE_COLORS = ['#e53935', '#1e88e5', '#f9a825', '#8e24aa'];
+    const PRESENCE_SHAPES = ['circle', 'square', 'diamond', 'triangle'];
+    // 参加順のindexから印を決める。先に色を一周させ、次に形を変える。
+    // 4人までは色だけで区別でき、5人目からは形が変わる。16人で一周する。
+    window.getPresenceMark = function(i) {
+      return {
+        color: PRESENCE_COLORS[i % PRESENCE_COLORS.length],
+        shape: PRESENCE_SHAPES[Math.floor(i / PRESENCE_COLORS.length) % PRESENCE_SHAPES.length]
+      };
+    };
     const ROLE_LABELS = { admin: '管理者', sub: 'サブ管理者', worker: '一般' };
     window.ROLE_LABELS = ROLE_LABELS;
 
@@ -1145,11 +1164,13 @@
           const tb = b.joinedAt ? b.joinedAt.toMillis() : 0;
           return ta - tb;
         });
-        const colorMap = {};
+        const markMap = {};
         docs.forEach((d, i) => {
-          colorMap[d.uid] = PRESENCE_COLORS[i % PRESENCE_COLORS.length];
+          markMap[d.uid] = window.getPresenceMark(i);
         });
-        if (window.applyPresenceDots) window.applyPresenceDots(docs, colorMap);
+        // メンバー一覧側からも同じ印を引けるようにしておく
+        window._presenceMarkMap = markMap;
+        if (window.applyPresenceDots) window.applyPresenceDots(docs, markMap);
         if (window.renderMemberList) window.renderMemberList(docs);
         window.latestPresenceDocs = docs;
       }, window.mcSnapshotErrorHandler('presence'));
@@ -5683,19 +5704,20 @@
     }
 
     // 各セルの右上に作業員の現在位置ドットを描画する
-    window.applyPresenceDots = function(docs, colorMap) {
+    window.applyPresenceDots = function(docs, markMap) {
       // 前回のドットを全て除去
       document.querySelectorAll('.presence-dot').forEach(el => el.remove());
       // 最新情報をキャッシュしておく（updateCellDisplay後の再描画用）
-      window._presenceDots = { docs, colorMap };
+      window._presenceDots = { docs, colorMap: markMap };
       docs.forEach((d) => {
         if (!d.room) return;
         const cell = document.querySelector('td.cell[data-room="' + d.room + '"]');
         if (!cell) return;
+        const mark = (markMap && markMap[d.uid]) || { color: '#999', shape: 'circle' };
         const dot = document.createElement('span');
-        dot.className = 'presence-dot';
+        dot.className = 'presence-dot mc-mark shape-' + mark.shape;
         dot.title = d.displayName;
-        dot.style.background = colorMap[d.uid] || '#999';
+        dot.style.background = mark.color;
         cell.appendChild(dot);
       });
     };
@@ -7414,13 +7436,19 @@
         list.innerHTML = '<p style="color:#6a7280;font-size:13px;padding:10px 0;">まだ参加メンバーがいません</p>';
         return;
       }
+      const markMap = window._presenceMarkMap || {};
+      const markHtml = (uid) => {
+        const m = markMap[uid];
+        if (!m) return '';
+        return '<span class="member-mark mc-mark shape-' + m.shape + '" style="background:' + m.color + ';"></span>';
+      };
       list.innerHTML = docs.map(d => {
         const isMe = window.currentUser && d.uid === window.currentUser.uid;
         const roleLabel = window.ROLE_LABELS ? window.ROLE_LABELS[d.role] || '一般' : d.role;
         const roleClass = d.role === 'admin' ? 'admin' : (d.role === 'sub' ? 'sub' : 'worker');
         if (isAdmin && !isMe) {
           return `<div class="member-row">
-            <div class="member-name">${d.displayName || d.uid}</div>
+            <div class="member-name-wrap">${markHtml(d.uid)}<div class="member-name">${d.displayName || d.uid}</div></div>
             <select class="member-role-select" onchange="changeMemberRole('${d.uid}', this.value)">
               <option value="admin" ${d.role === 'admin' ? 'selected' : ''}>管理者</option>
               <option value="sub" ${d.role === 'sub' ? 'selected' : ''}>サブ管理者</option>
@@ -7429,7 +7457,7 @@
           </div>`;
         } else {
           return `<div class="member-row">
-            <div class="member-name">${d.displayName || d.uid}${isMe ? '（自分）' : ''}</div>
+            <div class="member-name-wrap">${markHtml(d.uid)}<div class="member-name">${d.displayName || d.uid}${isMe ? '（自分）' : ''}</div></div>
             <span class="mc-role ${roleClass}">${roleLabel}</span>
           </div>`;
         }
