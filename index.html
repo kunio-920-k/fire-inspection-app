@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-g';
+    const APP_BUILD = '2026-07-30-h';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1655,11 +1655,20 @@
       }).catch(() => null);
     };
 
-    // 招待コードを再発行する（漏洩時の保険。管理者なら誰でも可）
+    // 招待コードを再発行する（漏洩時の保険。登録者＝オーナーのみ）
+    // 【段階3-C-A】以前はコード側で誰の確認もしておらず、ボタンをオーナーにしか
+    // 出していないだけだった。セキュリティルール側でオーナー限定にしたため、
+    // こちら側でも同じ条件で先に弾く。サーバーだけで弾くと、新しい索引は作れないのに
+    // 処理が進んでしまう形になり、エラーの出方が分かりにくくなるため。
     window.regenerateInviteCode = function(companyId) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
       const newCode = generateInviteCode();
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
-        const oldCode = snap.exists() ? snap.data().inviteCode : null;
+        if (!snap.exists()) throw new Error('会社が見つかりません。');
+        if (snap.data().ownerUid !== window.currentUser.uid) {
+          throw new Error('招待コードの再発行は登録者（オーナー）のみ行えます。');
+        }
+        const oldCode = snap.data().inviteCode || null;
         // 先に新しい索引を作ってから会社を更新する。逆順だと、途中で失敗したときに
         // 「会社は新コードだが索引が無い＝誰も参加できない」状態になるため。
         return setDoc(doc(db, 'inviteCodes', newCode), {
@@ -7332,7 +7341,7 @@
       window.regenerateInviteCode(companyId).then(() => {
         window.showAppAlert('招待コードを再発行しました。');
         refreshCompanyModal();
-      });
+      }).catch((e) => window.showAppAlert('再発行に失敗しました：' + e.message));
     }
 
     function loadCompanyMemberSection(companyId, isOwner) {
