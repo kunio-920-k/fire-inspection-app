@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-02-b';
+    const APP_BUILD = '2026-08-02-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1321,11 +1321,28 @@
     // workDate は「2026-08-02」の形（そのまま大小比較できる）。
     window.saveJobIndexFields = function(jobId, name, dateISO) {
       if (!window.currentUser || !jobId) return Promise.resolve();
+
+      // 【無限ループ対策・その1】中身が変わっていないなら書かない。
+      // ここへの書き込みは現場本体の onSnapshot を起こし、その先で
+      // restoreInspectionState → updatePropertyDisplay → ここ、と戻ってくる輪になっている。
+      // 同じ値なら書かないことで、輪は必ず2周目で止まる。
+      const nameVal = name || '（物件名未設定）';
+      const dateVal = dateISO || '';
+      const sig = jobId + '\u0000' + nameVal + '\u0000' + dateVal;
+      if (window._lastJobIndexSig === sig) return Promise.resolve();
+      window._lastJobIndexSig = sig;
+
+      // 【無限ループ対策・その2】自分の書き込みの反響を onSnapshot 側で無視させる。
+      // 点検データの保存と同じ仕組みに乗せる（index.html の _lastLocalSaveAt を参照）。
+      window._lastLocalSaveAt = Date.now();
+
       return setDoc(doc(db, 'inspections', jobId), {
-        propName: name || '（物件名未設定）',
-        workDate: dateISO || '',
+        propName: nameVal,
+        workDate: dateVal,
         indexUpdatedAt: serverTimestamp()
       }, { merge: true }).catch((e) => {
+        // 書けなかったときは覚えた値を捨てて、次回もう一度試せるようにする
+        window._lastJobIndexSig = null;
         dlog('現場インデックス保存エラー / ' + e.message);
       });
     };
