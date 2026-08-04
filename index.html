@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-02-c';
+    const APP_BUILD = '2026-08-02-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1322,19 +1322,20 @@
     window.saveJobIndexFields = function(jobId, name, dateISO) {
       if (!window.currentUser || !jobId) return Promise.resolve();
 
-      // 【無限ループ対策・その1】中身が変わっていないなら書かない。
+      // 【無限ループ対策】中身が変わっていないなら書かない。
       // ここへの書き込みは現場本体の onSnapshot を起こし、その先で
       // restoreInspectionState → updatePropertyDisplay → ここ、と戻ってくる輪になっている。
       // 同じ値なら書かないことで、輪は必ず2周目で止まる。
+      //
+      // 【重要】ここで window._lastLocalSaveAt を更新してはいけない。
+      // それをやると直後2秒間の onSnapshot が丸ごと無視され、その中で呼ばれるはずの
+      // applyCloudSigns（サイン画像の貼り直し）まで巻き添えで飛ぶ。
+      // 結果、サインが消えて「入室済」の表示だけが残る。上の1つで輪は止まるので不要。
       const nameVal = name || '（物件名未設定）';
       const dateVal = dateISO || '';
       const sig = jobId + '\u0000' + nameVal + '\u0000' + dateVal;
       if (window._lastJobIndexSig === sig) return Promise.resolve();
       window._lastJobIndexSig = sig;
-
-      // 【無限ループ対策・その2】自分の書き込みの反響を onSnapshot 側で無視させる。
-      // 点検データの保存と同じ仕組みに乗せる（index.html の _lastLocalSaveAt を参照）。
-      window._lastLocalSaveAt = Date.now();
 
       return setDoc(doc(db, 'inspections', jobId), {
         propName: nameVal,
