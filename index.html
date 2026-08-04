@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-07-30-h';
+    const APP_BUILD = '2026-08-02-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -886,7 +886,8 @@
       }).then((companyId) => {
         if (!companyId) return;
         window.currentJobCompanyId = companyId;
-        if (window.saveCompanyGenbaSummary) window.saveCompanyGenbaSummary(companyId, jobId, '', '');
+        // 【写しの廃止】ここで会社の一覧に空の写しを書いていたが不要になった。
+        // 物件情報を保存した時点で本体に propName / workDate が載り、ダッシュボードに出る。
         return setDoc(ref, { companyId: companyId }, { merge: true })
           .then(() => { dlog('現場の会社紐付けOK / job=' + jobId); })
           .catch((e) => { dlog('現場の会社紐付けエラー / ' + e.message); });
@@ -1274,13 +1275,68 @@
     // 保存先: companies/{companyId}/genbaIndex/{jobId}
     // users/{uid}/jobs（個人の現場一覧）と同じ発想の、会社版の一覧。
     // 現場が会社に紐付いた時・物件名や作業日が変わった時に、ここへ軽量なサマリだけを書き込んでおく。
+    // 会社の現場一覧に入れる作業日を「2026-08-02」の形に揃える。
+    //
+    // 【なぜ必要か】以前は保存元によって形がバラバラだった：
+    //   ・物件情報の保存 → 「2026年8月2日」（表示用の日本語）
+    //   ・会社への紐付け → 「2026-08-02」（入力欄の生の値）
+    //   ・現場の作成直後 → 空
+    // 画面に出すだけなら困らなかったが、ダッシュボードで「今日の現場か」を判定する
+    // ようになったため、混在していると比較できない。
+    // この形なら文字のまま大小を比べるだけで日付の前後が分かる。
+    //
+    // 古い行を書き換えて回ることはしない。次に物件情報が保存された時点で自然に揃う。
+    // それまでは読み出し側（normalizeGenbaDate）が日本語の形も受け取れるようにしてある。
+    window.normalizeGenbaDate = function(date) {
+      const s = String(date == null ? '' : date).trim();
+      if (!s) return '';
+      // すでに 2026-08-02 の形
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      // 2026年8月2日 の形（月日が1桁でも受ける）
+      const m = s.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+      if (m) {
+        return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+      }
+      // 「（日付未入力）」など、日付として読めないものは空扱い
+      return '';
+    };
+
+    // 今日を 2026-08-02 の形で返す
+    window.todayISO = function() {
+      const d = new Date();
+      return d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0');
+    };
+
+    // 現場本体（inspections/{jobId}）に、絞り込みに使う項目を書く。
+    //
+    // 【なぜ本体に持たせるか】従来は会社の一覧（genbaIndex）に写しを置き、
+    // ダッシュボードはそれを読んでいた。写しがあるから本体とズレ、ズレるから
+    // 「削除時に消す」「月替わりに掃除する」という追いかける仕組みが必要になっていた。
+    // 本体を直接引けばズレようがない。現場が消えれば一覧からも消え、日付を直せば即反映される。
+    //
+    // 作業日は点検データの奥（data の中の物件情報）にも入っているが、
+    // その位置では Firestore の条件検索にかけられないため、本体の直下に出しておく。
+    // workDate は「2026-08-02」の形（そのまま大小比較できる）。
+    window.saveJobIndexFields = function(jobId, name, dateISO) {
+      if (!window.currentUser || !jobId) return Promise.resolve();
+      return setDoc(doc(db, 'inspections', jobId), {
+        propName: name || '（物件名未設定）',
+        workDate: dateISO || '',
+        indexUpdatedAt: serverTimestamp()
+      }, { merge: true }).catch((e) => {
+        dlog('現場インデックス保存エラー / ' + e.message);
+      });
+    };
+
     window.saveCompanyGenbaSummary = function(companyId, jobId, name, date) {
       if (!companyId || !jobId) return;
       const ref = doc(db, 'companies', companyId, 'genbaIndex', jobId);
       setDoc(ref, {
         jobId: jobId,
         name: name || '（物件名未設定）',
-        date: date || '',
+        date: window.normalizeGenbaDate(date),
         updatedAt: serverTimestamp()
       }, { merge: true }).catch((e) => dlog('会社の現場一覧保存エラー / ' + e.message));
     };
@@ -1292,21 +1348,50 @@
       });
     };
 
-    window.loadCompanyGenbaList = function(companyId) {
-      if (!companyId) return Promise.resolve([]);
-      const ref = collection(db, 'companies', companyId, 'genbaIndex');
-      return getDocs(ref).then((snap) => {
+    // ダッシュボード用：会社の「本日の現場」を、現場本体から直接引く。
+    //
+    // 【写しを廃止した理由】以前は companies/{id}/genbaIndex に写しを置いて読んでいた。
+    // 写しがあるから本体とズレ、ズレるから「削除時に消す」「月替わりに掃除する」という
+    // 追いかける仕組みが必要になっていた。本体を直接引けばズレようがない。
+    //
+    // 【索引について】companyId と workDate の複合条件なので Firestore の索引が要る。
+    // 初回は必ず失敗するため、失敗を握りつぶさず needsIndex として呼び出し元へ返し、
+    // 日本語の案内画面を出す（開発者ツールを開かせないため）。
+    window.loadCompanyTodayJobs = function(companyId) {
+      if (!companyId) return Promise.resolve({ jobs: [] });
+      const today = window.todayISO();
+      const q = query(
+        collection(db, 'inspections'),
+        where('companyId', '==', companyId),
+        where('workDate', '==', today)
+      );
+      return getDocs(q).then((snap) => {
         const jobs = [];
-        snap.forEach(d => jobs.push(d.data()));
+        snap.forEach((d) => {
+          const v = d.data() || {};
+          jobs.push({
+            jobId: d.id,
+            name: v.propName || '（物件名未設定）',
+            date: v.workDate || '',
+            updatedAt: v.indexUpdatedAt || null
+          });
+        });
         jobs.sort((a, b) => {
           const ta = a.updatedAt ? a.updatedAt.toMillis() : 0;
           const tb = b.updatedAt ? b.updatedAt.toMillis() : 0;
           return tb - ta; // 新しい順
         });
-        return jobs;
+        return { jobs: jobs };
       }).catch((e) => {
-        dlog('会社の現場一覧取得エラー / ' + e.message);
-        return [];
+        dlog('本日の現場取得エラー / ' + e.message);
+        // Firestore は索引が無いとき failed-precondition を返し、
+        // メッセージの中に索引作成用のURLを含めてくる。それを取り出して画面に出す。
+        const msg = String(e && e.message ? e.message : '');
+        const m = msg.match(/https:\/\/console\.firebase\.google\.com\/\S+/);
+        if (e && (e.code === 'failed-precondition' || m)) {
+          return { jobs: [], needsIndex: true, indexUrl: m ? m[0].replace(/[)\s]+$/, '') : '' };
+        }
+        return { jobs: [], error: msg };
       });
     };
 
@@ -1712,10 +1797,16 @@
       if (!jobId || !companyId) return Promise.reject(new Error('現場または会社が指定されていません'));
       return updateDoc(doc(db, 'inspections', jobId), { companyId: companyId }).then(() => {
         window.currentJobCompanyId = companyId;
-        if (window.saveCompanyGenbaSummary) {
+        // 【写しの廃止】紐付けた時点の物件名・作業日を本体に載せておく。
+        // これが無いと、紐付けてもダッシュボードに出てこない。
+        if (window.saveJobIndexFields) {
           const nameEl = document.getElementById('propName');
           const dateEl = document.getElementById('propDate');
-          window.saveCompanyGenbaSummary(companyId, jobId, nameEl ? nameEl.value : '', dateEl ? dateEl.value : '');
+          return window.saveJobIndexFields(
+            jobId,
+            nameEl && nameEl.value ? nameEl.value : '（物件名未設定）',
+            dateEl ? dateEl.value : ''
+          );
         }
       });
     };
@@ -1723,12 +1814,11 @@
     // 現在開いている現場の、会社への紐付けを解除する
     window.unlinkJobFromCompany = function(jobId) {
       if (!jobId) return Promise.reject(new Error('現場が指定されていません'));
-      const prevCompanyId = window.currentJobCompanyId;
       return updateDoc(doc(db, 'inspections', jobId), { companyId: null }).then(() => {
         window.currentJobCompanyId = null;
-        if (window.removeCompanyGenbaSummary && prevCompanyId) {
-          window.removeCompanyGenbaSummary(prevCompanyId, jobId);
-        }
+        // 【写しの廃止】写しを消す処理は不要になった。
+        // ダッシュボードは companyId で絞って本体を引くため、
+        // companyId を null にした時点で一覧から外れる。
       });
     };
 
@@ -3036,7 +3126,32 @@
 
     // 一番下の生成ボタンが押された時の処理。複数棟がまだ未生成の状態で登録されていれば
     // まとめて生成し、それ以外は今まで通り単一号棟の生成処理を行う。
-    function handleSetupGenerateClick() {
+    // 立面図を作る前に、作業日が入っているかを確かめる（案C-1）
+    //
+    // 【なぜここか】単一号棟でも複数号棟でも、必ずこの入口を通るため。
+    // 【なぜ必要か】現場管理ダッシュボードは「作業日が本日の現場」だけを出す。
+    // 日付の無い現場は事務所から見えなくなるので、作る前に塞いでおく。
+    //
+    // 普段は一括設定画面を開いた時点で今日の日付が自動で入るため、ここに引っかかるのは
+    // 入っていた日付をわざわざ消した場合だけ。取りこぼしを塞ぐための保険。
+    async function handleSetupGenerateClick() {
+      const dateEl = document.getElementById('propDate');
+      if (dateEl && !dateEl.value) {
+        const ok = await window.showAppConfirm(
+          '作業日が入力されていません。\n\n' +
+          '作業日が無いと、現場管理ダッシュボードに表示されません。\n' +
+          '今日の日付を入れて進めますか？\n\n' +
+          '「いいえ」を選ぶと、作業日の入力に戻ります。'
+        );
+        if (!ok) {
+          // 入力欄まで画面を送って、そのまま入力に移れるようにする
+          dateEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          try { dateEl.focus(); } catch (e) {}
+          return;
+        }
+        dateEl.value = window.todayISO();
+        if (typeof updatePropertyDisplay === 'function') updatePropertyDisplay();
+      }
       if (buildings.length > 1 && !buildings.some(b => b.tableGenerated)) {
         generateAllRegisteredBuildings();
       } else {
@@ -6238,8 +6353,12 @@
       if (window.saveJobSummary && window.currentJobId) {
         window.saveJobSummary(window.currentJobId, prop.name, prop.date);
       }
-      if (window.saveCompanyGenbaSummary && window.currentJobId && window.currentJobCompanyId) {
-        window.saveCompanyGenbaSummary(window.currentJobCompanyId, window.currentJobId, prop.name, prop.date);
+      // 【写しの廃止】以前はここで会社の一覧（genbaIndex）に写しを書いていたが、
+      // 本体とズレる原因だったためやめた。ダッシュボードは現場本体を直接引く。
+      // 会社に紐付いていない現場でも本体には書いておく（あとで紐付けられた時に効くように）。
+      if (window.saveJobIndexFields && window.currentJobId) {
+        const dateISO = document.getElementById('propDate').value || '';
+        window.saveJobIndexFields(window.currentJobId, prop.name, dateISO);
       }
     }
 
@@ -6981,11 +7100,63 @@
       document.getElementById('officeDashboardModal').classList.add('active');
       document.getElementById('officeDashboardSearch').value = '';
       document.getElementById('officeDashboardList').innerHTML = '読み込み中…';
-      if (!window.loadCompanyGenbaList) return;
-      window.loadCompanyGenbaList(companyId).then((jobs) => {
-        officeDashboardJobs = jobs;
+      if (!window.loadCompanyTodayJobs) return;
+      // 【本日のみ】事務所の人がパッと見て「今日どこが動いているか」が分かることが目的。
+      // 過去は振り返らない前提（必要なら「既存物件を編集」から継続に戻して開く）。
+      // 明日以降は担当者が帰社後に処理すればよいため、ここには出さない。
+      // 絞り込みは Firestore 側で行うようになったので、ここでの後処理は不要。
+      window.loadCompanyTodayJobs(companyId).then((res) => {
+        if (res.needsIndex) {
+          officeDashboardJobs = [];
+          showOfficeDashboardIndexHelp(res.indexUrl);
+          return;
+        }
+        officeDashboardJobs = res.jobs || [];
         renderOfficeDashboardList();
       });
+    }
+
+    // 初回だけ出る案内。Firestore の索引がまだ無いときに表示する。
+    // 【なぜ画面に出すか】索引作成用のURLは通常、開発者ツールを開かないと見えない。
+    // 事務所でしかPCに触れない層にとって、F12を押して英語のエラーからURLを探すのは
+    // スクリーンショットより高い壁になる。コピーボタンだけで完結させる。
+    function showOfficeDashboardIndexHelp(url) {
+      const listEl = document.getElementById('officeDashboardList');
+      const safeUrl = String(url || '');
+      listEl.innerHTML =
+        '<div style="border:2px solid #f0a500;background:#fff8e6;border-radius:6px;padding:14px;line-height:1.7;">' +
+        '<p style="margin:0 0 10px;font-weight:bold;font-size:15px;">初回のみ、データベースの準備が必要です</p>' +
+        '<p style="margin:0 0 10px;font-size:13px;">故障ではありません。この会社で現場管理ダッシュボードを使うために、' +
+        '一度だけ設定を行ってください。数分で終わります。</p>' +
+        (safeUrl
+          ? '<p style="margin:0 0 6px;font-size:13px;">下のボタンでURLをコピーし、ブラウザのアドレス欄に貼り付けて開いてください。' +
+            '開いた画面で青いボタン（「インデックスを作成」）を押すだけです。</p>' +
+            '<textarea id="officeIndexUrl" readonly style="width:100%;box-sizing:border-box;height:64px;font-size:11px;' +
+            'padding:6px;margin-bottom:8px;">' + safeUrl.replace(/</g, '&lt;') + '</textarea>' +
+            '<button onclick="copyOfficeIndexUrl()" style="padding:8px 14px;font-size:14px;">URLをコピー</button>'
+          : '<p style="margin:0;font-size:13px;">Firebaseコンソールの Firestore →インデックス で、' +
+            'inspections に companyId と workDate の複合インデックスを作成してください。</p>') +
+        '<p style="margin:10px 0 0;font-size:12px;color:#666;">作成後、数分待ってからこの画面をもう一度開いてください。</p>' +
+        '</div>';
+    }
+
+    function copyOfficeIndexUrl() {
+      const el = document.getElementById('officeIndexUrl');
+      if (!el) return;
+      el.select();
+      el.setSelectionRange(0, 99999);
+      const done = () => window.showAppAlert('URLをコピーしました。ブラウザのアドレス欄に貼り付けて開いてください。');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(el.value).then(done).catch(() => {
+          try { document.execCommand('copy'); done(); } catch (e) {
+            window.showAppAlert('コピーできませんでした。URLを長押しして手動でコピーしてください。');
+          }
+        });
+      } else {
+        try { document.execCommand('copy'); done(); } catch (e) {
+          window.showAppAlert('コピーできませんでした。URLを長押しして手動でコピーしてください。');
+        }
+      }
     }
     function closeOfficeDashboard() {
       document.getElementById('officeDashboardModal').classList.remove('active');
@@ -6998,12 +7169,14 @@
         : officeDashboardJobs;
       if (filtered.length === 0) {
         listEl.innerHTML = '<p style="font-size:13px;color:#888;text-align:center;padding:20px 0;">' +
-          (officeDashboardJobs.length === 0 ? 'この会社にはまだ現場が紐付いていません。' : '該当する現場が見つかりません。') + '</p>';
+          (officeDashboardJobs.length === 0 ? '本日の現場はありません。' : '該当する現場が見つかりません。') + '</p>';
         return;
       }
       let html = '';
       filtered.forEach(j => {
-        const dateLabel = j.date || '（日付未設定）';
+        // 保存は「2026-08-02」だが、表示は今までどおり日本語にする
+        const iso = window.normalizeGenbaDate(j.date);
+        const dateLabel = iso ? formatDateJP(iso) : '（日付未設定）';
         html += '<div onclick="openOfficeDashboardJob(\'' + j.jobId + '\')" style="padding:10px 12px;border:1px solid #ddd;border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fafafa;">' +
           '<div style="font-weight:bold;font-size:14px;">' + (j.name || '（物件名未設定）') + '</div>' +
           '<div style="font-size:12px;color:#666;margin-top:2px;">' + dateLabel + '</div>' +
