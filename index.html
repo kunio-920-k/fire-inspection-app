@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-05-b';
+    const APP_BUILD = '2026-08-05-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -808,16 +808,37 @@
     // setJobOwnerIfNew が走ったときだけ待ちが入り、それ以外（子機が既存の現場に入る等）は素通りする。
     window._jobOwnerReady = Promise.resolve();
 
+    // 現場が「今日、実際に動いた」ことを記録するための2項目。
+    //
+    // 【なぜ作業日（人が入れた予定）ではなく、これを使うか】
+    // ・複数日モードの作業日欄は日付ではなく「8/2・8/3（2日間）」という要約文が入るため、
+    //   日付として比べられない。実際、複数日の現場は稼働中の一覧に一度も出ていなかった。
+    // ・稼働中の一覧も、古いサイン画像の掃除も、知りたいのは「予定」ではなく
+    //   「実際にいつ動いたか」なので、こちらのほうが目的に合っている。
+    //
+    // 【開いて眺めるだけでは進まない】
+    // ここが呼ばれるのは点検の記録が変わったとき（セルの状態・サイン・予約など）だけ。
+    // 復元処理（restoreInspectionState）は画面を作るだけで保存を呼ばないため、
+    // 現場を開いて見ただけでは日付は進まない。動くのは本当に作業したときだけ。
+    //
+    // 月（lastWorkedMonth）を別に持たせているのは、古いサイン画像の掃除で
+    // 「2026-06 の現場」を名指しで引くため。等しい条件2つで済むので索引が要らない
+    // （範囲で「2か月より前」を引くと複合索引が必要になり、各社のセットアップ手順が増える）。
+    function workedNowFields() {
+      const today = window.todayISO ? window.todayISO() : '';
+      return today ? { lastWorkedDate: today, lastWorkedMonth: today.slice(0, 7) } : {};
+    }
+
     window.saveInspectionToCloud = function (stateObj) {
       if (!window.currentUser || !window.currentJobId) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         const ref = doc(db, 'inspections', window.currentJobId);
-        window._jobOwnerReady.then(() => setDoc(ref, {
+        window._jobOwnerReady.then(() => setDoc(ref, Object.assign({
           data: JSON.stringify(stateObj),
           updatedAt: serverTimestamp(),
           lastEditedBy: window.currentUser.email || ''
-        }, { merge: true })).then(() => {
+        }, workedNowFields()), { merge: true })).then(() => {
           dlog('クラウド保存OK / job=' + window.currentJobId);
         }).catch((e) => {
           dlog('クラウド保存エラー / ' + e.message);
@@ -832,11 +853,11 @@
       if (!window.currentUser || !window.currentJobId) return Promise.resolve();
       clearTimeout(saveTimer);
       const ref = doc(db, 'inspections', window.currentJobId);
-      return window._jobOwnerReady.then(() => setDoc(ref, {
+      return window._jobOwnerReady.then(() => setDoc(ref, Object.assign({
         data: JSON.stringify(stateObj),
         updatedAt: serverTimestamp(),
         lastEditedBy: window.currentUser.email || ''
-      }, { merge: true })).then(() => {
+      }, workedNowFields()), { merge: true })).then(() => {
         dlog('クラウド即時保存OK / job=' + window.currentJobId);
       }).catch((e) => {
         dlog('クラウド即時保存エラー / ' + e.message);
@@ -1383,22 +1404,27 @@
       });
     };
 
-    // ダッシュボード用：会社の「本日の現場」を、現場本体から直接引く。
+    // ダッシュボード用：会社の「稼働中の現場」を、現場本体から直接引く。
     //
     // 【写しを廃止した理由】以前は companies/{id}/genbaIndex に写しを置いて読んでいた。
     // 写しがあるから本体とズレ、ズレるから「削除時に消す」「月替わりに掃除する」という
     // 追いかける仕組みが必要になっていた。本体を直接引けばズレようがない。
     //
-    // 【索引について】companyId と workDate の複合条件なので Firestore の索引が要る。
-    // 初回は必ず失敗するため、失敗を握りつぶさず needsIndex として呼び出し元へ返し、
-    // 日本語の案内画面を出す（開発者ツールを開かせないため）。
-    window.loadCompanyTodayJobs = function(companyId) {
+    // 【判定を「作業日が本日」から「本日動いた」に変えた理由】
+    // 作業日は人が入れた予定で、複数日モードでは日付ではなく要約文が入るため比べられず、
+    // 複数日の現場が一覧に一度も出ていなかった。事務所が知りたいのは予定ではなく
+    // 「今どこが動いているか」なので、実際に記録が動いた日（lastWorkedDate）で引く。
+    //
+    // 【索引について】等しい条件2つだけなので、Firestore は既存の索引の組み合わせで
+    // 処理できる。複合索引は要らず、各社のセットアップ手順も増えない。
+    // 念のため索引を要求された場合の案内（showOfficeDashboardIndexHelp）は残してある。
+    window.loadCompanyActiveJobs = function(companyId) {
       if (!companyId) return Promise.resolve({ jobs: [] });
       const today = window.todayISO();
       const q = query(
         collection(db, 'inspections'),
         where('companyId', '==', companyId),
-        where('workDate', '==', today)
+        where('lastWorkedDate', '==', today)
       );
       return getDocs(q).then((snap) => {
         const jobs = [];
@@ -1418,7 +1444,7 @@
         });
         return { jobs: jobs };
       }).catch((e) => {
-        dlog('本日の現場取得エラー / ' + e.message);
+        dlog('稼働中の現場取得エラー / ' + e.message);
         // Firestore は索引が無いとき failed-precondition を返し、
         // メッセージの中に索引作成用のURLを含めてくる。それを取り出して画面に出す。
         const msg = String(e && e.message ? e.message : '');
@@ -2387,7 +2413,7 @@
         </div>
         <!-- 現場管理ダッシュボード（会社の管理者のみ表示） -->
         <div id="startScreenDashboardWrap" style="display:none;border-top:1px solid #262d3a;padding:8px 10px 10px;">
-          <button onclick="openOfficeDashboardFromStartScreen()" style="width:100%;background:rgba(255,140,66,0.45);color:#fff;border:1px solid rgba(255,255,255,0.55);border-radius:5px;padding:9px;font-size:13px;font-weight:bold;cursor:pointer;">🏢 現場管理ダッシュボードを開く</button>
+          <button onclick="openOfficeDashboardFromStartScreen()" style="width:100%;background:rgba(255,140,66,0.45);color:#fff;border:1px solid rgba(255,255,255,0.55);border-radius:5px;padding:9px;font-size:13px;font-weight:bold;cursor:pointer;">🏢 稼働中の現場を見る</button>
         </div>
       </div>
       <!-- メニューラベル -->
@@ -2776,7 +2802,7 @@
   <div id="officeDashboardModal" class="modal">
     <div class="modal-box" style="max-width:480px;text-align:left;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h2 style="margin:0;">🏢 現場管理ダッシュボード</h2>
+        <h2 style="margin:0;">🏢 稼働中の現場</h2>
         <span onclick="closeOfficeDashboard()" style="cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;color:#888;">×</span>
       </div>
       <input type="text" id="officeDashboardSearch" placeholder="🔍 物件名で検索" oninput="renderOfficeDashboardList()" style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;font-size:14px;">
@@ -3181,8 +3207,12 @@
     // 立面図を作る前に、作業日が入っているかを確かめる（案C-1）
     //
     // 【なぜここか】単一号棟でも複数号棟でも、必ずこの入口を通るため。
-    // 【なぜ必要か】現場管理ダッシュボードは「作業日が本日の現場」だけを出す。
-    // 日付の無い現場は事務所から見えなくなるので、作る前に塞いでおく。
+    // 【なぜ必要か】作業日は印刷の日付欄と、スケジュールの初期設定に使われる。
+    // 空のまま進むと、印刷物の日付が抜け、スケジュールにも日付が入らない。
+    //
+    // 【以前の理由からの変更】当初は「稼働中の現場の一覧に出なくなるから」を理由にしていたが、
+    // 一覧の判定は作業日ではなく「実際に記録が動いた日」に変わったため、作業日が空でも
+    // 一覧には出る。理由が変わっただけで、空のまま進んで得することは無いのでチェックは残す。
     //
     // 普段は一括設定画面を開いた時点で今日の日付が自動で入るため、ここに引っかかるのは
     // 入っていた日付をわざわざ消した場合だけ。取りこぼしを塞ぐための保険。
@@ -3191,7 +3221,7 @@
       if (dateEl && !dateEl.value) {
         const ok = await window.showAppConfirm(
           '作業日が入力されていません。\n\n' +
-          '作業日が無いと、現場管理ダッシュボードに表示されません。\n' +
+          '印刷の日付欄が空になり、スケジュールにも日付が入りません。\n' +
           '今日の日付を入れて進めますか？\n\n' +
           '「いいえ」を選ぶと、作業日の入力に戻ります。'
         );
@@ -7152,12 +7182,12 @@
       document.getElementById('officeDashboardModal').classList.add('active');
       document.getElementById('officeDashboardSearch').value = '';
       document.getElementById('officeDashboardList').innerHTML = '読み込み中…';
-      if (!window.loadCompanyTodayJobs) return;
+      if (!window.loadCompanyActiveJobs) return;
       // 【本日のみ】事務所の人がパッと見て「今日どこが動いているか」が分かることが目的。
       // 過去は振り返らない前提（必要なら「既存物件を編集」から継続に戻して開く）。
       // 明日以降は担当者が帰社後に処理すればよいため、ここには出さない。
       // 絞り込みは Firestore 側で行うようになったので、ここでの後処理は不要。
-      window.loadCompanyTodayJobs(companyId).then((res) => {
+      window.loadCompanyActiveJobs(companyId).then((res) => {
         if (res.needsIndex) {
           officeDashboardJobs = [];
           showOfficeDashboardIndexHelp(res.indexUrl);
@@ -7178,7 +7208,7 @@
       listEl.innerHTML =
         '<div style="border:2px solid #f0a500;background:#fff8e6;border-radius:6px;padding:14px;line-height:1.7;">' +
         '<p style="margin:0 0 10px;font-weight:bold;font-size:15px;">初回のみ、データベースの準備が必要です</p>' +
-        '<p style="margin:0 0 10px;font-size:13px;">故障ではありません。この会社で現場管理ダッシュボードを使うために、' +
+        '<p style="margin:0 0 10px;font-size:13px;">故障ではありません。この会社で稼働中の現場の一覧を使うために、' +
         '一度だけ設定を行ってください。数分で終わります。</p>' +
         (safeUrl
           ? '<p style="margin:0 0 6px;font-size:13px;">下のボタンでURLをコピーし、ブラウザのアドレス欄に貼り付けて開いてください。' +
@@ -7221,14 +7251,20 @@
         : officeDashboardJobs;
       if (filtered.length === 0) {
         listEl.innerHTML = '<p style="font-size:13px;color:#888;text-align:center;padding:20px 0;">' +
-          (officeDashboardJobs.length === 0 ? '本日の現場はありません。' : '該当する現場が見つかりません。') + '</p>';
+          (officeDashboardJobs.length === 0
+            ? '現在、稼働中の現場はありません。<br>作業が始まると、ここに現れます。'
+            : '該当する現場が見つかりません。') + '</p>';
         return;
       }
       let html = '';
       filtered.forEach(j => {
-        // 保存は「2026-08-02」だが、表示は今までどおり日本語にする
+        // 作業日の表示。保存は「2026-08-02」の形だが、表示は今までどおり日本語にする。
+        // 【複数日モードについて】作業日の欄には日付ではなく「8/2・8/3（2日間）」という
+        // 要約文が入る。日付として読めないので、その場合は文字列をそのまま出す
+        // （人が読める文なので、「（日付未設定）」と出すより親切）。
         const iso = window.normalizeGenbaDate(j.date);
-        const dateLabel = iso ? formatDateJP(iso) : '（日付未設定）';
+        const raw = (j.date || '').trim();
+        const dateLabel = iso ? formatDateJP(iso) : (raw || '（日付未設定）');
         html += '<div onclick="openOfficeDashboardJob(\'' + j.jobId + '\')" style="padding:10px 12px;border:1px solid #ddd;border-radius:8px;margin-bottom:8px;cursor:pointer;background:#fafafa;">' +
           '<div style="font-weight:bold;font-size:14px;">' + (j.name || '（物件名未設定）') + '</div>' +
           '<div style="font-size:12px;color:#666;margin-top:2px;">' + dateLabel + '</div>' +
@@ -7475,7 +7511,7 @@
       }
 
       if (status.isCompanyAdmin) {
-        html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 現場管理ダッシュボードを開く</button>';
+        html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 稼働中の現場を見る</button>';
       }
 
       html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee;">';
