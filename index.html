@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-05-c';
+    const APP_BUILD = '2026-08-05-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1456,6 +1456,151 @@
       });
     };
 
+
+    // ---- 古いサイン画像の掃除（月またぎ）----
+    //
+    // 【なぜ要るか】サイン画像は360×240のPNGをFirestoreに直接入れており、1件5〜15KB。
+    // 100戸で7割サインなら1現場で約700KB。月10現場なら年84MBで、10年で無料枠の1GBに届く。
+    // 溜まる場所はここだけ（廃止した写しの残骸は10年でも誤差）。
+    // なお印刷完了後に押す一括削除は既にあるので、これは【押し忘れの受け皿】。
+    //
+    // 【誰が走らせるか】会社の登録者（オーナー）が会社の画面を開いたときだけ。
+    // オーナーは全現場に対して資格を持つので、権限で弾かれにくい。
+    // 「オーナーが10年開かないならその会社は死んでいる」という前提。
+    //
+    // 【いつまでのものを消すか】今月・先月・先々月は残し、それより古い月を消す。
+    // これで「最後に作業してから最低2か月は残る」ことが保証される。
+    //
+    // 【どこまで済んだかの覚え方】会社の記録（lastSignCleanupMonth）に持つ。
+    // 端末に覚えると、機種変更やデータ消去で忘れ、忘れている間の月が取り残される。
+    //
+    // 【途中で切れたとき】その月を最後まで終えるまで印を進めない。
+    // 次回は同じ月をもう一度なぞるが、すでに消えたサインは見つからないだけなので害はない。
+    // 電池切れ・電波断・着信は避けられない前提。
+
+    function monthOfToday() {
+      return window.todayISO().slice(0, 7);
+    }
+
+    // '2026-08' に n か月足す（n は負でもよい）
+    function addMonths(ym, n) {
+      const y = parseInt(ym.slice(0, 4), 10);
+      const m = parseInt(ym.slice(5, 7), 10);
+      const total = y * 12 + (m - 1) + n;
+      return String(Math.floor(total / 12)) + '-' + String((total % 12) + 1).padStart(2, '0');
+    }
+
+    // 掃除の進み具合を出す帯。終わりが見えないと人は画面を閉じてしまうため。
+    // 会社の画面の描き直しに巻き込まれないよう、自前で作って自前で消す。
+    function showCleanupBar(text) {
+      let el = document.getElementById('signCleanupBar');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'signCleanupBar';
+        el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:3000;background:#4a4040;' +
+          'color:#fff;padding:10px 16px;font-size:13px;text-align:center;box-shadow:0 -2px 8px rgba(0,0,0,0.3);';
+        document.body.appendChild(el);
+      }
+      el.textContent = text;
+    }
+
+    function hideCleanupBar() {
+      const el = document.getElementById('signCleanupBar');
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    // 1つの月を掃除する。その月に属する現場のサイン画像を1件ずつ消す。
+    // 消した件数を返す。
+    function cleanupOneMonth(companyId, month) {
+      const q = query(
+        collection(db, 'inspections'),
+        where('companyId', '==', companyId),
+        where('lastWorkedMonth', '==', month)
+      );
+      return getDocs(q).then((snap) => {
+        const jobIds = [];
+        snap.forEach((d) => jobIds.push(d.id));
+        if (!jobIds.length) return { deleted: 0, failed: 0 };
+
+        // 先に総数を数えてから消す。数を先に出さないと進み具合が出せない。
+        return jobIds.reduce((chain, jobId) => chain.then((acc) => {
+          return getDocs(collection(db, 'inspections', jobId, 'signs')).then((s) => {
+            const refs = [];
+            s.forEach((d) => refs.push(d.ref));
+            acc.push({ jobId: jobId, refs: refs });
+            return acc;
+          }).catch(() => acc);
+        }), Promise.resolve([])).then((buckets) => {
+          const total = buckets.reduce((n, b) => n + b.refs.length, 0);
+          if (!total) return { deleted: 0, failed: 0 };
+          let done = 0;
+          let failed = 0;
+          showCleanupBar('データを整理しています（0 / ' + total + '）');
+          // 1件ずつ順に消す。まとめて投げないのは、途中で切れたときに
+          // 「どこまで終わったか」が端末の都合で変わらないようにするため。
+          const all = [];
+          buckets.forEach((b) => b.refs.forEach((r) => all.push(r)));
+          return all.reduce((chain, ref) => chain.then(() => {
+            return deleteDoc(ref).then(() => {
+              done++;
+              showCleanupBar('データを整理しています（' + done + ' / ' + total + '）');
+            }).catch((e) => {
+              // 1件の失敗で全体を止めない。ただし失敗が1件でもあれば、
+              // その月は「済み」にしない（次回もう一度なぞる）。
+              failed++;
+              dlog('サイン掃除エラー / ' + e.message);
+            });
+          }), Promise.resolve()).then(() => ({ deleted: done, failed: failed }));
+        });
+      });
+    }
+
+    // 掃除の入口。オーナーが会社の画面を開いたときに呼ぶ。
+    // 【この回で1か月だけ】中身のあった月を1つ片付けたら、そこで止めて次回に回す。
+    // 中身の無い月は続けて飛ばす（問い合わせ1回で済むので溜め込まない）。
+    // 【遡る上限】初めて走らせる会社では、24か月より前は対象にしない。
+    window._signCleanupRunning = false;
+    window.runMonthlySignCleanup = function(companyId) {
+      if (!companyId || window._signCleanupRunning) return Promise.resolve();
+      window._signCleanupRunning = true;
+
+      const latest = addMonths(monthOfToday(), -3); // ここまでが掃除の対象（今月・先月・先々月は残す）
+
+      return getDoc(doc(db, 'companies', companyId)).then((snap) => {
+        if (!snap.exists()) return null;
+        const d = snap.data() || {};
+        if (d.ownerUid !== window.currentUser.uid) return null; // 走らせるのはオーナーだけ
+
+        const last = d.lastSignCleanupMonth || null;
+        let month = last ? addMonths(last, 1) : addMonths(latest, -23);
+        if (month > latest) return null; // 掃除するものは無い
+
+        const step = () => {
+          if (month > latest) return Promise.resolve();
+          const target = month;
+          return cleanupOneMonth(companyId, target).then((res) => {
+            // 1件でも消せなかったものがあれば、この月は「済み」にしない。
+            // 印を進めず、ここで切り上げる（次回もう一度なぞる）。
+            if (res.failed > 0) return;
+            return updateDoc(doc(db, 'companies', companyId), {
+              lastSignCleanupMonth: target
+            }).then(() => {
+              // 実際に消した月は、そこで一度切り上げて次回に回す
+              // （1回の起動で長く走らせない）。空振りの月は続けて進める。
+              if (res.deleted > 0) return;
+              month = addMonths(target, 1);
+              return step();
+            });
+          });
+        };
+        return step();
+      }).catch((e) => {
+        dlog('サイン掃除の中断 / ' + e.message);
+      }).then(() => {
+        hideCleanupBar();
+        window._signCleanupRunning = false;
+      });
+    };
 
     // 保存先: companies/{companyId}, companies/{companyId}/members/{uid}
     // 「会社」は現場をまたいで人を束ねるための入れ物。
@@ -7368,6 +7513,11 @@
           // 索引導入前に作られた会社の救済。オーナーが開いたときだけ、裏で黙って補う。
           if (status.isOwner && window.ensureInviteCodeIndex) {
             window.ensureInviteCodeIndex(status.companyId, status.inviteCode);
+          }
+          // 古いサイン画像の掃除。オーナーが開いたときだけ、裏で走らせる。
+          // 画面の描き直しを待たせないよう、結果は待たない（進み具合は専用の帯に出る）。
+          if (status.isOwner && window.runMonthlySignCleanup) {
+            window.runMonthlySignCleanup(status.companyId);
           }
           renderCompanyModalApproved(body, status);
         } else {
