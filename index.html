@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-05-d';
+    const APP_BUILD = '2026-08-05-e';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1561,36 +1561,47 @@
     // 【遡る上限】初めて走らせる会社では、24か月より前は対象にしない。
     window._signCleanupRunning = false;
     window.runMonthlySignCleanup = function(companyId) {
-      if (!companyId || window._signCleanupRunning) return Promise.resolve();
+      if (!companyId || !window.currentUser || window._signCleanupRunning) return Promise.resolve();
       window._signCleanupRunning = true;
 
       const latest = addMonths(monthOfToday(), -3); // ここまでが掃除の対象（今月・先月・先々月は残す）
 
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
-        if (!snap.exists()) return null;
+        if (!snap.exists()) { dlog('掃除：会社が見つからない'); return null; }
         const d = snap.data() || {};
-        if (d.ownerUid !== window.currentUser.uid) return null; // 走らせるのはオーナーだけ
+        if (d.ownerUid !== window.currentUser.uid) { dlog('掃除：オーナーではないので走らせない'); return null; }
 
         const last = d.lastSignCleanupMonth || null;
         let month = last ? addMonths(last, 1) : addMonths(latest, -23);
-        if (month > latest) return null; // 掃除するものは無い
+        dlog('掃除：開始 / ' + month + '〜' + latest + ' / 前回=' + (last || 'なし'));
+        if (month > latest) { dlog('掃除：対象なし'); return null; }
+
+        // どこまで済んだか。空振りの月ごとに印を書くと無駄な書き込みが並ぶので、
+        // 最後に1回だけ書く。
+        let reached = null;
+
+        const finish = () => {
+          if (!reached) return Promise.resolve();
+          return updateDoc(doc(db, 'companies', companyId), {
+            lastSignCleanupMonth: reached
+          }).then(() => dlog('掃除：印を ' + reached + ' まで進めた'));
+        };
 
         const step = () => {
-          if (month > latest) return Promise.resolve();
+          if (month > latest) return finish();
           const target = month;
+          // 【重要】古い月を順に見ていく間も帯を出す。中身のある月に当たるまで
+          // 何十回か問い合わせが続くことがあり、無表示だと「動いていない」ように見えるため。
+          showCleanupBar('過去のデータを確認しています（' + target + '）');
           return cleanupOneMonth(companyId, target).then((res) => {
-            // 1件でも消せなかったものがあれば、この月は「済み」にしない。
-            // 印を進めず、ここで切り上げる（次回もう一度なぞる）。
-            if (res.failed > 0) return;
-            return updateDoc(doc(db, 'companies', companyId), {
-              lastSignCleanupMonth: target
-            }).then(() => {
-              // 実際に消した月は、そこで一度切り上げて次回に回す
-              // （1回の起動で長く走らせない）。空振りの月は続けて進める。
-              if (res.deleted > 0) return;
-              month = addMonths(target, 1);
-              return step();
-            });
+            dlog('掃除：' + target + ' / 消した=' + res.deleted + ' / 失敗=' + res.failed);
+            // 1件でも消せなかった月は「済み」にしない（次回もう一度なぞる）
+            if (res.failed > 0) return finish();
+            reached = target;
+            // 実際に消した月は、そこで一度切り上げて次回に回す（1回の起動で長く走らせない）
+            if (res.deleted > 0) return finish();
+            month = addMonths(target, 1);
+            return step();
           });
         };
         return step();
