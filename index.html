@@ -523,8 +523,25 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-05-a';
+    const APP_BUILD = '2026-08-05-b';
     window.APP_BUILD = APP_BUILD;
+
+    // ===== アプリが意図した再読み込み =====
+    // ファイル末尾の beforeunload は「表が作られている状態でページを離れようとしたら
+    // ブラウザに引き止めてもらう」ための保険。うっかりタブを閉じた・戻ったときのためのもの。
+    //
+    // ところが「この現場から退場」「現場を切り替える」のように、アプリ側で確認を取ってから
+    // 自分で再読み込みする場面でもこれが働き、アプリの確認のあとにブラウザの
+    // 「サイトを再読み込みしますか？」が続けて出て、二重の確認になっていた。
+    //
+    // そこで、再読み込みは必ずこの関数を通す。ここで合図を立てておき、beforeunload は
+    // その合図が立っていたら黙る。うっかり閉じたときは合図が立たないので保険は今までどおり働く。
+    //
+    // ⚠️ 今後 location.reload() を直接書かないこと。書くと二重確認が復活する。
+    window.appReload = function() {
+      window._intentionalReload = true;
+      location.reload();
+    };
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
     // 長時間のネイティブダイアログ（confirm/alert等）でJSの実行がブロックされると、
@@ -598,7 +615,7 @@
     // Claude in Chrome等の自動操作を止めてしまうため、アプリ内モーダルに置き換える。
     // Promise<void>を返す。連続で呼ばれた場合は前のモーダルが閉じてから順に表示する。
     // 例: window.showAppAlert('保存しました。');
-    //     window.showAppAlert('完了').then(() => location.reload());
+    //     window.showAppAlert('完了').then(() => window.appReload());
     window._appAlertQueue = Promise.resolve();
     window.showAppAlert = function (message) {
       const run = () => new Promise((resolve) => {
@@ -767,7 +784,7 @@
         if (!await window.showAppConfirm('この現場から退場します。ログイン自体は維持されるので、別の現場にまた参加できます。よろしいですか？')) return;
         localStorage.removeItem('mc_job_id');
         window.currentJobId = null;
-        location.reload();
+        window.appReload();
         return;
       }
 
@@ -809,7 +826,7 @@
       }, 800);
     };
 
-    // 即時保存版（デバウンスなし）。この後すぐlocation.reload()する場面で、
+    // 即時保存版（デバウンスなし）。この後すぐwindow.appReload()する場面で、
     // 保存が終わる前にリロードされてデータが消える事故を防ぐために使う。
     window.saveInspectionToCloudNow = function (stateObj) {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve();
@@ -2226,7 +2243,7 @@
                 if (window.resetHighlightFeatureSetting) window.resetHighlightFeatureSetting();
                 window.showAppAlert('本日の作業が終了しました。お疲れさまでした。')
                   .then(() => window.logoutUser ? window.logoutUser() : null)
-                  .then(() => location.reload());
+                  .then(() => window.appReload());
                 return;
               }
             }
@@ -4067,7 +4084,7 @@
       window.currentJobId = jobId;
       closeContinueModal();
       document.getElementById('startScreen').style.display = 'none';
-      location.reload();
+      window.appReload();
     }
 
     // 新規物件の登録設定
@@ -4348,7 +4365,7 @@
         Promise.all(jobs).catch((e) => {
           if (window.dlog) window.dlog('新規登録の下準備でエラー / ' + (e && e.message));
         }).then(() => {
-          window.showAppAlert('新規登録を開始します。一括設定画面を開きます。').then(() => location.reload());
+          window.showAppAlert('新規登録を開始します。一括設定画面を開きます。').then(() => window.appReload());
         });
       });
     }
@@ -4362,7 +4379,7 @@
         : ('job_' + Date.now() + '_' + Math.random().toString(36).slice(2));
       localStorage.setItem('mc_job_id', window.currentJobId);
       if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(window.currentJobId);
-      location.reload();
+      window.appReload();
     }
 
     function buildTimeSelects() {
@@ -4874,7 +4891,7 @@
       if (window.setJobOwnerIfNew) window.setJobOwnerIfNew(newJobId);
       document.getElementById('startScreen').style.display = 'none';
       const proceed = () => {
-        location.reload();
+        window.appReload();
       };
       if (window.saveInspectionToCloudNow) {
         window.saveInspectionToCloudNow(state).then(proceed);
@@ -7064,7 +7081,7 @@
       const ok = await window.showAppConfirm('現場を切り替えます。\n現在の現場はクラウドに保存済みです。\nよろしいですか？');
       if (!ok) return;
       localStorage.setItem('mc_job_id', jobId);
-      location.reload();
+      window.appReload();
     }
 
     // 前回の現場をもとに新規作成（設備情報を引き継ぎ、状態をリセット）
@@ -7104,7 +7121,7 @@
         Promise.all(jobs).catch((e) => {
           if (window.dlog) window.dlog('現場複製の下準備でエラー / ' + (e && e.message));
         }).then(() => {
-          window.showAppAlert('新しい現場を作成しました。一括設定画面を開きます。').then(() => location.reload());
+          window.showAppAlert('新しい現場を作成しました。一括設定画面を開きます。').then(() => window.appReload());
         });
       });
     }
@@ -7365,9 +7382,9 @@
       if (!await window.showAppConfirm('この会社への所属（申請）を解除します。\nあなたが作成者（オーナー）の場合は、作成者として正しい状態に戻します。\n\nよろしいですか？')) return;
       window.resolvePendingMembership().then((result) => {
         if (result === 'restored') {
-          window.showAppAlert('あなたはこの会社の作成者でした。作成者として復元しました。').then(() => location.reload());
+          window.showAppAlert('あなたはこの会社の作成者でした。作成者として復元しました。').then(() => window.appReload());
         } else {
-          window.showAppAlert('申請を解除しました。どこにも所属していない状態に戻りました。').then(() => location.reload());
+          window.showAppAlert('申請を解除しました。どこにも所属していない状態に戻りました。').then(() => window.appReload());
         }
       }).catch((e) => window.showAppAlert('解除に失敗しました：' + e.message));
     }
@@ -8069,6 +8086,10 @@ ${bodyHtml}
       // TESTMODE中は自動操作ツール（Claude in Chrome等）がネイティブダイアログを
       // 操作できず先に進めなくなるため、離脱確認をスキップする。
       if (window.TEST_MODE) return;
+      // アプリ自身が再読み込みする場面（window.appReload）は、すでにアプリ側で
+      // 確認を取っている。ここで重ねて聞くとブラウザの「サイトを再読み込みしますか？」が
+      // 続けて出て、二重の確認になるため黙る。
+      if (window._intentionalReload) return;
       if (tableGenerated) {
         e.preventDefault();
         e.returnValue = '';
