@@ -523,7 +523,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-02-d';
+    const APP_BUILD = '2026-08-05-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== Firestoreリアルタイム同期の再接続対策 =====
@@ -1720,10 +1720,18 @@
           }
           // 申請者：申請を取り消す。ただし除名済みの印は消さない
           // （本人が押して除名を無効化できてしまうため）。
+          //
+          // 【段階3-C-Bで追加した条件・重要】記録がそもそも無いときは削除を呼ばない。
+          // 以前は無くても deleteDoc を投げていた（存在しない相手への削除は素通りするため）。
+          // セキュリティルールで「本人が消せるのは除名済みでない場合だけ」と定めた結果、
+          // 相手が存在しないと status を確かめようがなく、サーバーに拒否される。
+          // 拒否されると後片付け（users 側の掃除）まで巻き添えで止まり、
+          // 「承認待ち」の表示から抜け出せなくなる。
           return getDoc(memberRef).then((mSnap) => {
             const cleanup = () => setDoc(doc(db, 'users', window.currentUser.uid),
               { companyId: null, companyStatus: null }, { merge: true }).then(() => 'cancelled');
-            if (mSnap.exists() && mSnap.data().status === 'removed') return cleanup();
+            if (!mSnap.exists()) return cleanup();
+            if (mSnap.data().status === 'removed') return cleanup();
             return deleteDoc(memberRef).then(cleanup);
           });
         });
@@ -1800,13 +1808,22 @@
 
     // 「登録者（オーナー）」権限を他の会社メンバーに譲渡する（現オーナーのみ実行可）
     // 譲渡先は自動的に会社の管理者にもなる。元オーナーは管理者のまま残る（外れない）。
+    //
+    // 【段階3-C-Bで順番を入れ替えた・重要】
+    // 以前は「ownerUid を書き換える → 相手を管理者にする」の順だった。セキュリティルールで
+    // members を書けるのをオーナーだけにすると、2つ目を書く時点で自分はもうオーナーではなく、
+    // サーバーに弾かれる。結果、相手は「登録者だが会社の管理者ではない」という中途半端な
+    // 状態で固まる（この状態は loadMyCompanyStatus の自己修復では直らない）。
+    // 先に相手を管理者にしてから ownerUid を渡せば、どちらもオーナーのうちに済む。
+    // 途中で失敗しても「まだ譲渡されていない」という安全側で止まる利点もある。
+    // ⚠️ この順番を元に戻してはいけない。
     window.transferCompanyOwnership = function(companyId, newOwnerUid) {
       return getDoc(doc(db, 'companies', companyId)).then((snap) => {
         if (!snap.exists() || snap.data().ownerUid !== window.currentUser.uid) {
           throw new Error('譲渡は現在の登録者のみ行えます。');
         }
-        return updateDoc(doc(db, 'companies', companyId), { ownerUid: newOwnerUid })
-          .then(() => updateDoc(doc(db, 'companies', companyId, 'members', newOwnerUid), { isCompanyAdmin: true }));
+        return updateDoc(doc(db, 'companies', companyId, 'members', newOwnerUid), { isCompanyAdmin: true })
+          .then(() => updateDoc(doc(db, 'companies', companyId), { ownerUid: newOwnerUid }));
       });
     };
 
