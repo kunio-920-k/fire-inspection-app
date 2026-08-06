@@ -271,7 +271,6 @@
     #furyoModal .modal-box { text-align: left; }
     #furyoModal h2 { text-align: center; }
     #furyoText { width: 100%; height: 80px; font-size: 14px; margin-top: 8px; border: 1px solid #ccc; border-radius: 4px; padding: 6px; resize: none; }
-    #furyoPreview { display: none; }
     #furyoOk { background: #ffcccc; }
     #furyoCancel { background: #eee; }
 
@@ -523,7 +522,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-05-e';
+    const APP_BUILD = '2026-08-06-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1310,10 +1309,12 @@
     };
 
     // ---- 会社に紐づく現場一覧（事務所ダッシュボード用）----
-    // 保存先: companies/{companyId}/genbaIndex/{jobId}
-    // users/{uid}/jobs（個人の現場一覧）と同じ発想の、会社版の一覧。
-    // 現場が会社に紐付いた時・物件名や作業日が変わった時に、ここへ軽量なサマリだけを書き込んでおく。
-    // 会社の現場一覧に入れる作業日を「2026-08-02」の形に揃える。
+    // 現場本体（inspections/{jobId}）を直接引く。会社ごとの写しは持たない。
+    // ※ 以前は companies/{会社ID}/genbaIndex に写しを置いていたが廃止した（理由は下の
+    //   loadCompanyActiveJobs のコメント）。書く関数・消す関数もセッション29で削除済み。
+    //   既存プロジェクトに古い写しが残っている場合があるが、誰も読まないので放置でよい。
+
+    // 作業日を「2026-08-02」の形に揃える。
     //
     // 【なぜ必要か】以前は保存元によって形がバラバラだった：
     //   ・物件情報の保存 → 「2026年8月2日」（表示用の日本語）
@@ -1383,24 +1384,6 @@
         // 書けなかったときは覚えた値を捨てて、次回もう一度試せるようにする
         window._lastJobIndexSig = null;
         dlog('現場インデックス保存エラー / ' + e.message);
-      });
-    };
-
-    window.saveCompanyGenbaSummary = function(companyId, jobId, name, date) {
-      if (!companyId || !jobId) return;
-      const ref = doc(db, 'companies', companyId, 'genbaIndex', jobId);
-      setDoc(ref, {
-        jobId: jobId,
-        name: name || '（物件名未設定）',
-        date: window.normalizeGenbaDate(date),
-        updatedAt: serverTimestamp()
-      }, { merge: true }).catch((e) => dlog('会社の現場一覧保存エラー / ' + e.message));
-    };
-
-    window.removeCompanyGenbaSummary = function(companyId, jobId) {
-      if (!companyId || !jobId) return Promise.resolve();
-      return deleteDoc(doc(db, 'companies', companyId, 'genbaIndex', jobId)).catch((e) => {
-        dlog('会社の現場一覧削除エラー / ' + e.message);
       });
     };
 
@@ -3157,7 +3140,6 @@
       <textarea id="furyoText" placeholder="例：感知器の作動不良、消火器の期限切れ など"></textarea>
       <button id="furyoVoiceBtn" type="button" onclick="toggleVoiceFuryo()" style="padding:6px 12px;font-size:18px;background:#eef5ff;margin-top:4px;">🎤</button>
       <br>
-      <img id="furyoPreview" src="" alt="" style="display:none;">
       <div class="modal-buttons">
         <button id="furyoCancel" onclick="cancelFuryo()">キャンセル</button>
         <button id="furyoOk" onclick="confirmFuryo()">記録する</button>
@@ -6228,8 +6210,6 @@
       furyoRoom = cell.dataset.room;
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
-      document.getElementById('furyoPreview').style.display = 'none';
-      document.getElementById('furyoPreview').src = '';
       document.getElementById('furyoModal').classList.add('active');
     }
     function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; furyoRoom = null; }
