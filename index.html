@@ -522,7 +522,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-06-a';
+    const APP_BUILD = '2026-08-09-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1019,10 +1019,33 @@
     // ドキュメントIDは号棟IDと部屋番号を組み合わせたものにし、号棟をまたいだ
     // サインの上書き事故が起きないようにしている。
 
+    // サイン画像の手元の控え。形は loadSignsFromCloud の戻り値と同じ。
+    //   { 号棟ID: { 号室: dataURL, ... }, __legacy__: { 号室: dataURL, ... } }
+    //
+    // 【なぜ控えを持つか（セッション30）】
+    // 以前は他端末の保存を受け取るたびに signs を全件取り直していた。
+    // 実測したところ、サイン1件が約10.7KB、取り直しは毎回サーバーへ行っており、
+    // 225戸・7人の現場では1日あたり約2.9GB、Firestoreの読み取りが約27万件に達した。
+    // 無料プランの上限は1日5万件なので、昼前にアプリが止まる計算だった。
+    // リスナー（startSignWatch）が差分だけを受け取ってここを最新に保つ形に変えた。
+    window._signsCache = { __legacy__: {} };
+
+    // リスナーの初回スナップショットを受け取ったか。
+    // 受け取る前は「控えに無い＝サーバーにも無い」とは言えないため、
+    // 画面のサインを消してはいけない（applyCloudSigns の判定で使う）。
+    window._signsWatchReady = false;
+
     // 1部屋分のサイン画像をFirestoreに保存する（サイン記録時に呼ぶ）
     window.saveSignToCloud = function(buildingId, room, signDataUrl) {
       if (!window.currentUser || !window.currentJobId) return;
       const docId = String(buildingId) + '_' + String(room);
+
+      // 【重要】手元の控えを先に更新する。
+      // サーバーへ書いてリスナー経由で戻ってくるまでの隙間に applyCloudSigns が走ると、
+      // 「控えに無い」と判断して、今書いたばかりのサインを画面から消してしまう。
+      if (!window._signsCache[String(buildingId)]) window._signsCache[String(buildingId)] = {};
+      window._signsCache[String(buildingId)][String(room)] = signDataUrl;
+
       const ref = doc(db, 'inspections', window.currentJobId, 'signs', docId);
       setDoc(ref, {
         sign: signDataUrl,
@@ -1074,10 +1097,45 @@
         snap.forEach((d) => { deletes.push(deleteDoc(d.ref)); });
         return Promise.all(deletes);
       }).then(() => {
+        window._signsCache = { __legacy__: {} };
         dlog('サイン全削除OK');
       }).catch((e) => {
         dlog('サイン削除エラー / ' + e.message);
       });
+    };
+
+    // サイン画像の変更をリアルタイムで受け取る。
+    //
+    // 【なぜ getDocs（全件取り直し）ではなくリスナーなのか】
+    // リスナーは初回に全件を送り、以後は変わった1件だけを送る。
+    // 全件取り直しの形だと「戸数 × 人数 × 保存回数」で通信が膨らみ、
+    // 大きな現場では無料プランの読み取り上限を1日で使い切ってしまう。
+    //
+    // 【削除されたサインの扱い】
+    // 印刷後の一括削除（deleteAllSigns）はサーバーから実体を消すので、
+    // まだ現場に残っている他の端末でも画面から消す。
+    // 見た目だけ残すと、印刷し直したときに出ないものが画面にあることになる。
+    window.startSignWatch = function() {
+      if (!window.currentUser || !window.currentJobId) return;
+      const ref = collection(db, 'inspections', window.currentJobId, 'signs');
+      onSnapshot(ref, (snap) => {
+        snap.docChanges().forEach((ch) => {
+          const d = ch.doc.data() || {};
+          const room = String(d.room || '');
+          if (!room) return;
+          // 号棟IDを持たないものは、号棟対応より前に保存された古い形式。
+          const bid = d.buildingId ? String(d.buildingId) : '__legacy__';
+          if (ch.type === 'removed') {
+            if (window._signsCache[bid]) delete window._signsCache[bid][room];
+          } else {
+            if (!d.sign) return;
+            if (!window._signsCache[bid]) window._signsCache[bid] = {};
+            window._signsCache[bid][room] = d.sign;
+          }
+        });
+        window._signsWatchReady = true;
+        if (window.applyCloudSigns) window.applyCloudSigns();
+      }, window.mcSnapshotErrorHandler('signs'));
     };
 
     // ---- 作業員の現在位置（presence）管理 ----
@@ -2344,6 +2402,12 @@
           window.startInstructionWatch();
         }
 
+        // サイン画像の監視を開始する（1回だけ）
+        if (!window.signWatchDone) {
+          window.signWatchDone = true;
+          window.startSignWatch();
+        }
+
         // クラウドのリアルタイム監視を開始する（1セッションにつき1回だけ）
         // 他端末が保存した変更を自動で受け取り、画面に反映する
         if (!window.cloudRestoreDone) {
@@ -2358,23 +2422,34 @@
             origSave(stateObj);
           };
 
-          // サイン画像をクラウドから読み込んでセルに反映するヘルパー
-          // 今アクティブな号棟のサインだけを当てはめる（号棟をまたいだ誤反映を防ぐ）
+          // 手元の控え（window._signsCache）をセルに当てはめるヘルパー。
+          // 今アクティブな号棟のサインだけを当てはめる（号棟をまたいだ誤反映を防ぐ）。
+          //
+          // 【通信は発生しない】以前はここで signs を全件取り直していたが、
+          // 変更の受け取りは startSignWatch のリスナーに任せる形に変えた（セッション30）。
+          // そのため、この関数は何度呼んでも費用がかからない。
           function applyCloudSigns() {
-            if (!window.loadSignsFromCloud) return;
+            const cache = window._signsCache || { __legacy__: {} };
             const activeBuilding = buildings[currentBuildingIdx];
             const activeBuildingId = activeBuilding && activeBuilding.id;
-            window.loadSignsFromCloud().then((signsByBuilding) => {
-              const legacy = signsByBuilding.__legacy__ || {};
-              const own = (activeBuildingId && signsByBuilding[activeBuildingId]) || {};
-              const signs = Object.assign({}, legacy, own);
-              Object.keys(signs).forEach((room) => {
-                const cell = document.querySelector('td.cell[data-room="' + room + '"]');
-                if (cell) {
-                  cell.dataset.sign = signs[room];
+            const legacy = cache.__legacy__ || {};
+            const own = (activeBuildingId && cache[activeBuildingId]) || {};
+            const signs = Object.assign({}, legacy, own);
+            document.querySelectorAll('td.cell').forEach((cell) => {
+              const room = cell.dataset.room;
+              const next = signs[room];
+              if (next) {
+                if (cell.dataset.sign !== next) {
+                  cell.dataset.sign = next;
                   if (window.updateCellDisplay) window.updateCellDisplay(cell);
                 }
-              });
+              } else if (window._signsWatchReady && cell.dataset.sign) {
+                // 控えに無い＝サーバーからも消えている（印刷後の一括削除など）。
+                // 【重要】リスナーの初回が届く前は「無い」と断定できないので触らない。
+                // これを外すと、入場直後にその日のサインが全部消える。
+                cell.dataset.sign = '';
+                if (window.updateCellDisplay) window.updateCellDisplay(cell);
+              }
             });
           }
           window.applyCloudSigns = applyCloudSigns;
@@ -4274,6 +4349,7 @@
       if (window.startPresenceWatch) window.startPresenceWatch();
       if (window.startMemoWatch) window.startMemoWatch();
       if (window.startInstructionWatch) window.startInstructionWatch();
+      if (window.startSignWatch) { window.signWatchDone = true; window.startSignWatch(); }
       if (window.applyOwnerUI) window.applyOwnerUI();
       buildNoteSelects();
       buildTimeSelects();
