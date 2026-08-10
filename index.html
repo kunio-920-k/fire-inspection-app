@@ -6964,16 +6964,39 @@
         html += '</div></div>';
         return html;
       };
+      // フロア選択のプルダウンを作る。
+      //
+      // 【なぜ手入力をやめたか（セッション30）】
+      // type="number" の入力欄は、全角数字を打つと value が空文字になる（ブラウザの仕様）。
+      // 画面には「５」と見えているのに読み取ると空なので、再描画のたびに1階へ戻っていた。
+      // プルダウンなら全角の入る余地が原理的に無くなり、その現場に存在しない階も選べなくなる。
+      //
+      // 選択肢の上限は、登録されている全号棟のうち一番高い階数に合わせる。
+      const scheduleFloorOptions = (selected) => {
+        let max = 1;
+        buildings.forEach(b => {
+          const n = parseInt(toHankaku(String((b.setup && b.setup.floorCount) || ''))) || 0;
+          if (n > max) max = n;
+        });
+        const sel = parseInt(selected) || 1;
+        // 階数を減らす前に設定した値が残っている場合でも、その値を消さずに選べるようにしておく
+        if (sel > max) max = sel;
+        let html = '';
+        for (let f = 1; f <= max; f++) {
+          html += '<option value="' + f + '"' + (f === sel ? ' selected' : '') + '>' + f + '</option>';
+        }
+        return html;
+      };
       container.innerHTML = scheduleData.map((day, di) => {
         const sessions = (day.sessions || []).map((s, si) => {
           const reserveChecked = s.reserveOnly ? 'checked' : '';
           const floorFieldsHtml = s.reserveOnly ? '' : `
             <span style="font-size:13px;color:#555;">フロア</span>
-            <input type="number" class="ss-floorFrom" value="${s.floorFrom}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
+            <select class="ss-floorFrom"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;background:#fff;">${scheduleFloorOptions(s.floorFrom)}</select>
             <span style="font-size:13px;color:#555;">階〜</span>
-            <input type="number" class="ss-floorTo" value="${s.floorTo}" min="1"
-              style="width:48px;font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;text-align:center;">
+            <select class="ss-floorTo"
+              style="font-size:13px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;background:#fff;">${scheduleFloorOptions(s.floorTo)}</select>
             <span style="font-size:13px;color:#555;">階</span>`;
           return `
           <div class="schedule-session-row" data-di="${di}" data-si="${si}" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:2px;padding-left:12px;">
@@ -7018,8 +7041,8 @@
         const s = scheduleData[di].sessions[si];
         const tf = row.querySelector('.ss-timeFrom'); if (tf) s.timeFrom = tf.value;
         const tt = row.querySelector('.ss-timeTo'); if (tt) s.timeTo = tt.value;
-        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(toHankaku(ff.value)) || 1;
-        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(toHankaku(ft.value)) || 1;
+        const ff = row.querySelector('.ss-floorFrom'); if (ff) s.floorFrom = parseInt(ff.value) || 1;
+        const ft = row.querySelector('.ss-floorTo'); if (ft) s.floorTo = parseInt(ft.value) || 1;
       });
     }
 
