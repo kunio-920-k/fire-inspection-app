@@ -4020,7 +4020,8 @@
       const listText = buildings.map((b, i) => (i + 1) + ': ' + (b.name ? b.name : ('号棟' + (i + 1)))).join('\n');
       const input = await window.showAppPrompt('削除する号棟の番号を入力してください\n' + listText, '');
       if (input === null) return;
-      const idx = parseInt(input) - 1;
+      // 現場では全角で打ってしまうことがあるため、半角に直してから解釈する
+      const idx = parseInt(toHankaku(String(input)).trim()) - 1;
       if (isNaN(idx) || idx < 0 || idx >= buildings.length) { window.showAppAlert('番号が正しくありません。'); return; }
       deleteBuildingTab(idx);
     }
