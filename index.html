@@ -588,12 +588,35 @@
     // Claude in Chromeのような自動操作ツールから押せない・Firestore接続が切れる等の問題があるため、
     // アプリ内の独自モーダルに置き換える。使い方は confirm() とほぼ同じで、Promise<boolean>を返す。
     // 例: if (!(await window.showAppConfirm('よろしいですか？'))) return;
-    window.showAppConfirm = function (message) {
+    // 第2引数で見た目を「危険」に切り替えられる。
+    //   window.showAppConfirm('本文', { danger: true, okLabel: '削除する' })
+    // 取り消せない操作（サイン画像の一括削除、号棟の削除）で使う。
+    // 【なぜ確認を2回にしないか】確認を重ねると連打で通す癖がついて、かえって読まなくなる。
+    // 回数は1回のまま、赤帯とボタンの色で「これは違う種類の操作だ」と一目で分かるようにしている。
+    window.showAppConfirm = function (message, options) {
+      const opts = options || {};
       return new Promise((resolve) => {
         const modal = document.getElementById('appConfirmModal');
+        const box = document.getElementById('appConfirmBox');
+        const head = document.getElementById('appConfirmDangerHead');
         document.getElementById('appConfirmMessage').textContent = message;
         const okBtn = document.getElementById('appConfirmOk');
         const cancelBtn = document.getElementById('appConfirmCancel');
+        if (opts.danger) {
+          head.style.display = 'block';
+          box.style.border = '2px solid #c62828';
+          okBtn.style.background = '#c62828';
+          okBtn.textContent = opts.okLabel || '削除する';
+          cancelBtn.style.background = '#d7dce1';
+          cancelBtn.style.fontWeight = 'bold';
+        } else {
+          head.style.display = 'none';
+          box.style.border = '';
+          okBtn.style.background = '#336699';
+          okBtn.textContent = 'OK';
+          cancelBtn.style.background = '#eee';
+          cancelBtn.style.fontWeight = '';
+        }
         function cleanup(result) {
           modal.classList.remove('active');
           okBtn.removeEventListener('click', onOk);
@@ -1219,13 +1242,25 @@
     };
 
     // 自分の現在位置をクラウドに書き込む（roleは上書きしない）
+    //
+    // 【号棟IDも一緒に書く理由（セッション30）】
+    // 以前は部屋番号だけを書いていたため、複数棟の現場で
+    // 「2号棟の303にいる人のドットが、1号棟の303にも出る」という誤表示が起きていた。
+    // 部屋番号は号棟をまたいで重複するので、号棟IDまで見ないと位置が定まらない。
     window.updatePresence = function(room) {
       if (!window.currentUser || !window.currentJobId) return;
+      // 号棟は今表示しているものを使う（呼び出し元はすべて操作中のセルから呼んでいる）
+      let buildingId = '';
+      try {
+        const b = buildings[currentBuildingIdx];
+        if (b && b.id) buildingId = String(b.id);
+      } catch (e) { /* 立面図の作成前などは号棟が無い。その場合は空のまま */ }
       const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
       setDoc(ref, {
         uid: window.currentUser.uid,
         displayName: window.currentUser.displayName || window.currentUser.email || '作業員',
         room: String(room),
+        buildingId: buildingId,
         updatedAt: serverTimestamp()
       }, { merge: true }).catch((e) => dlog('presence書き込みエラー / ' + e.message));
     };
@@ -2854,6 +2889,13 @@
         </div>
         <button type="button" onclick="closeSingleRoomEdit()" style="width:100%;background:rgba(255,255,255,0.6);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-radius:6px;padding:8px;font-size:13px;cursor:pointer;margin-top:10px;">🔼号室編集画面をしまう🔼</button>
       </div>
+      <div id="buildingManageArea" style="display:none;margin-top:22px;padding:14px;border:1px solid rgba(0,0,0,0.15);border-radius:8px;background:rgba(255,255,255,0.5);">
+        <div class="mc-label-new">号棟の管理</div>
+        <p id="buildingManageInfo" style="font-size:12px;color:#4a4040;margin:4px 0 8px;"></p>
+        <p style="font-size:11px;color:#4a4040;margin:0 0 10px;">※ 通常は新規登録のときに棟数を決めます。ここは、棟数を間違えて登録したときの直し用です。</p>
+        <button type="button" id="buildingAddBtn" onclick="addBuildingTab()" style="padding:8px 16px;font-size:13px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;cursor:pointer;">＋ 号棟を追加</button>
+        <button type="button" id="buildingDeleteBtn" onclick="deleteBuildingTabPrompt()" style="display:none;margin-left:6px;padding:8px 16px;font-size:13px;background:#fff0f0;border:1px dashed #c88;border-radius:6px;color:#c00;cursor:pointer;">－ 号棟を削除</button>
+      </div>
       <button id="setupGenerateBtn" onclick="handleSetupGenerateClick()" class="setup-generate-btn">設定内容で立面図を作成</button>
     </div>
   </div>
@@ -3138,7 +3180,8 @@
 
   <!-- 汎用の確認モーダル（window.confirm()の代替。自動操作ツールからも押せるようにするため） -->
   <div id="appConfirmModal" class="modal">
-    <div class="modal-box" style="max-width:360px;">
+    <div id="appConfirmBox" class="modal-box" style="max-width:360px;">
+      <div id="appConfirmDangerHead" style="display:none;background:#c62828;color:#fff;font-weight:bold;font-size:14px;padding:10px 12px;border-radius:6px;margin-bottom:14px;text-align:center;letter-spacing:0.04em;">⚠ 取り消せない操作です</div>
       <p id="appConfirmMessage" style="white-space:pre-wrap;font-size:14px;color:#333;margin-bottom:16px;"></p>
       <div class="modal-buttons">
         <button id="appConfirmCancel" style="background:#eee;">キャンセル</button>
@@ -3986,7 +4029,10 @@
       if (!window.isJobOwner) { window.showAppAlert('号棟の削除は現場を開始した人（親機）のみ行えます。'); return; }
       if (buildings.length <= 1) { window.showAppAlert('号棟は最低1つ必要です。'); return; }
       const b = buildings[idx];
-      if (!await window.showAppConfirm((b.name || ('号棟' + (idx + 1))) + ' を削除します。この号棟の点検データも全て消えます。よろしいですか？')) return;
+      if (!await window.showAppConfirm(
+        (b.name || ('号棟' + (idx + 1))) + ' を削除します。\n\nこの号棟の点検データ・サイン・不良記録もすべて消えます。削除すると元に戻せません。',
+        { danger: true, okLabel: '削除する' }
+      )) return;
       buildings.splice(idx, 1);
       if (currentBuildingIdx >= buildings.length) currentBuildingIdx = buildings.length - 1;
       loadBuildingToView(currentBuildingIdx);
@@ -4016,13 +4062,32 @@
         html += '<span onclick="switchBuildingTab(' + i + ')" ondblclick="renameBuildingTab(' + i + ')" style="position:relative;display:inline-block;min-width:64px;text-align:center;padding:8px 18px;margin-right:4px;border-radius:8px;cursor:pointer;font-size:14px;' +
           (active ? 'background:' + color + ';color:#fff;font-weight:bold;' : 'background:#e0e0e0;color:#333;border-bottom:3px solid ' + color + ';') + '">' + label + badge + '</span>';
       });
-      if (isAdmin) {
-        html += '<span onclick="addBuildingTab()" style="display:inline-block;padding:8px 16px;cursor:pointer;font-size:14px;background:#f5f5f5;border:1px dashed #999;border-radius:6px;color:#555;">＋ 号棟追加</span>';
-        if (buildings.length > 1) {
-          html += '<span onclick="deleteBuildingTabPrompt()" style="display:inline-block;padding:8px 16px;margin-left:4px;cursor:pointer;font-size:14px;background:#fff0f0;border:1px dashed #c88;border-radius:6px;color:#c00;">－ 号棟削除</span>';
-        }
-      }
+      // 【号棟の追加・削除ボタンはここには置かない（セッション30）】
+      // 点検中に一番長く見る画面なので、号棟のデータを丸ごと消せるボタンを常時出しておくのは危ない。
+      // 一括設定画面（setup）の下部に移した。renderBuildingManageArea() を参照。
       bar.innerHTML = html;
+      renderBuildingManageArea();
+    }
+
+    // 一括設定画面の下部にある「号棟の管理」欄を描画する。
+    //
+    // 【なぜ残してあるか】立面図を1つでも作ると isMultiBuildingBulkSetupAvailable() が false になり、
+    // 新規登録時の「一棟／複数棟」の切り替えが二度と使えなくなる（既存データの上書き事故を防ぐため）。
+    // つまりここが、立面図の作成後に号棟を足せる唯一の手段になっている。
+    // 棟数を間違えて登録したときに、現場を作り直さずに直せるようにしておく。
+    function renderBuildingManageArea() {
+      const area = document.getElementById('buildingManageArea');
+      if (!area) return;
+      const isAdmin = (window.myRole || 'worker') === 'admin';
+      if (!isAdmin) { area.style.display = 'none'; return; }
+      area.style.display = 'block';
+      const delBtn = document.getElementById('buildingDeleteBtn');
+      if (delBtn) delBtn.style.display = (buildings.length > 1) ? 'inline-block' : 'none';
+      const info = document.getElementById('buildingManageInfo');
+      if (info) {
+        info.textContent = '現在 ' + buildings.length + ' 棟：'
+          + buildings.map((b, i) => (b.name ? b.name : ('号棟' + (i + 1)))).join('、');
+      }
     }
 
     // ---- 現場（物件）ID の判定 ----
@@ -6143,13 +6208,34 @@
     }
 
     // 各セルの右上に作業員の現在位置ドットを描画する
+    //
+    // 【号棟で絞る（セッション30）】
+    // 部屋番号は号棟をまたいで重複するため、号棟IDまで一致するものだけを表示する。
+    // 別の号棟にいる人は画面に出ない。号棟タブを切り替えれば見えるので、それで足りる。
     window.applyPresenceDots = function(docs, markMap) {
       // 前回のドットを全て除去
       document.querySelectorAll('.presence-dot').forEach(el => el.remove());
       // 最新情報をキャッシュしておく（updateCellDisplay後の再描画用）
       window._presenceDots = { docs, colorMap: markMap };
+      let activeBuildingId = '';
+      let singleBuilding = true;
+      try {
+        const b = buildings[currentBuildingIdx];
+        if (b && b.id) activeBuildingId = String(b.id);
+        singleBuilding = buildings.length <= 1;
+      } catch (e) { /* 立面図の作成前 */ }
       docs.forEach((d) => {
         if (!d.room) return;
+        const bid = d.buildingId ? String(d.buildingId) : '';
+        if (bid) {
+          // 号棟IDを持つ記録は、今見ている号棟のものだけ
+          if (bid !== activeBuildingId) return;
+        } else if (!singleBuilding) {
+          // 号棟IDを持たない古い記録。単棟の現場なら位置を誤らないのでそのまま出すが、
+          // 複数棟では別の棟のものかもしれないので出さない。
+          // （その人が次に1回操作すれば号棟IDが入り、正しく表示されるようになる）
+          return;
+        }
         const cell = document.querySelector('td.cell[data-room="' + d.room + '"]');
         if (!cell) return;
         const mark = (markMap && markMap[d.uid]) || { color: '#999', shape: 'circle' };
@@ -8040,7 +8126,10 @@
     // 印刷完了後にサイン画像をクラウドから一括削除する
     async function deleteAllSigns() {
       if (!window.deleteAllSignsFromCloud) { window.showAppAlert('まだログインが完了していません。'); return; }
-      const ok = await window.showAppConfirm('全部屋のサイン画像をすべての場所から削除します。\n立面図の印刷が完了していることを確認してから押してください。\n\nこの操作は取り消せません。よろしいですか？');
+      const ok = await window.showAppConfirm(
+        'すべての部屋のサイン画像を削除します。\n\n削除すると元に戻せません。立面図の印刷が終わっていない場合、サインの入った図面は二度と出せなくなります。\n\n印刷が完了していることを確認しましたか？',
+        { danger: true, okLabel: 'すべて削除する' }
+      );
       if (!ok) return;
       // 画面上のサインも同時にクリア
       document.querySelectorAll('td.cell').forEach(cell => {
