@@ -887,6 +887,31 @@
       });
     };
 
+    // スケジュールだけをクラウドに保存する。
+    //
+    // 【なぜ gatherInspectionState() をそのまま保存しないか（セッション30）】
+    // 一括設定画面には、まだ立面図に反映していない編集途中の設定（階数・室数・号室の有無・
+    // 設備情報）も入っている。丸ごと保存すると「設定内容で立面図を作成」を押していないのに
+    // それらが確定してしまい、「作成を押すまでは確定しない」というこのアプリの約束が崩れる。
+    //
+    // そこで、クラウドにある今の内容を読んで schedule だけ差し替えて書き戻す。
+    // 点検データは1本のJSON文字列で持っているため、Firestoreのmergeでは部分更新できない。
+    //
+    // 立面図をまだ作っていない（クラウドに現場データが無い）場合は何もしない。
+    // 保存先そのものが無いので、書きに行くと空の現場を作ってしまう。
+    window.saveScheduleOnly = function (scheduleArray) {
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve(false);
+      if (!window.loadInspectionFromCloud || !window.saveInspectionToCloudNow) return Promise.resolve(false);
+      return window.loadInspectionFromCloud().then((state) => {
+        if (!state) return false;
+        state.schedule = scheduleArray;
+        return window.saveInspectionToCloudNow(state).then(() => true);
+      }).catch((e) => {
+        dlog('スケジュール保存エラー / ' + e.message);
+        return false;
+      });
+    };
+
     // 前回保存された点検データを読み込む。データが無ければnullを返す。
     window.loadInspectionFromCloud = function () {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve(null);
@@ -5517,6 +5542,14 @@
     // ホーム画面（新規登録／既存物件から新規登録／継続中の物件を選択）に戻る
     async function confirmGoHomeScreen() {
       if (!await window.showAppConfirm('ホーム画面に戻ります。入力中のデータは保存されていない場合、消えることがあります。よろしいですか？')) return;
+      // 【スケジュールだけは保存してから戻る（セッション30）】
+      // スケジュールは一括設定画面の中にあり、専用の保存ボタンが無い。
+      // 「設定内容で立面図を作成」を押さずにここから出ると、変更が黙って消えていた。
+      // 階数や号室などの編集途中の設定は、今までどおり「作成」を押すまで確定しない。
+      if (tableGenerated && window.saveScheduleOnly) {
+        flushScheduleDOM();
+        await window.saveScheduleOnly(scheduleData);
+      }
       document.getElementById('setup').style.display = 'none';
       document.getElementById('startScreen').style.display = 'block';
       if (window.prepareStartScreen) window.prepareStartScreen();
