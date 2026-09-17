@@ -458,6 +458,12 @@
       appId: "1:863412425540:web:9f7f5af93b89417132bd11"
     };
 
+    // ===== 配布ページの URL =====
+    // メンバーでない人の案内画面（「自分の現場を管理したいときは」）に出すリンク先。
+    // 空のあいだは「配布ページ（準備中）」とだけ表示し、リンクにしない。
+    const DISTRIBUTION_URL = '';
+    window.DISTRIBUTION_URL = DISTRIBUTION_URL;
+
     // ===== 接続先の設定ミス検出 =====================================================
     // このアプリはフォークして使う前提で配布している。各社が自分の Firebase を用意し、
     // 上の firebaseConfig を自社のものへ差し替える必要がある。
@@ -522,7 +528,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-17-a';
+    const APP_BUILD = '2026-09-17-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2078,6 +2084,12 @@
       });
     };
 
+    // 会社登録の旗（config/system）を読む。無ければ null。
+    // 読めなかった（オフライン等）ときは失敗として返す。呼び出し側で扱いを決める。
+    window.loadCompanyFlag = function() {
+      return getDoc(doc(db, 'config', 'system')).then((snap) => snap.exists() ? snap.data() : null);
+    };
+
     // 会社登録の旗（config/system）を自分の会社に合わせる自己修復処理。
     // ・旗が無ければ置く（旗を導入する前に作られた会社の救済）
     // ・旗が自分の会社を指していて、会社名だけ古ければ直す
@@ -2744,6 +2756,10 @@
           <button onclick="openOfficeDashboardFromStartScreen()" style="width:100%;background:rgba(255,140,66,0.45);color:#fff;border:1px solid rgba(255,255,255,0.55);border-radius:5px;padding:9px;font-size:13px;font-weight:bold;cursor:pointer;">🏢 稼働中の現場を見る</button>
         </div>
       </div>
+      <!-- メンバーでない人・承認待ちの人への案内（refreshStartScreenCompanyStatus が中身を書く） -->
+      <div id="memberGateArea" style="display:none;"></div>
+      <!-- メニュー一式。会社の状態が確定するまで隠す（一瞬見えてから消えるのを避ける） -->
+      <div id="startMenuArea" style="display:none;">
       <!-- メニューラベル -->
       <div style="font-size:10px;color:#2a2520;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px;">メニュー選択<span style="flex:1;height:1px;background:rgba(0,0,0,0.2);display:block;"></span></div>
       <!-- 新規物件 -->
@@ -2789,6 +2805,7 @@
         </div>
       </div>
       <input type="file" id="uploadPropertyFileInput" accept="application/json,.json" style="display:none;" onchange="handleUploadPropertyFile(this)">
+      </div><!-- /startMenuArea -->
     </div>
   </div>
 
@@ -7722,22 +7739,127 @@
       return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     }
 
+    // ---- ホーム画面の出し分け（会社登録ウェルカムスクリーン）----
+    // 承認済み     → いつものメニュー
+    // 承認待ち     → 承認待ちの案内（メニューは出さない）
+    // メンバーでない → 案内画面。旗が無い（会社が未登録の）Firebase なら登録の入口付き
+    // 読み込み失敗 → いつものメニュー。
+    //   【理由】このアプリはオフラインで会社の状態を読めない。失敗で案内画面にすると、
+    //   電波の悪い現場で正規のメンバーが締め出される。メンバーでない人がすり抜けても、
+    //   現場・会社の作成はサーバーのルールが弾くので実害は無い。
+    // QR・招待リンク（?join=）で開いた子機はホーム画面を通らないので、ここは関係しない。
+    const START_STATUS_TIMEOUT_MS = 8000;
+    let startScreenStatusSeq = 0;
+
+    function showStartMenu() {
+      const menu = document.getElementById('startMenuArea');
+      const gate = document.getElementById('memberGateArea');
+      if (gate) { gate.style.display = 'none'; gate.innerHTML = ''; }
+      if (menu) menu.style.display = 'block';
+    }
+
+    function showMemberGate(html) {
+      const menu = document.getElementById('startMenuArea');
+      const gate = document.getElementById('memberGateArea');
+      if (menu) menu.style.display = 'none';
+      if (gate) { gate.innerHTML = html; gate.style.display = 'block'; }
+    }
+
+    function hideStartMenuWhileLoading() {
+      const menu = document.getElementById('startMenuArea');
+      const gate = document.getElementById('memberGateArea');
+      if (menu) menu.style.display = 'none';
+      if (gate) gate.style.display = 'none';
+    }
+
+    const GATE_BOX = 'background:#1a1e25;border:1px solid #2a3040;border-radius:6px;padding:16px 16px 14px;color:#c8ced8;font-size:13px;line-height:1.7;';
+    const GATE_H = 'font-size:16px;font-weight:bold;color:#fff;margin:0 0 10px;line-height:1.4;word-break:break-word;';
+    const GATE_SUB = 'font-size:13px;font-weight:bold;color:#ff8c42;margin:16px 0 4px;';
+    const GATE_BTN = 'display:block;width:100%;box-sizing:border-box;margin-top:10px;padding:10px;border-radius:5px;font-size:13px;cursor:pointer;';
+    const GATE_BTN_MAIN = GATE_BTN + 'background:rgba(255,140,66,0.45);color:#fff;border:1px solid rgba(255,255,255,0.55);font-weight:bold;';
+    const GATE_BTN_SUB = GATE_BTN + 'background:transparent;color:#9aa4b2;border:1px solid #3a4252;';
+
+    function gateDistributionLink() {
+      const url = window.DISTRIBUTION_URL;
+      if (url) {
+        return '　→ <a href="' + companyCardEscape(url) + '" target="_blank" rel="noopener" style="color:#6ab4e8;">配布ページ</a>';
+      }
+      return '　→ 配布ページ（準備中）';
+    }
+
+    function gateHtmlNonMember(companyName) {
+      return '<div style="' + GATE_BOX + '">' +
+        '<p style="' + GATE_H + '">ここは「' + companyCardEscape(companyName || '') + '」のManCHEStarです</p>' +
+        '<p style="margin:0;">あなたはこの会社のメンバーではありません。<br>このアプリでできるのは、招待された現場での作業だけです。</p>' +
+        '<p style="' + GATE_SUB + '">現場に入るには</p>' +
+        '<p style="margin:0;">現場で配られるQRコード、またはリンクから開いてください。<br>このページをブックマークしても現場には入れません。</p>' +
+        '<p style="' + GATE_SUB + '">自分の現場を管理したいときは</p>' +
+        '<p style="margin:0;">ManCHEStarは、会社ごとに自分のものを用意して使うアプリです。<br>' + gateDistributionLink() + '</p>' +
+        '<button onclick="openCompanyModal()" style="' + GATE_BTN_SUB + 'margin-top:18px;">招待コードで参加申請する</button>' +
+        '<button onclick="confirmLogout()" style="' + GATE_BTN_SUB + '">別のアカウントでログインし直す</button>' +
+      '</div>';
+    }
+
+    function gateHtmlNoCompany() {
+      return '<div style="' + GATE_BOX + '">' +
+        '<p style="' + GATE_H + '">まだ会社が登録されていません</p>' +
+        '<p style="margin:0;">このManCHEStarを使い始めるには、会社を登録してください。登録した人が会社の【管理者】になります。<br>' +
+        '会社の代表者から招待コードをもらっている場合は、同じ画面から参加申請できます。</p>' +
+        '<button onclick="openCompanyModal()" style="' + GATE_BTN_MAIN + 'margin-top:16px;">会社を登録する・招待コードで参加する</button>' +
+        '<button onclick="confirmLogout()" style="' + GATE_BTN_SUB + '">別のアカウントでログインし直す</button>' +
+      '</div>';
+    }
+
+    function gateHtmlPending(companyName) {
+      return '<div style="' + GATE_BOX + '">' +
+        '<p style="' + GATE_H + '">「' + companyCardEscape(companyName || '') + '」への参加を申請中です</p>' +
+        '<p style="margin:0;">管理者の承認をお待ちください。<br>承認されるまでは、招待された現場での作業のみできます。</p>' +
+        '<button onclick="refreshStartScreenCompanyStatus()" style="' + GATE_BTN_MAIN + 'margin-top:16px;">再読み込み</button>' +
+        '<button onclick="confirmLogout()" style="' + GATE_BTN_SUB + '">別のアカウントでログインし直す</button>' +
+      '</div>';
+    }
+
+    // 一定時間で返ってこなければ失敗扱いにする（電波の悪い現場で固まらないように）
+    function withStartTimeout(promise) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), START_STATUS_TIMEOUT_MS))
+      ]);
+    }
+
     function refreshStartScreenCompanyStatus() {
       const card = document.getElementById('companyStatusCard');
       if (!card) return;
+      const seq = ++startScreenStatusSeq;
+      const isLatest = () => seq === startScreenStatusSeq;
       card.style.cssText = COMPANY_ROW_BASE + 'font-size:12px;color:#6a7280;';
       card.textContent = '読み込み中…';
       const dashBtn = document.getElementById('startScreenDashboardWrap');
       if (dashBtn) dashBtn.style.display = 'none';
-      if (!window.loadMyCompanyStatus) return;
-      window.loadMyCompanyStatus().then((status) => {
+      hideStartMenuWhileLoading();
+      if (!window.loadMyCompanyStatus) { showStartMenu(); return; }
+      withStartTimeout(window.loadMyCompanyStatus()).then((status) => {
+        if (!isLatest()) return;
         const notRegistered = () => {
           card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;font-size:12px;color:#8a94a6;';
-          card.innerHTML = '<span style="flex:1;">🏢 会社に未登録（タップして登録・参加）</span>' +
+          card.innerHTML = '<span style="flex:1;">🏢 会社に未参加（タップして参加申請）</span>' +
             '<span class="home-status-chev">›</span>';
+          // 旗を見て、案内画面の種類を決める
+          return withStartTimeout(window.loadCompanyFlag()).then((flag) => {
+            if (!isLatest()) return;
+            if (flag) {
+              dlog('ホーム出し分け / メンバーでない / 旗あり');
+              showMemberGate(gateHtmlNonMember(flag.companyName));
+            } else {
+              dlog('ホーム出し分け / メンバーでない / 旗なし（会社未登録）');
+              card.innerHTML = '<span style="flex:1;">🏢 会社に未登録（タップして登録・参加）</span>' +
+                '<span class="home-status-chev">›</span>';
+              showMemberGate(gateHtmlNoCompany());
+            }
+          });
         };
         if (!status) {
-          notRegistered();
+          return notRegistered();
         } else if (status.status === 'pending') {
           card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;';
           card.innerHTML =
@@ -7748,6 +7870,8 @@
               '<div style="font-size:11px;color:#6a7280;margin-top:2px;">参加申請中（登録者の承認待ち）</div>' +
             '</div>' +
             '<span class="home-status-chev">›</span>';
+          dlog('ホーム出し分け / 承認待ち');
+          showMemberGate(gateHtmlPending(status.companyName));
         } else if (status.status === 'approved') {
           card.style.cssText = COMPANY_ROW_BASE + 'display:flex;align-items:center;gap:10px;';
           card.innerHTML =
@@ -7767,9 +7891,20 @@
             window._startScreenDashboardCompanyId = status.companyId;
             window._startScreenDashboardCompanyName = status.companyName;
           }
+          showStartMenu();
+          // 旗の救済。会社モーダルを開かないオーナーでも、次にホームを開いた時点で旗が立つ。
+          if (status.isOwner && window.ensureCompanyFlag) {
+            window.ensureCompanyFlag(status.companyId, status.companyName);
+          }
         } else {
-          notRegistered();
+          return notRegistered();
         }
+      }).catch((e) => {
+        if (!isLatest()) return;
+        dlog('ホーム出し分け / 会社の状態を読めず、メニューを出す / ' + (e && e.message));
+        card.style.cssText = COMPANY_ROW_BASE + 'font-size:12px;color:#6a7280;';
+        card.textContent = '🏢 会社の状態を読み込めませんでした（タップで再表示）';
+        showStartMenu();
       });
     }
 
@@ -7819,6 +7954,27 @@
     }
 
     function renderCompanyModalNoCompany(body) {
+      // 旗が立っていれば、登録の入口は出さない（押しても「既に登録されています」で止まるだけなので）。
+      // 旗を読めなかったときは、今までどおり両方出す（登録はサーバー側でも止まる）。
+      const flagPromise = window.loadCompanyFlag ? window.loadCompanyFlag().catch(() => null) : Promise.resolve(null);
+      body.innerHTML = '<p style="font-size:13px;color:#666;">読み込み中…</p>';
+      flagPromise.then((flag) => renderCompanyModalNoCompanyWithFlag(body, flag));
+    }
+
+    function renderCompanyModalNoCompanyWithFlag(body, flag) {
+      const joinBox =
+        '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">招待コードで参加する</div>' +
+          '<p style="font-size:11px;color:#888;margin:0 0 8px;">会社の代表者からもらった招待コードを入力してください。承認されるまでは待機状態になります。</p>' +
+          '<input id="joinInviteCodeInput" type="text" placeholder="招待コード" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;text-transform:uppercase;">' +
+          '<button onclick="submitJoinCompany()" style="width:100%;">参加申請する</button>' +
+        '</div>';
+      if (flag) {
+        body.innerHTML =
+          '<p style="font-size:13px;color:#666;">このManCHEStarには「' + companyCardEscape(flag.companyName || '') + '」が登録されています。あなたはまだメンバーではありません。</p>' +
+          joinBox;
+        return;
+      }
       body.innerHTML =
         '<p style="font-size:13px;color:#666;">まだどの会社にも登録されていません。</p>' +
         '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
@@ -7827,12 +7983,7 @@
           '<input id="newCompanyNameInput" type="text" placeholder="会社名（例：くにお消防設備）" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
           '<button onclick="submitRegisterCompany()" style="width:100%;">登録する</button>' +
         '</div>' +
-        '<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
-          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">招待コードで参加する</div>' +
-          '<p style="font-size:11px;color:#888;margin:0 0 8px;">会社の代表者からもらった招待コードを入力してください。承認されるまでは待機状態になります。</p>' +
-          '<input id="joinInviteCodeInput" type="text" placeholder="招待コード" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;text-transform:uppercase;">' +
-          '<button onclick="submitJoinCompany()" style="width:100%;">参加申請する</button>' +
-        '</div>';
+        joinBox;
     }
 
     async function submitRegisterCompany() {
@@ -7843,6 +7994,7 @@
       window.registerCompany(name).then(() => {
         window.showAppAlert('会社を登録しました。あなたはこの会社の【管理者】です。');
         refreshCompanyModal();
+        refreshStartScreenCompanyStatus();
       }).catch((e) => window.showAppAlert('登録に失敗しました：' + e.message));
     }
 
