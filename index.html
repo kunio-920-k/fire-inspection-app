@@ -522,7 +522,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-08-09-a';
+    const APP_BUILD = '2026-09-17-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1727,16 +1727,40 @@
     }
 
     // 会社を新規登録する。実行した人が自動的にその会社の【管理者】になる。
+    // 【会社登録の旗（config/system）】1つの Firebase に会社は1社だけ。
+    // 書き込み順は 会社 → 旗 → 索引 → メンバー → 自分の記録。
+    // ⚠️ 旗は必ず会社の直後。会社より先だとルールで弾かれて登録が全滅し、
+    //    メンバーより後だと、ほぼ同時に登録した後の人が承認済みメンバーになってしまう。
+    const COMPANY_ALREADY_REGISTERED_MSG = 'この Firebase には既に会社が登録されています。';
     window.registerCompany = function(companyName) {
       if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
       const companyRef = doc(collection(db, 'companies'));
       const inviteCode = generateInviteCode();
-      return setDoc(companyRef, {
-        name: companyName,
-        ownerUid: window.currentUser.uid,
-        inviteCode: inviteCode,
+      const flagRef = doc(db, 'config', 'system');
+      return getDoc(flagRef).then((flagSnap) => {
+        if (flagSnap.exists()) throw new Error(COMPANY_ALREADY_REGISTERED_MSG);
+        return setDoc(companyRef, {
+          name: companyName,
+          ownerUid: window.currentUser.uid,
+          inviteCode: inviteCode,
+          createdAt: serverTimestamp()
+        }).catch((e) => {
+          // 読んだ直後に別の人が旗を立てた場合、会社の作成がルールで弾かれる
+          if (e && e.code === 'permission-denied') throw new Error(COMPANY_ALREADY_REGISTERED_MSG);
+          throw e;
+        });
+      }).then(() => setDoc(flagRef, {
+        companyId: companyRef.id,
+        companyName: companyName,
+        photoMode: false,
+        billingEnabled: false,
         createdAt: serverTimestamp()
-      }).then(() => setDoc(doc(db, 'inviteCodes', inviteCode), {
+      }).catch((e) => {
+        // 会社を書いたあとに旗で弾かれた＝ほぼ同時に別の人が先に登録した。
+        // ここで止めるので、メンバー・自分の記録には進まない（中身の無い会社が1つ残るだけ）。
+        if (e && e.code === 'permission-denied') throw new Error(COMPANY_ALREADY_REGISTERED_MSG);
+        throw e;
+      })).then(() => setDoc(doc(db, 'inviteCodes', inviteCode), {
         companyId: companyRef.id,
         createdAt: serverTimestamp()
       })).then(() => setDoc(doc(db, 'companies', companyRef.id, 'members', window.currentUser.uid), {
@@ -2048,8 +2072,38 @@
         if (snap.data().ownerUid !== window.currentUser.uid) {
           throw new Error('会社名の変更は登録者（オーナー）のみ行えます。');
         }
-        return updateDoc(doc(db, 'companies', companyId), { name: name }).then(() => name);
+        return updateDoc(doc(db, 'companies', companyId), { name: name })
+          .then(() => window.ensureCompanyFlag ? window.ensureCompanyFlag(companyId, name) : null)
+          .then(() => name);
       });
+    };
+
+    // 会社登録の旗（config/system）を自分の会社に合わせる自己修復処理。
+    // ・旗が無ければ置く（旗を導入する前に作られた会社の救済）
+    // ・旗が自分の会社を指していて、会社名だけ古ければ直す
+    // ・旗が別の会社を指していれば何もしない
+    // オーナーが会社モーダルを開いたとき・会社名を変えたときに呼ばれる。失敗しても画面には出さない。
+    window.ensureCompanyFlag = function(companyId, companyName) {
+      if (!companyId) return Promise.resolve(null);
+      const flagRef = doc(db, 'config', 'system');
+      return getDoc(flagRef).then((snap) => {
+        if (!snap.exists()) {
+          dlog('会社登録の旗 / 無いので置く / company=' + companyId);
+          return setDoc(flagRef, {
+            companyId: companyId,
+            companyName: companyName || '',
+            photoMode: false,
+            billingEnabled: false,
+            createdAt: serverTimestamp()
+          });
+        }
+        const d = snap.data();
+        if (d.companyId === companyId && companyName && d.companyName !== companyName) {
+          dlog('会社登録の旗 / 会社名を合わせる / ' + d.companyName + ' → ' + companyName);
+          return updateDoc(flagRef, { companyName: companyName });
+        }
+        return null;
+      }).catch((e) => { dlog('会社登録の旗 / 失敗 / ' + (e && e.message)); return null; });
     };
 
     // 招待コードの索引（inviteCodes/{コード}）が無ければ黙って作る。
@@ -7747,6 +7801,10 @@
           // 索引導入前に作られた会社の救済。オーナーが開いたときだけ、裏で黙って補う。
           if (status.isOwner && window.ensureInviteCodeIndex) {
             window.ensureInviteCodeIndex(status.companyId, status.inviteCode);
+          }
+          // 会社登録の旗の救済。オーナーが開いたときだけ、裏で黙って置く・会社名を合わせる。
+          if (status.isOwner && window.ensureCompanyFlag) {
+            window.ensureCompanyFlag(status.companyId, status.companyName);
           }
           // 古いサイン画像の掃除。オーナーが開いたときだけ、裏で走らせる。
           // 画面の描き直しを待たせないよう、結果は待たない（進み具合は専用の帯に出る）。
