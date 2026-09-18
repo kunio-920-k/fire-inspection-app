@@ -528,7 +528,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-17-b';
+    const APP_BUILD = '2026-09-18-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -605,7 +605,11 @@
         const modal = document.getElementById('appConfirmModal');
         const box = document.getElementById('appConfirmBox');
         const head = document.getElementById('appConfirmDangerHead');
-        document.getElementById('appConfirmMessage').textContent = message;
+        const msgEl = document.getElementById('appConfirmMessage');
+        msgEl.textContent = message;
+        // 長い案内文（写真共有モードの開始など）は中央揃えだと読みにくいので左寄せにできるようにした。
+        // 指定しなければ今までどおり（modal-box の中央揃えを引き継ぐ）。
+        msgEl.style.textAlign = opts.alignLeft ? 'left' : '';
         const okBtn = document.getElementById('appConfirmOk');
         const cancelBtn = document.getElementById('appConfirmCancel');
         if (opts.danger) {
@@ -2118,6 +2122,40 @@
       }).catch((e) => { dlog('会社登録の旗 / 失敗 / ' + (e && e.message)); return null; });
     };
 
+    // ===== 写真共有モード =====
+    // 旗（config/system）の photoMode を見て、写真まわりの表示を出すかどうかを決める。
+    // 【読めなかったときは OFF に倒す】会社の状態（ホーム画面の出し分け）とは逆の判断。
+    // あちらは締め出すと現場が止まるので通す側に倒したが、写真は出なくても点検は進む。
+    // 中途半端に写真の欄だけ出て保存できない状態を作るより、出さない方が現場が混乱しない。
+    window.photoMode = false;
+    window.refreshPhotoMode = function() {
+      if (!window.loadCompanyFlag) { window.photoMode = false; return Promise.resolve(false); }
+      return window.loadCompanyFlag().then((flag) => {
+        window.photoMode = !!(flag && flag.photoMode);
+        dlog('写真共有モード / ' + (window.photoMode ? 'ON' : 'OFF'));
+        return window.photoMode;
+      }).catch((e) => {
+        window.photoMode = false;
+        dlog('写真共有モード / 旗を読めないので OFF に倒す / ' + (e && e.message));
+        return false;
+      });
+    };
+
+    // 写真共有モードの ON/OFF を切り替える。旗を書けるのはオーナーだけ（ルールでも弾かれる）。
+    // 旗の他のフィールド（companyId・companyName・billingEnabled）には触らない。
+    window.setPhotoMode = function(on) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      const flagRef = doc(db, 'config', 'system');
+      return getDoc(flagRef).then((snap) => {
+        if (!snap.exists()) throw new Error('この Firebase にはまだ会社が登録されていません。');
+        return updateDoc(flagRef, { photoMode: !!on });
+      }).then(() => {
+        window.photoMode = !!on;
+        dlog('写真共有モード / 切り替え / ' + (on ? 'ON' : 'OFF'));
+        return !!on;
+      });
+    };
+
     // 招待コードの索引（inviteCodes/{コード}）が無ければ黙って作る。
     // この索引を導入する前に作られた会社を救済するための自己修復処理。
     // オーナーが会社モーダルを開いたときに呼ばれる。失敗しても画面には出さない。
@@ -2447,6 +2485,10 @@
         document.getElementById('welcomeScreen').classList.remove('active');
         document.getElementById('loginScreen').classList.remove('active');
         if (emailLabel) emailLabel.textContent = user.email || (TEST_MODE ? '（TESTMODE匿名ユーザー）' : '');
+
+        // 写真共有モードの状態を読む。ホーム画面を通る親機も、QRで直接現場へ入る子機も
+        // ここを必ず通るので、1か所で足りる。読めなければ OFF のまま進む。
+        if (window.refreshPhotoMode) window.refreshPhotoMode();
 
         // 会社への参加リンク（?companyInvite=コード）をタップして開いた場合、自動で参加申請する
         if (!window._companyInviteHandled) {
@@ -8096,6 +8138,18 @@
         html += '<p style="font-size:12px;color:#888;">参加申請の承認・却下は会社の登録者が行います。</p>';
       }
 
+      // 写真共有モードの切り替え。旗を書けるのはオーナーだけなので、オーナーにだけ出す。
+      // （管理者に出しても押せばルールで弾かれるだけになる）
+      if (status.isOwner) {
+        html += '<div id="photoModeSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
+          '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">写真共有モード</div>' +
+          '<p id="photoModeStateText" style="font-size:12px;color:#666;margin:0 0 8px;">確認中…</p>' +
+          '<div id="photoModeButtonWrap"></div>' +
+          '<p style="font-size:11px;color:#888;margin:8px 0 0;">不良のあった部屋に写真を付けられるようになります。' +
+          '写真は3か月で自動的に削除されるため、残すものはZIPでダウンロードして保管してください。</p>' +
+        '</div>';
+      }
+
       const canManageJobLink = !!(window.currentJobId && (window.myRole === 'admin' || window.isJobOwner));
       if (canManageJobLink) {
         html += '<div id="jobCompanyLinkSection" style="margin:10px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">' +
@@ -8124,6 +8178,72 @@
       if (canManageJobLink) {
         renderJobCompanyLinkSection(status.companyId, status.companyName);
       }
+      if (status.isOwner) {
+        renderPhotoModeSection();
+      }
+    }
+
+    // ---- 写真共有モードの切り替え（会社モーダル・オーナーのみ）----
+
+    // 現在の状態を旗から読んで、文言とボタンを差し替える。
+    // window.refreshPhotoMode() は失敗を OFF に倒して返すため、ここでは旗を直に読む。
+    // 「読めなかった」と「OFF」を混同すると、実際は ON なのに開始ボタンが出てしまう。
+    function renderPhotoModeSection() {
+      const textEl = document.getElementById('photoModeStateText');
+      const btnWrap = document.getElementById('photoModeButtonWrap');
+      if (!textEl || !btnWrap) return;
+      textEl.textContent = '確認中…';
+      btnWrap.innerHTML = '';
+      if (!window.loadCompanyFlag) return;
+      window.loadCompanyFlag().then((flag) => {
+        if (!flag) {
+          textEl.textContent = 'この Firebase にはまだ会社が登録されていません。';
+          return;
+        }
+        const on = !!flag.photoMode;
+        window.photoMode = on;
+        textEl.innerHTML = on
+          ? '現在：<span style="color:#2e7d32;font-weight:bold;">ON</span>　不良のあった部屋に写真を付けられます。'
+          : '現在：<span style="color:#888;font-weight:bold;">OFF</span>　写真の欄は表示されません。';
+        btnWrap.innerHTML = on
+          ? '<button onclick="submitTogglePhotoMode(false)" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">写真共有モードを終了する</button>'
+          : '<button onclick="submitTogglePhotoMode(true)" style="width:100%;">写真共有モードを開始する</button>';
+      }).catch((e) => {
+        textEl.textContent = '状態を読み込めませんでした（' + (e && e.message) + '）。通信状態を確かめてから開き直してください。';
+      });
+    }
+
+    // 開始するときの案内。無料のまま使える場合がほとんどであること・
+    // ただし無料の範囲は保証されたものではないこと・超えた分だけの支払いで続けられることを、
+    // この順で伝える。金額そのものより仕組みが伝わることを優先している。
+    const PHOTO_MODE_START_MSG =
+      '写真共有モードを開始します。\n\n' +
+      '写真はFirebaseの無料の範囲（1GiB）に保存されます。多くの場合、写真の共有は無料のまま使えます。' +
+      '目安として、写真の枠は月およそ500枚で埋まります。\n\n' +
+      'ただし無料の範囲は保証されたものではありません。容量を超えると、点検は続けられますが、' +
+      '写真の保存だけが静かに失敗します。規模の大きい会社や、写真を多く残す運用には向きません。\n\n' +
+      'その場合はFirebaseの有料プラン（Blaze）への切り替えをお勧めします。' +
+      '切り替えても無料の範囲はそのまま残り、超えた分だけの支払いです。' +
+      '写真の使用量であれば多くは月数十円の範囲に収まります。' +
+      '切り替え後はGoogle Cloudの「予算とアラート」で上限の通知を設定してください。\n\n' +
+      'なお、撮影した写真は3か月で自動的に削除されます。' +
+      '残す必要のある写真は、物件ごとにZIPでダウンロードして手元に保管してください。\n\n' +
+      '開始してよろしいですか？';
+
+    const PHOTO_MODE_STOP_MSG =
+      '写真共有モードを終了します。\n\n' +
+      'すでに保存された写真は消えません（画面に出なくなるだけです）。もう一度開始すれば、また表示されます。\n\n' +
+      'よろしいですか？';
+
+    async function submitTogglePhotoMode(on) {
+      const msg = on ? PHOTO_MODE_START_MSG : PHOTO_MODE_STOP_MSG;
+      if (!await window.showAppConfirm(msg, { alignLeft: true })) return;
+      window.setPhotoMode(on).then(() => {
+        window.showAppAlert(on
+          ? '写真共有モードを開始しました。'
+          : '写真共有モードを終了しました。保存済みの写真は残っています。');
+        renderPhotoModeSection();
+      }).catch((e) => window.showAppAlert('切り替えに失敗しました：' + e.message));
     }
 
     // 今開いている現場の会社紐付け状況を確認し、紐付け／解除ボタンを出す
