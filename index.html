@@ -536,7 +536,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-18-c';
+    const APP_BUILD = '2026-09-21-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -3559,8 +3559,8 @@
   <div id="photoViewModal" class="modal">
     <div class="modal-box" style="max-width:540px;width:94%;padding:14px;text-align:left;">
       <div id="photoViewTitle" style="font-size:14px;font-weight:bold;margin-bottom:8px;"></div>
-      <div id="photoViewStage" style="background:#111;border-radius:6px;overflow:auto;max-height:58vh;text-align:center;-webkit-overflow-scrolling:touch;">
-        <img id="photoViewImg" onclick="togglePhotoZoom()" style="display:block;margin:0 auto;max-width:100%;">
+      <div id="photoViewStage" style="background:#111;border-radius:6px;overflow:auto;max-height:50vh;text-align:center;-webkit-overflow-scrolling:touch;">
+        <img id="photoViewImg" onclick="togglePhotoZoom()" style="display:block;margin:0 auto;max-width:100%;max-height:50vh;">
       </div>
       <div id="photoViewHint" style="font-size:11px;color:#888;line-height:1.6;margin-top:8px;"></div>
       <div class="modal-buttons" id="photoViewButtons" style="flex-direction:column;"></div>
@@ -6900,6 +6900,7 @@
       const img = document.getElementById('photoViewImg');
       img.src = opts.dataUrl;
       img.style.maxWidth = '100%';
+      img.style.maxHeight = '50vh';
       img.style.width = '';
       document.getElementById('photoViewStage').scrollTop = 0;
       document.getElementById('photoViewStage').scrollLeft = 0;
@@ -6915,18 +6916,23 @@
 
     // 画面に合わせた表示と等倍（長辺1600pxそのまま）を行き来する。
     // 等倍にすると枠からはみ出すので、枠側のスクロールで指でずらして見る。
+    // 【画面合わせは幅と高さの両方で抑える】幅だけで抑えると、縦撮りの写真は
+    // 枠より背が高くなり、上下が切れて「全体を見て確かめる」ことができない
+    // （Session 36 の動作確認で、縦撮りの矢印の先が切れていたのを見つけた）。
     function togglePhotoZoom() {
       const img = document.getElementById('photoViewImg');
       const stage = document.getElementById('photoViewStage');
       photoViewZoomed = !photoViewZoomed;
       if (photoViewZoomed) {
         img.style.maxWidth = 'none';
+        img.style.maxHeight = 'none';
         img.style.width = 'auto';
         // 等倍にした直後は中央あたりを見せる（端から探させない）
         stage.scrollLeft = Math.max(0, (img.naturalWidth - stage.clientWidth) / 2);
         stage.scrollTop = Math.max(0, (img.naturalHeight - stage.clientHeight) / 2);
       } else {
         img.style.maxWidth = '100%';
+        img.style.maxHeight = '50vh';
         img.style.width = '';
         stage.scrollTop = 0;
         stage.scrollLeft = 0;
@@ -7012,6 +7018,27 @@
       });
     }
 
+    // 写真のファイル名を作る。例：A棟_203_1.jpg
+    // 1枚保存でも ZIP でも同じ名前にするため、ここ1か所で作る（ZIP のまとまりでも使う）。
+    //
+    // 【号棟名を頭に置く理由】部屋番号は号棟ごとに101から始まるので、部屋番号だけでは
+    // どの棟の203か分からない。展開したフォルダでも号棟→部屋の順に並ぶ。
+    // 号棟名が未設定なら、画面の表示と同じく「号棟1」のように番号で呼ぶ。
+    // 【使えない文字】名前に / \ : * ? " < > | が入っていると保存できない端末があるので、
+    // 「_」に置き換える。
+    function mcPhotoFileName(buildingId, room, n) {
+      let label = '';
+      try {
+        const idx = buildings.findIndex((b) => String(b.id) === String(buildingId));
+        if (idx >= 0) {
+          const b = buildings[idx];
+          label = (b.name && b.name.trim()) ? b.name.trim() : ('号棟' + (idx + 1));
+        }
+      } catch (e) { label = ''; }
+      const safe = (s) => String(s).replace(/[\/\\:*?"<>|]/g, '_').replace(/\s+/g, '');
+      return (label ? safe(label) + '_' : '') + safe(room || 'photo') + '_' + (n || 1) + '.jpg';
+    }
+
     // 1枚だけ端末に保存する。
     // 【Blob 経由にする理由】data: の URL を直接リンクにすると、iOS Safari で
     // 保存されないことがある。Blob にしてから URL を作る。
@@ -7026,7 +7053,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = (p.room || 'photo') + '_' + (idx >= 0 ? idx + 1 : 1) + '.jpg';
+        a.download = mcPhotoFileName(p.buildingId || furyoPhotoBuildingId, p.room || furyoPhotoRoom, idx >= 0 ? idx + 1 : 1);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
