@@ -189,6 +189,14 @@
 
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; }
     .modal.active { display: flex; }
+    /* 【重なりの順番】.modal はすべて z-index 2000 なので、同じ値どうしでは「HTMLで後ろにある方」が上に出る。
+       確認・通知・入力の3つは HTML の前の方にあるため、不良モーダル（3519行）のように
+       後ろにあるモーダルから呼ぶと、白い箱の下に隠れて見えなくなっていた。
+       （例：不良内容を空のまま「記録する」を押したときの「不良内容を入力してください」）
+       この3つは常に一番上に出るべきものなので、値で上に固定する。
+       写真の確認・拡大（photoViewModal）は不良モーダルより上、この3つより下に置く。 */
+    #appConfirmModal, #appAlertModal, #appPromptModal { z-index: 2800; }
+    #photoViewModal { z-index: 2400; }
     .modal-box { background: white; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; text-align: center; max-height: 85vh; overflow-y: auto; }
     .modal-box h2 { font-size: 18px; margin-bottom: 10px; }
     .modal-buttons { display: flex; gap: 10px; margin-top: 12px; justify-content: center; flex-wrap: wrap; }
@@ -528,7 +536,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-18-b';
+    const APP_BUILD = '2026-09-18-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2156,6 +2164,133 @@
       });
     };
 
+    // ===== 不良写真の保存と読み出し =====
+    //
+    // 【中身と覚え書きを分けている理由】
+    //   inspections/{jobId}/photos/{写真ID}     … { data } base64の本体だけ。1枚あたり数百KB
+    //   inspections/{jobId}/photoMeta/{写真ID}  … { key, room, buildingId, bytes, listed, thumb, takenAt, createdAt }
+    //
+    // 1つにまとめると、不良一覧に「写真3枚」と出すだけのために本体を全部読むことになる。
+    // 40枚ある物件で16MB。現場のスマホでこれを開くたびに流すのは重い。
+    // 覚え書きだけなら1件10KB程度で済むので、一覧・印刷の選び直し・容量の数え直し・
+    // ZIPのファイル名組み立てが、すべて本体を読まずに回る。
+    //
+    // 【覚え書きに小さな見本（thumb）を持たせている理由】
+    // サムネイルの表示に本体が要ると、不良モーダルを開くたびに最大5枚＝2MBを取りに行くことになる。
+    // 長辺240px・品質0.45の見本（10KB前後）を覚え書き側に持ち、一覧の表示はこれで済ませる。
+    // 本体を取りに行くのは、拡大して見るときと印刷のときだけ。
+    //
+    // 【写真IDに連番を使わない理由】
+    // 同じ部屋を2人が同時に撮ると、同じ番号を掴んで片方が上書きで消える。
+    // {号棟ID}_{部屋}_{ミリ秒}{乱数3桁} にして衝突を避ける。
+    // ZIPのファイル名（01号棟_305_1.jpg）は、組み立てるときに撮影順で1から振り直す。
+    //
+    // 【key フィールドを別に持つ理由】
+    // 部屋の写真を引くのに where('buildingId','==',x) と where('room','==',y) を重ねると、
+    // 配布先の Firebase ごとに索引を作る手間が要る場合がある。
+    // key（'{号棟ID}_{部屋}'）1つの一致で引けば、索引は自動で用意されるものだけで足りる。
+
+    window.MC_PHOTO_MAX = 5;          // 1部屋あたりの上限
+    window.MC_PHOTO_LONG_EDGE = 1600; // 保存する写真の長辺
+    window.MC_PHOTO_QUALITY = 0.8;    // JPEG品質
+
+    window.mcPhotoKey = function(buildingId, room) {
+      return String(buildingId) + '_' + String(room);
+    };
+
+    // 本体（base64）の手元の控え。同じ写真を何度も取りに行かないため。
+    // 画面を閉じても残るが、リロードで消える。ずれても実害が無い種類の控え。
+    window._photoDataCache = {};
+
+    // 1部屋分の覚え書きを撮影順に取り出す（本体は読まない）
+    window.loadRoomPhotoMeta = function(buildingId, room) {
+      if (!window.currentUser || !window.currentJobId) return Promise.resolve([]);
+      const key = window.mcPhotoKey(buildingId, room);
+      const ref = collection(db, 'inspections', window.currentJobId, 'photoMeta');
+      return getDocs(query(ref, where('key', '==', key))).then((snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          const v = d.data() || {};
+          list.push({
+            id: d.id,
+            room: String(v.room || ''),
+            buildingId: String(v.buildingId || ''),
+            bytes: Number(v.bytes || 0),
+            listed: !!v.listed,
+            thumb: v.thumb || '',
+            takenAt: Number(v.takenAt || 0)
+          });
+        });
+        list.sort((a, b) => (a.takenAt - b.takenAt) || (a.id < b.id ? -1 : 1));
+        dlog('写真読込 / room=' + room + ' / ' + list.length + '枚');
+        return list;
+      });
+    };
+
+    // 本体（base64）を1枚取り出す。控えにあればそれを返す。
+    window.loadPhotoData = function(photoId) {
+      if (window._photoDataCache[photoId]) return Promise.resolve(window._photoDataCache[photoId]);
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId)).then((snap) => {
+        if (!snap.exists()) throw new Error('写真が見つかりません（すでに削除された可能性があります）');
+        const data = (snap.data() || {}).data || '';
+        if (!data) throw new Error('写真の中身が空です');
+        window._photoDataCache[photoId] = data;
+        return data;
+      });
+    };
+
+    // 1枚保存する。
+    // 【書く順番】本体 → 覚え書き の順。逆にすると、途中で切れたときに
+    // 「一覧には出るが開けない写真」ができる。この順なら、切れても
+    // 「どこにも出ない本体」が残るだけで、掃除のときに拾える（まとまり4）。
+    window.savePhotoToCloud = function(buildingId, room, dataUrl, thumbUrl) {
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      const photoId = window.mcPhotoKey(buildingId, room) + '_' +
+        Date.now() + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+      const bytes = dataUrl.length + (thumbUrl || '').length;
+      return setDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId), {
+        data: dataUrl
+      }).then(() => {
+        return setDoc(doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId), {
+          key: window.mcPhotoKey(buildingId, room),
+          room: String(room),
+          buildingId: String(buildingId),
+          bytes: bytes,
+          listed: false,   // 【初期はOFF】撮った写真は既定では不良一覧に載らない
+          thumb: thumbUrl || '',
+          takenAt: Date.now(),
+          createdAt: serverTimestamp()
+        });
+      }).then(() => {
+        window._photoDataCache[photoId] = dataUrl;
+        dlog('写真保存OK / room=' + room + ' / ' + Math.round(bytes / 1024) + 'KB');
+        return photoId;
+      });
+    };
+
+    // 1枚消す。覚え書き → 本体 の順。
+    // 逆にすると、切れたときに「開けない写真が一覧に出る」状態になる。
+    window.deletePhotoFromCloud = function(photoId) {
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      return deleteDoc(doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId)).then(() => {
+        return deleteDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId));
+      }).then(() => {
+        delete window._photoDataCache[photoId];
+        dlog('写真削除OK / ' + photoId);
+      });
+    };
+
+    // 「載せる」の印を付け外しする（覚え書きだけを書く。本体には触らない）
+    window.setPhotoListed = function(photoId, listed) {
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      return updateDoc(doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId), {
+        listed: !!listed
+      }).then(() => {
+        dlog('写真の印 / ' + photoId + ' / ' + (listed ? '載せる' : '載せない'));
+      });
+    };
+
     // 招待コードの索引（inviteCodes/{コード}）が無ければ黙って作る。
     // この索引を導入する前に作られた会社を救済するための自己修復処理。
     // オーナーが会社モーダルを開いたときに呼ばれる。失敗しても画面には出さない。
@@ -3396,10 +3531,39 @@
       <textarea id="furyoText" placeholder="例：感知器の作動不良、消火器の期限切れ など"></textarea>
       <button id="furyoVoiceBtn" type="button" onclick="toggleVoiceFuryo()" style="padding:6px 12px;font-size:18px;background:#eef5ff;margin-top:4px;">🎤</button>
       <br>
+
+      <!-- 写真の欄。写真共有モードが ON のときだけ出す（OFF のときは今までどおりの見た目） -->
+      <div id="furyoPhotoSection" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:13px;font-weight:bold;">写真</span>
+          <span id="furyoPhotoCount" style="font-size:12px;color:#888;">写真は<span id="furyoPhotoMax">5</span>枚まで</span>
+        </div>
+        <div id="furyoPhotoList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
+        <input type="file" id="furyoPhotoInput" accept="image/*" capture="environment" style="display:none;" onchange="onFuryoPhotoPicked(this)">
+        <button id="furyoPhotoBtn" type="button" onclick="startFuryoPhotoCapture()" style="width:100%;margin-top:8px;">📷 写真を撮る</button>
+        <div style="font-size:11px;color:#888;line-height:1.7;margin-top:8px;">
+          <p style="margin:0 0 4px;">この写真は共有用に粗くしています。型番など細かい部分が要る場合は、寄って別の1枚を撮ってください。</p>
+          <p style="margin:0;">アプリの写真が端末のアルバムに残るかどうかは機種によります。手元に確実に残したい写真は、端末のカメラで別に撮ってください。</p>
+        </div>
+      </div>
+
       <div class="modal-buttons">
         <button id="furyoCancel" onclick="cancelFuryo()">キャンセル</button>
         <button id="furyoOk" onclick="confirmFuryo()">記録する</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 写真の確認・拡大表示。撮った直後の確認と、保存済みの写真を見るのと、両方で使う。
+       画像をタップすると等倍（長辺1600px）に切り替わり、指でずらして型番を確かめられる。 -->
+  <div id="photoViewModal" class="modal">
+    <div class="modal-box" style="max-width:540px;width:94%;padding:14px;text-align:left;">
+      <div id="photoViewTitle" style="font-size:14px;font-weight:bold;margin-bottom:8px;"></div>
+      <div id="photoViewStage" style="background:#111;border-radius:6px;overflow:auto;max-height:58vh;text-align:center;-webkit-overflow-scrolling:touch;">
+        <img id="photoViewImg" onclick="togglePhotoZoom()" style="display:block;margin:0 auto;max-width:100%;">
+      </div>
+      <div id="photoViewHint" style="font-size:11px;color:#888;line-height:1.6;margin-top:8px;"></div>
+      <div class="modal-buttons" id="photoViewButtons" style="flex-direction:column;"></div>
     </div>
   </div>
 
@@ -6520,8 +6684,14 @@
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
       document.getElementById('furyoText').value = cell.dataset.furyo || '';
       document.getElementById('furyoModal').classList.add('active');
+      setupFuryoPhotoSection(cell);
     }
-    function cancelFuryo() { document.getElementById('furyoModal').classList.remove('active'); furyoCell = null; furyoRoom = null; }
+    function cancelFuryo() {
+      document.getElementById('furyoModal').classList.remove('active');
+      furyoCell = null; furyoRoom = null;
+      // 【キャンセルは不良テキストだけを捨てる】写真は保存した時点で確定しており、
+      // ここでは何もしない。写真を消したいときはサムネイルの × から消す。
+    }
     function confirmFuryo() {
       const text = document.getElementById('furyoText').value.trim();
       if (!text) { window.showAppAlert('不良内容を入力してください'); return; }
@@ -6543,6 +6713,360 @@
       if (window.updatePresence) window.updatePresence(savedFuryoRoom);
       if (returnToTenken) {
         openTenkenModal(returnCell);
+      }
+    }
+
+    // ===== 不良写真（不良モーダルの写真の欄）=====
+
+    let furyoPhotoRoom = null;        // 今の写真の欄が扱っている部屋
+    let furyoPhotoBuildingId = null;  // 同じく号棟ID
+    let furyoPhotoList = [];          // 覚え書きの一覧（撮影順）
+    let pendingPhoto = null;          // 撮ったが、まだ保存していない1枚
+
+    // 不良モーダルを開いたときに、写真の欄を用意する。
+    // 写真共有モードが OFF のときは欄ごと出さない（空欄も出さない）。
+    function setupFuryoPhotoSection(cell) {
+      const section = document.getElementById('furyoPhotoSection');
+      if (!section) return;
+      pendingPhoto = null;
+      if (!window.photoMode) {
+        section.style.display = 'none';
+        furyoPhotoRoom = null;
+        furyoPhotoBuildingId = null;
+        furyoPhotoList = [];
+        return;
+      }
+      let bid = '';
+      try { bid = String((buildings[currentBuildingIdx] || {}).id || ''); } catch (e) { bid = ''; }
+      furyoPhotoRoom = cell.dataset.room;
+      furyoPhotoBuildingId = bid;
+      furyoPhotoList = [];
+      section.style.display = 'block';
+      const maxEl = document.getElementById('furyoPhotoMax');
+      if (maxEl) maxEl.textContent = window.MC_PHOTO_MAX;
+      document.getElementById('furyoPhotoList').innerHTML =
+        '<span style="font-size:12px;color:#888;">読み込み中…</span>';
+      document.getElementById('furyoPhotoBtn').disabled = true;
+
+      if (!window.loadRoomPhotoMeta) { section.style.display = 'none'; return; }
+      window.loadRoomPhotoMeta(bid, cell.dataset.room).then((list) => {
+        // 読んでいるあいだに別の部屋を開いていたら捨てる
+        if (furyoPhotoRoom !== cell.dataset.room) return;
+        furyoPhotoList = list;
+        renderFuryoPhotos();
+      }).catch((e) => {
+        if (furyoPhotoRoom !== cell.dataset.room) return;
+        document.getElementById('furyoPhotoList').innerHTML =
+          '<span style="font-size:12px;color:#c00;">写真を読み込めませんでした（' + (e && e.message) + '）</span>';
+        document.getElementById('furyoPhotoBtn').disabled = false;
+      });
+    }
+
+    // サムネイルを並べ直す。
+    // 見本（thumb）は覚え書きに入っているので、ここで本体を取りに行くことはない。
+    function renderFuryoPhotos() {
+      const listEl = document.getElementById('furyoPhotoList');
+      const btn = document.getElementById('furyoPhotoBtn');
+      const countEl = document.getElementById('furyoPhotoCount');
+      if (!listEl) return;
+      const max = window.MC_PHOTO_MAX;
+      const n = furyoPhotoList.length;
+
+      countEl.innerHTML = n
+        ? n + ' / ' + max + ' 枚'
+        : '写真は<span id="furyoPhotoMax">' + max + '</span>枚まで';
+
+      if (!n) {
+        listEl.innerHTML = '<span style="font-size:12px;color:#888;">まだ写真はありません。</span>';
+      } else {
+        let html = '';
+        furyoPhotoList.forEach((p, i) => {
+          const src = p.thumb || '';
+          html += '<div style="position:relative;width:88px;">' +
+            (src
+              ? '<img src="' + src + '" onclick="openSavedPhoto(\'' + p.id + '\')" style="width:88px;height:88px;object-fit:cover;border-radius:6px;border:1px solid #ccc;display:block;">'
+              : '<div onclick="openSavedPhoto(\'' + p.id + '\')" style="width:88px;height:88px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;">写真' + (i + 1) + '</div>') +
+            '<button type="button" onclick="deleteFuryoPhoto(\'' + p.id + '\')" title="この写真を削除" ' +
+              'style="position:absolute;top:-6px;right:-6px;width:24px;height:24px;padding:0;border-radius:12px;' +
+              'background:#fff;border:1px solid #c88;color:#c00;font-size:13px;line-height:1;">×</button>' +
+            '<button type="button" onclick="toggleFuryoPhotoListed(\'' + p.id + '\')" ' +
+              'style="width:88px;margin-top:4px;padding:3px 0;font-size:11px;border-radius:4px;' +
+              (p.listed
+                ? 'background:#2e7d32;color:#fff;border:1px solid #2e7d32;">☑ 載せる'
+                : 'background:#f5f5f5;color:#666;border:1px solid #ccc;">☐ 載せる') +
+            '</button>' +
+          '</div>';
+        });
+        listEl.innerHTML = html;
+      }
+
+      btn.disabled = n >= max;
+      btn.textContent = n >= max ? '写真は' + max + '枚までです' : '📷 写真を撮る';
+    }
+
+    // 撮影ボタン。カメラを直接開く。
+    function startFuryoPhotoCapture() {
+      if (furyoPhotoList.length >= window.MC_PHOTO_MAX) {
+        window.showAppAlert('写真は' + window.MC_PHOTO_MAX + '枚までです。入れ替えたい場合は、先に不要な写真を × で削除してください。');
+        return;
+      }
+      const input = document.getElementById('furyoPhotoInput');
+      input.value = '';
+      input.click();
+    }
+
+    // 撮ったものを読み込み、縮めてから確認の画面に渡す。
+    async function onFuryoPhotoPicked(input) {
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file) return;
+      const btn = document.getElementById('furyoPhotoBtn');
+      btn.disabled = true;
+      btn.textContent = '処理中…';
+      try {
+        const made = await mcCompressPhoto(file);
+        pendingPhoto = made;
+        openPhotoConfirm(made);
+      } catch (e) {
+        window.showAppAlert('写真を処理できませんでした：' + (e && e.message));
+      } finally {
+        renderFuryoPhotos();
+      }
+    }
+
+    // 画像を長辺1600px・品質0.8に縮め、あわせて一覧用の見本（長辺240px）も作る。
+    //
+    // 【向きに注意】canvas に描くと EXIF の回転が落ちて横倒しになる環境がある。
+    // createImageBitmap に imageOrientation:'from-image' を渡すのが確実。
+    // 渡せない環境では <img> に倒す（今どきのブラウザは <img> の表示時に向きを直す）。
+    //
+    // 【大きさの保険】Firestore の1ドキュメント上限は1MiB。
+    // 細かい模様の多い写真は0.8でも膨らむことがあるので、900KBを超えたら段階的に落とす。
+    async function mcCompressPhoto(file) {
+      let src = null;
+      let needClose = false;
+      if (window.createImageBitmap) {
+        try {
+          src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+          needClose = true;
+        } catch (e) { src = null; }
+      }
+      if (!src) {
+        src = await new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+          img.src = url;
+        });
+      }
+      const sw = src.width || src.naturalWidth;
+      const sh = src.height || src.naturalHeight;
+      if (!sw || !sh) { if (needClose) src.close(); throw new Error('画像の大きさが取れませんでした'); }
+
+      function draw(longEdge, quality) {
+        const scale = Math.min(1, longEdge / Math.max(sw, sh));
+        const w = Math.max(1, Math.round(sw * scale));
+        const h = Math.max(1, Math.round(sh * scale));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const c = cv.getContext('2d');
+        c.fillStyle = '#fff';
+        c.fillRect(0, 0, w, h);
+        c.drawImage(src, 0, 0, w, h);
+        return cv.toDataURL('image/jpeg', quality);
+      }
+
+      const LIMIT = 900 * 1024;
+      let dataUrl = draw(window.MC_PHOTO_LONG_EDGE, window.MC_PHOTO_QUALITY);
+      const fallbacks = [[1600, 0.7], [1600, 0.6], [1280, 0.6], [1280, 0.5]];
+      for (let i = 0; i < fallbacks.length && dataUrl.length > LIMIT; i++) {
+        dataUrl = draw(fallbacks[i][0], fallbacks[i][1]);
+      }
+      const thumbUrl = draw(240, 0.45);
+      if (needClose) src.close();
+      if (dataUrl.length > LIMIT) throw new Error('写真が大きすぎて保存できませんでした');
+      return { dataUrl: dataUrl, thumbUrl: thumbUrl };
+    }
+
+    // ---- 写真の確認・拡大表示 ----
+    // 撮った直後の確認（保存する／撮り直す）と、保存済みの写真を見るのと、同じ画面を使う。
+
+    let photoViewZoomed = false;
+
+    function openPhotoViewModal(opts) {
+      photoViewZoomed = false;
+      document.getElementById('photoViewTitle').textContent = opts.title || '';
+      const img = document.getElementById('photoViewImg');
+      img.src = opts.dataUrl;
+      img.style.maxWidth = '100%';
+      img.style.width = '';
+      document.getElementById('photoViewStage').scrollTop = 0;
+      document.getElementById('photoViewStage').scrollLeft = 0;
+      document.getElementById('photoViewHint').innerHTML = opts.hint || '';
+      document.getElementById('photoViewButtons').innerHTML = opts.buttons || '';
+      document.getElementById('photoViewModal').classList.add('active');
+    }
+
+    function closePhotoViewModal() {
+      document.getElementById('photoViewModal').classList.remove('active');
+      document.getElementById('photoViewImg').src = '';
+    }
+
+    // 画面に合わせた表示と等倍（長辺1600pxそのまま）を行き来する。
+    // 等倍にすると枠からはみ出すので、枠側のスクロールで指でずらして見る。
+    function togglePhotoZoom() {
+      const img = document.getElementById('photoViewImg');
+      const stage = document.getElementById('photoViewStage');
+      photoViewZoomed = !photoViewZoomed;
+      if (photoViewZoomed) {
+        img.style.maxWidth = 'none';
+        img.style.width = 'auto';
+        // 等倍にした直後は中央あたりを見せる（端から探させない）
+        stage.scrollLeft = Math.max(0, (img.naturalWidth - stage.clientWidth) / 2);
+        stage.scrollTop = Math.max(0, (img.naturalHeight - stage.clientHeight) / 2);
+      } else {
+        img.style.maxWidth = '100%';
+        img.style.width = '';
+        stage.scrollTop = 0;
+        stage.scrollLeft = 0;
+      }
+    }
+
+    // 撮った直後の確認。ここで「保存する」を押すまで Firestore には何も書かない。
+    function openPhotoConfirm(made) {
+      openPhotoViewModal({
+        title: (furyoPhotoRoom || '') + ' の写真を確認',
+        dataUrl: made.dataUrl,
+        hint: 'ブレ・写り込みを確かめてください。写真をタップすると等倍で見られます。<br>' +
+          'これが実際に保存される写真です（およそ ' + Math.round(made.dataUrl.length / 1024) + 'KB）。',
+        buttons:
+          '<button id="photoConfirmSave" onclick="submitSavePhoto()" style="width:100%;">この写真を保存する</button>' +
+          '<button onclick="retakePhoto()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">撮り直す</button>'
+      });
+    }
+
+    // 「撮り直す」。保存していないので、Firestore には何も残らない。
+    function retakePhoto() {
+      pendingPhoto = null;
+      closePhotoViewModal();
+      startFuryoPhotoCapture();
+    }
+
+    async function submitSavePhoto() {
+      if (!pendingPhoto) { closePhotoViewModal(); return; }
+      const saveBtn = document.getElementById('photoConfirmSave');
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
+      const room = furyoPhotoRoom;
+      const bid = furyoPhotoBuildingId;
+      try {
+        // 【上限の念押し】同じ部屋を2人が同時に撮っている場合に備えて、
+        // 書く直前にもう一度数える。開いたときの枚数だけで判断すると6枚目が入る。
+        const latest = await window.loadRoomPhotoMeta(bid, room);
+        if (latest.length >= window.MC_PHOTO_MAX) {
+          furyoPhotoList = latest;
+          renderFuryoPhotos();
+          closePhotoViewModal();
+          pendingPhoto = null;
+          window.showAppAlert('この部屋の写真はすでに' + window.MC_PHOTO_MAX + '枚あります。ほかの端末で撮られた可能性があります。');
+          return;
+        }
+        await window.savePhotoToCloud(bid, room, pendingPhoto.dataUrl, pendingPhoto.thumbUrl);
+        pendingPhoto = null;
+        closePhotoViewModal();
+        if (window.addLog) window.addLog('不良写真', { room: room, detail: '写真を保存' });
+        // 保存後に取り直す（他端末の分もここで揃う）
+        if (furyoPhotoRoom === room) {
+          furyoPhotoList = await window.loadRoomPhotoMeta(bid, room);
+          renderFuryoPhotos();
+        }
+      } catch (e) {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'この写真を保存する'; }
+        window.showAppAlert('写真を保存できませんでした：' + (e && e.message) +
+          '\n\n通信状態を確かめて、もう一度お試しください。');
+      }
+    }
+
+    // 保存済みの写真を開く。ここで初めて本体を取りに行く。
+    function openSavedPhoto(photoId) {
+      const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
+      const p = furyoPhotoList[idx] || {};
+      openPhotoViewModal({
+        title: (furyoPhotoRoom || '') + ' の写真' + (idx >= 0 ? ' ' + (idx + 1) + '枚目' : ''),
+        dataUrl: p.thumb || '',
+        hint: '読み込み中…',
+        buttons: '<button onclick="closePhotoViewModal()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">閉じる</button>'
+      });
+      window.loadPhotoData(photoId).then((data) => {
+        const modal = document.getElementById('photoViewModal');
+        if (!modal.classList.contains('active')) return;
+        document.getElementById('photoViewImg').src = data;
+        document.getElementById('photoViewHint').innerHTML =
+          '写真をタップすると等倍で見られます。';
+        document.getElementById('photoViewButtons').innerHTML =
+          '<button onclick="savePhotoToDevice(\'' + photoId + '\')" style="width:100%;">この写真を端末に保存</button>' +
+          '<button onclick="closePhotoViewModal()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">閉じる</button>';
+      }).catch((e) => {
+        document.getElementById('photoViewHint').innerHTML =
+          '<span style="color:#c00;">写真を読み込めませんでした（' + (e && e.message) + '）</span>';
+      });
+    }
+
+    // 1枚だけ端末に保存する。
+    // 【Blob 経由にする理由】data: の URL を直接リンクにすると、iOS Safari で
+    // 保存されないことがある。Blob にしてから URL を作る。
+    function savePhotoToDevice(photoId) {
+      window.loadPhotoData(photoId).then((dataUrl) => {
+        const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
+        const p = furyoPhotoList[idx] || {};
+        const bin = atob(dataUrl.split(',')[1] || '');
+        const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        const blob = new Blob([buf], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (p.room || 'photo') + '_' + (idx >= 0 ? idx + 1 : 1) + '.jpg';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      }).catch((e) => window.showAppAlert('写真を取り出せませんでした：' + (e && e.message)));
+    }
+
+    // 「載せる」の印の付け外し。押した見た目を先に変え、失敗したら戻す。
+    function toggleFuryoPhotoListed(photoId) {
+      const p = furyoPhotoList.find((x) => x.id === photoId);
+      if (!p) return;
+      const next = !p.listed;
+      p.listed = next;
+      renderFuryoPhotos();
+      window.setPhotoListed(photoId, next).catch((e) => {
+        p.listed = !next;
+        renderFuryoPhotos();
+        window.showAppAlert('印を変えられませんでした：' + (e && e.message));
+      });
+    }
+
+    async function deleteFuryoPhoto(photoId) {
+      const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
+      if (idx < 0) return;
+      const ok = await window.showAppConfirm(
+        (furyoPhotoRoom || '') + ' の写真' + (idx + 1) + '枚目を削除します。\n\n' +
+        '削除すると元に戻せません。ほかの端末からも見えなくなります。',
+        { danger: true, okLabel: '削除する' });
+      if (!ok) return;
+      const room = furyoPhotoRoom;
+      const bid = furyoPhotoBuildingId;
+      try {
+        await window.deletePhotoFromCloud(photoId);
+        if (window.addLog) window.addLog('不良写真', { room: room, detail: '写真を削除' });
+        if (furyoPhotoRoom === room) {
+          furyoPhotoList = await window.loadRoomPhotoMeta(bid, room);
+          renderFuryoPhotos();
+        }
+      } catch (e) {
+        window.showAppAlert('写真を削除できませんでした：' + (e && e.message));
       }
     }
 
