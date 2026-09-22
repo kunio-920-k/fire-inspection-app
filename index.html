@@ -536,7 +536,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-21-b';
+    const APP_BUILD = '2026-09-21-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1306,6 +1306,25 @@
         buildingId: buildingId,
         updatedAt: serverTimestamp()
       }, { merge: true }).catch((e) => dlog('presence書き込みエラー / ' + e.message));
+    };
+
+    // 不良モーダルの「記録中」の札（Session 36）。
+    // 点検中ではない部屋の不良モーダルを開いている間、自分の presence に部屋を書いておく。
+    // presence は全端末が常に受け取っているので、札を見るのに読み取りは増えない。
+    // 1分ごとに掛け直し、5分掛け直されなければ見る側で無効とみなす（電池切れ・放置への備え）。
+    // room に null を渡すと札を外す。
+    window.setFuryoEditing = function(room) {
+      if (!window.currentUser || !window.currentJobId) return;
+      let buildingId = '';
+      try {
+        const b = buildings[currentBuildingIdx];
+        if (b && b.id) buildingId = String(b.id);
+      } catch (e) { /* 号棟が無い */ }
+      const ref = doc(db, 'inspections', window.currentJobId, 'presence', window.currentUser.uid);
+      const data = room
+        ? { furyoRoom: String(room), furyoBuildingId: buildingId, furyoAt: serverTimestamp() }
+        : { furyoRoom: '', furyoBuildingId: '', furyoAt: null };
+      setDoc(ref, data, { merge: true }).catch((e) => dlog('記録中の札の書き込みエラー / ' + e.message));
     };
 
     // メンバーのroleを変更する（管理者のみ呼べる）
@@ -4222,7 +4241,10 @@
             times: cell.dataset.times || '[]',
             yoyakuTime: cell.dataset.yoyakuTime || '',
             yoyakuNote: cell.dataset.yoyakuNote || '',
-            yoyakuDate: cell.dataset.yoyakuDate || ''
+            yoyakuDate: cell.dataset.yoyakuDate || '',
+            // 点検中にした人（点検中の間だけ意味を持つ。ほかの状態では見ない）
+            tenkenBy: cell.dataset.tenkenBy || '',
+            tenkenByName: cell.dataset.tenkenByName || ''
           };
         });
         const rooms = {};
@@ -5706,6 +5728,8 @@
               (cd && cd.yoyakuTime ? ' data-yoyaku-time="' + cd.yoyakuTime + '"' : '') +
               (cd && cd.yoyakuNote ? ' data-yoyaku-note="' + cd.yoyakuNote + '"' : '') +
               (cd && cd.yoyakuDate ? ' data-yoyaku-date="' + cd.yoyakuDate + '"' : '') +
+              (cd && cd.tenkenBy ? ' data-tenken-by="' + String(cd.tenkenBy).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '') +
+              (cd && cd.tenkenByName ? ' data-tenken-by-name="' + String(cd.tenkenByName).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '') +
               '>未</td>';
           } else {
             html += '<td class="empty-state"></td>';
@@ -5718,7 +5742,10 @@
       document.getElementById('tableArea').innerHTML = html;
 
       document.querySelectorAll('td.cell').forEach(cell => {
-        if (cell.dataset.state && cell.dataset.state !== 'mi') {
+        // 【「未」でも不良があれば整える（Session 36）】以前は「未」以外だけを整えていたため、
+        // 点検中を経ずに長押しメニューから不良を記録した「未」の部屋は、描き直すと
+        // 赤ふちも「⚠不良」も消えて見えていた（データは残っている）。
+        if ((cell.dataset.state && cell.dataset.state !== 'mi') || cell.dataset.furyo) {
           updateCellDisplay(cell);
           if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
           if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
@@ -5741,6 +5768,8 @@
 
       updatePropertyDisplay();
       attachCellEvents();
+      // 自分の点検中が他端末で解除されていないか（同期の受信で描き直すたびに見る）
+      checkMyTenkenReleased();
 
       canvas = document.getElementById('signCanvas');
       ctx = canvas.getContext('2d');
@@ -5952,7 +5981,9 @@
             times: cell.dataset.times,
             yoyakuTime: cell.dataset.yoyakuTime,
             yoyakuNote: cell.dataset.yoyakuNote,
-            yoyakuDate: cell.dataset.yoyakuDate
+            yoyakuDate: cell.dataset.yoyakuDate,
+            tenkenBy: cell.dataset.tenkenBy,
+            tenkenByName: cell.dataset.tenkenByName
           };
         });
       }
@@ -6023,6 +6054,8 @@
               (prev && prev.yoyakuTime ? ' data-yoyaku-time="' + prev.yoyakuTime + '"' : '') +
               (prev && prev.yoyakuNote ? ' data-yoyaku-note="' + prev.yoyakuNote + '"' : '') +
               (prev && prev.yoyakuDate ? ' data-yoyaku-date="' + prev.yoyakuDate + '"' : '') +
+              (prev && prev.tenkenBy ? ' data-tenken-by="' + String(prev.tenkenBy).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '') +
+              (prev && prev.tenkenByName ? ' data-tenken-by-name="' + String(prev.tenkenByName).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '') +
               '>未</td>';
           } else {
             html += '<td class="empty-state"></td>';
@@ -6036,7 +6069,10 @@
 
       // 保持していたセルの表示を再構築
       document.querySelectorAll('td.cell').forEach(cell => {
-        if (cell.dataset.state && cell.dataset.state !== 'mi') {
+        // 【「未」でも不良があれば整える（Session 36）】以前は「未」以外だけを整えていたため、
+        // 点検中を経ずに長押しメニューから不良を記録した「未」の部屋は、描き直すと
+        // 赤ふちも「⚠不良」も消えて見えていた（データは残っている）。
+        if ((cell.dataset.state && cell.dataset.state !== 'mi') || cell.dataset.furyo) {
           updateCellDisplay(cell);
           if (cell.dataset.state === 'nyushitsu') cell.classList.add('nyushitsu');
           if (cell.dataset.state === 'fuzai') cell.classList.add('fuzai');
@@ -6129,12 +6165,98 @@
       });
     }
 
+    // ===== 点検中の占有（Session 36） =====
+    //
+    // 以前は「誰が点検中にしたか」を持っていなかったため、点検中の部屋を別の人が長押しすると、
+    // その人の端末にも同じ点検中モーダルが開いた。責任者が作業員と同じ部屋を開いて、
+    // 不良テキストを上書きし合う、といったことが起こりえた。
+    //
+    // 点検中にしたとき、マスのデータに本人（tenkenBy / tenkenByName）を書く。
+    // 点検中の間、本人以外はその部屋の操作が全部止まる。
+    // 本人がキャンセルか点検終了で抜ければ、次の人が入れる（担当の交代もこれで済む）。
+    // 電池切れなどで本人が戻れないときは、管理者・サブ管理者が解除できる。
+    //
+    // tenkenBy は点検中の間だけ意味を持つ。状態が点検中でなければ、残っていても見ない。
+    // tenkenBy の無い古いデータの点検中は、今までどおり誰でも触れる。
+
+    function mcMyUid() { return (window.currentUser && window.currentUser.uid) || ''; }
+    function mcMyName() {
+      const u = window.currentUser;
+      return (u && (u.displayName || u.email)) || '作業員';
+    }
+    function mcIsManager() {
+      const r = window.myRole || 'worker';
+      return r === 'admin' || r === 'sub' || !!window.isJobOwner;
+    }
+    function clearTenkenOwner(cell) {
+      if (!cell) return;
+      delete cell.dataset.tenkenBy;
+      delete cell.dataset.tenkenByName;
+    }
+
+    // この部屋を「自分以外の人」が点検中なら、その人を返す。
+    function tenkenLockedByOther(stateCell) {
+      if (!stateCell || stateCell.dataset.state !== 'tenkenchuu') return null;
+      const by = stateCell.dataset.tenkenBy || '';
+      if (!by || by === mcMyUid()) return null;
+      return { uid: by, name: stateCell.dataset.tenkenByName || '他の作業員' };
+    }
+
+    // 他の人が点検中の部屋に触ろうとしたとき。止めて知らせる。
+    // 管理者・サブ管理者には、ここから解除できる道を出す。
+    async function handleTenkenLocked(stateCell, lock) {
+      const room = stateCell.dataset.room;
+      if (!mcIsManager()) {
+        window.showAppAlert(lock.name + ' さんが ' + room + '号室を点検中です。\n\n' +
+          '終わるまでお待ちください。点検中のまま戻れなくなっている場合は、管理者に解除を頼んでください。');
+        return;
+      }
+      const ok = await window.showAppConfirm(
+        lock.name + ' さんが ' + room + '号室を点検中です。\n\n' +
+        '解除すると部屋は「未」に戻ります。記録済みの不良と写真は残ります。' +
+        lock.name + ' さんの端末で点検中の画面が開いていれば、閉じます。\n\n' +
+        '電池切れなどで戻れなくなっている場合だけ解除してください。',
+        { danger: true, okLabel: '点検中を解除する' });
+      if (!ok) return;
+      const cell = getLiveCell(room) || stateCell;
+      if (cell.dataset.state !== 'tenkenchuu') return; // 待っている間に本人が抜けた
+      cell.dataset.state = 'mi';
+      clearTenkenOwner(cell);
+      cell.classList.remove('tenkenchuu');
+      updateCellDisplay(cell);
+      syncToCloud();
+      if (window.addLog) window.addLog('点検中を解除', { room: room, detail: lock.name + ' さんの点検中を解除' });
+    }
+
+    // 自分の点検中が他の端末（管理者）から解除されたら、開いている点検中モーダルを閉じる。
+    // 立面図の描き直し（同期の受信）のたびに呼ぶ。
+    // 【開いてから5秒は見ない】自分が点検中にした直後に、それより前の同期が届いて
+    // 一瞬「未」に見えることがある。それを解除と取り違えないため。
+    let tenkenOpenedAt = 0;
+    function checkMyTenkenReleased() {
+      const modal = document.getElementById('tenkenModal');
+      if (!modal || !modal.classList.contains('active') || !tenkenCell) return;
+      if (Date.now() - tenkenOpenedAt < 5000) return;
+      const room = tenkenCell.dataset.room;
+      const cell = getLiveCell(room);
+      if (!cell) return;
+      const released = cell.dataset.state !== 'tenkenchuu' ||
+        (cell.dataset.tenkenBy && cell.dataset.tenkenBy !== mcMyUid());
+      if (!released) return;
+      closeTenkenModal();
+      window.showAppAlert(room + '号室の点検中が、管理者によって解除されました。');
+    }
+
     let pressType = null;
     function startPress(cell, type) {
       pressType = type;
       touchMoved = false;
       pressTimer = setTimeout(() => {
         if (!touchMoved) {
+          // 他の人が点検中の部屋は、状態のマスでも号室のマスでも開かない
+          const stateCell = type === 'state' ? cell : getLiveCell(cell.dataset.room);
+          const lock = tenkenLockedByOther(stateCell);
+          if (lock) { handleTenkenLocked(stateCell, lock); return; }
           if (type === 'state') {
             // 点検中セルは専用モーダルを開く
             if (cell.dataset.state === 'tenkenchuu') {
@@ -6184,6 +6306,9 @@
       // 【バグ対策】メニュー表示中の再描画で参照が古くなる問題（menuSelectと同様）
       const cell = getLiveRoomCell(activeRoomCell.dataset.room) || activeRoomCell;
       closeRoomMenu();
+      const stateCellNow = getLiveCell(cell.dataset.room);
+      const lockNow = tenkenLockedByOther(stateCellNow);
+      if (lockNow) { handleTenkenLocked(stateCellNow, lockNow); return; }
       if (action === 'delete') {
         if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
         const room = cell.dataset.room;
@@ -6263,8 +6388,13 @@
       // 点検中モーダルと同様、操作直前に部屋番号からライブなセルを取得し直す。
       const cell = getLiveCell(activeCell.dataset.room) || activeCell;
       closeMenu();
+      // メニューを開いている間に、他の人がこの部屋を点検中にしていた場合
+      const lockNow = tenkenLockedByOther(cell);
+      if (lockNow) { handleTenkenLocked(cell, lockNow); return; }
       if (action === 'tenkenchuu') {
         cell.dataset.state = 'tenkenchuu';
+        cell.dataset.tenkenBy = mcMyUid();
+        cell.dataset.tenkenByName = mcMyName();
         cell.classList.remove('nyushitsu', 'fuzai', 'kushitsu', 'yoyaku', 'furyo');
         cell.classList.add('tenkenchuu');
         updateCellDisplay(cell);
@@ -6346,7 +6476,13 @@
     }
     let tenkenCell = null;
     function openTenkenModal(cell) {
+      const liveForCheck = getLiveCell(cell.dataset.room) || cell;
+      if (liveForCheck.dataset.state !== 'tenkenchuu') {
+        window.showAppAlert(cell.dataset.room + '号室は点検中ではなくなっています（管理者が解除した可能性があります）。');
+        return;
+      }
       tenkenCell = cell;
+      tenkenOpenedAt = Date.now();
       const room = cell.dataset.room;
       document.getElementById('tenkenRoomLabel').textContent = room + '号室';
 
@@ -6386,6 +6522,7 @@
       if (window.addLog) window.addLog('点検キャンセル', { room: room });
       const cell = getLiveCell(room) || tenkenCell;
       cell.dataset.state = 'mi';
+      clearTenkenOwner(cell);
       cell.classList.remove('tenkenchuu');
       updateCellDisplay(cell);
       syncToCloud();
@@ -6595,6 +6732,7 @@
       // 部屋番号から改めて「今画面にある」セルを取得してから反映する
       const cell = getLiveCell(signRoom) || signCell;
       cell.dataset.state = 'nyushitsu';
+      clearTenkenOwner(cell);
       cell.dataset.sign = signData;
       cell.classList.add('nyushitsu');
       cell.classList.remove('fuzai', 'kushitsu', 'yoyaku', 'tenkenchuu');
@@ -6619,6 +6757,7 @@
       const NO_SIGN = 'NO_SIGN_NEEDED';
       const cell = getLiveCell(signRoom) || signCell;
       cell.dataset.state = 'nyushitsu';
+      clearTenkenOwner(cell);
       cell.dataset.sign = NO_SIGN;
       cell.classList.add('nyushitsu');
       cell.classList.remove('fuzai', 'kushitsu', 'yoyaku', 'tenkenchuu');
@@ -6678,23 +6817,119 @@
       ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y);
     }
 
+    // ===== 写真だけの不良（Session 36） =====
+    // 不良テキストが空のまま写真を保存したら、この仮の文言で不良にする。
+    // 不良の印・同期・不良一覧・印刷はすべて「不良テキストが入っているか」で決まるので、
+    // 文言を入れるだけで既存の仕組みが全部拾い、誰にも見つけられない写真ができなくなる。
+    // 括弧付きにして、人が書いた不良と見分けられるようにしている。
+    const MC_FURYO_PHOTO_ONLY = '（写真あり・内容未記入）';
+
+    // 写真を撮った部屋のマス（今表示している号棟のときだけ）。別の号棟に切り替わっていたら触らない。
+    function liveCellForPhoto(room, bid) {
+      let cur = '';
+      try { cur = String((buildings[currentBuildingIdx] || {}).id || ''); } catch (e) { cur = ''; }
+      if (String(bid) !== cur) return null;
+      return getLiveCell(room);
+    }
+    function markPhotoOnlyFuryo(room, bid) {
+      const cell = liveCellForPhoto(room, bid);
+      if (!cell) return;
+      if (cell.dataset.furyo && cell.dataset.furyo.length > 0) return; // 書いた不良があればそのまま
+      cell.dataset.furyo = MC_FURYO_PHOTO_ONLY;
+      cell.classList.add('furyo');
+      updateCellDisplay(cell);
+      syncToCloud();
+      if (window.addLog) window.addLog('不良記録', { room: room, detail: MC_FURYO_PHOTO_ONLY });
+    }
+    // 写真が0枚になったとき、文言が仮のままなら不良ごと外す。自分で書いた文言なら残す。
+    function unmarkPhotoOnlyFuryo(room, bid) {
+      const cell = liveCellForPhoto(room, bid);
+      if (!cell) return;
+      if (cell.dataset.furyo !== MC_FURYO_PHOTO_ONLY) return;
+      cell.dataset.furyo = '';
+      cell.classList.remove('furyo');
+      updateCellDisplay(cell);
+      syncToCloud();
+      if (window.addLog) window.addLog('不良取消', { room: room, detail: '写真が0枚になったため' });
+    }
+
+    // ===== 不良モーダルの「記録中」の札（Session 36） =====
+    // 点検中の部屋は点検中の占有で守られている。ここで守るのは、点検中ではない部屋
+    // （サイン後に写真を足しに開き直した場合など）の不良モーダル。
+    // 札は presence に書き、1分ごとに掛け直す。5分掛け直されない札は無効とみなす。
+    const FURYO_TAG_TTL_MS = 5 * 60 * 1000;
+    let furyoTagTimer = null;
+    let furyoTagHung = false;
+
+    function furyoTagHeldByOther(room) {
+      let bid = '';
+      try { bid = String((buildings[currentBuildingIdx] || {}).id || ''); } catch (e) { bid = ''; }
+      const docs = window.latestPresenceDocs || [];
+      const now = Date.now();
+      for (const d of docs) {
+        if (!d || d.uid === mcMyUid()) continue;
+        if (String(d.furyoRoom || '') !== String(room)) continue;
+        if (String(d.furyoBuildingId || '') !== bid) continue;
+        const t = (d.furyoAt && d.furyoAt.toMillis) ? d.furyoAt.toMillis() : 0;
+        if (!t || now - t > FURYO_TAG_TTL_MS) continue;
+        return { name: d.displayName || '他の作業員' };
+      }
+      return null;
+    }
+    function hangFuryoTag(room) {
+      if (!window.setFuryoEditing) return;
+      window.setFuryoEditing(room);
+      furyoTagHung = true;
+      clearInterval(furyoTagTimer);
+      furyoTagTimer = setInterval(() => window.setFuryoEditing(room), 60 * 1000);
+    }
+    function dropFuryoTag() {
+      clearInterval(furyoTagTimer);
+      furyoTagTimer = null;
+      if (furyoTagHung && window.setFuryoEditing) window.setFuryoEditing(null);
+      furyoTagHung = false;
+    }
+
     function openFuryo(cell) {
+      // 他の人が点検中の部屋、または他の人が不良を記録中の部屋は開かない
+      const lock = tenkenLockedByOther(getLiveCell(cell.dataset.room) || cell);
+      if (lock) { furyoFromTenkenMode = false; handleTenkenLocked(cell, lock); return; }
+      const tag = furyoTagHeldByOther(cell.dataset.room);
+      if (tag) {
+        furyoFromTenkenMode = false;
+        window.showAppAlert(tag.name + ' さんが ' + cell.dataset.room + '号室の不良を記録中です。\n\n終わるまでお待ちください。');
+        return;
+      }
       furyoCell = cell;
       furyoRoom = cell.dataset.room;
       document.getElementById('furyoTitle').textContent = cell.dataset.room + ' の不良を記録';
-      document.getElementById('furyoText').value = cell.dataset.furyo || '';
+      // 仮の文言は入力欄に出さない（消してから書く手間をかけさせない）
+      const cur = cell.dataset.furyo || '';
+      document.getElementById('furyoText').value = cur === MC_FURYO_PHOTO_ONLY ? '' : cur;
       document.getElementById('furyoModal').classList.add('active');
       setupFuryoPhotoSection(cell);
+      // 点検中モーダルから来た場合は点検中の占有で守られているので、札は要らない
+      if (!furyoFromTenkenMode) hangFuryoTag(cell.dataset.room);
     }
     function cancelFuryo() {
       document.getElementById('furyoModal').classList.remove('active');
+      dropFuryoTag();
       furyoCell = null; furyoRoom = null;
       // 【キャンセルは不良テキストだけを捨てる】写真は保存した時点で確定しており、
       // ここでは何もしない。写真を消したいときはサムネイルの × から消す。
     }
     function confirmFuryo() {
-      const text = document.getElementById('furyoText').value.trim();
-      if (!text) { window.showAppAlert('不良内容を入力してください'); return; }
+      let text = document.getElementById('furyoText').value.trim();
+      if (!text) {
+        // 写真が付いていれば、仮の文言で記録する（写真だけの不良）
+        if (window.photoMode && furyoPhotoRoom === furyoRoom && furyoPhotoList.length > 0) {
+          text = MC_FURYO_PHOTO_ONLY;
+        } else {
+          window.showAppAlert('不良内容を入力してください');
+          return;
+        }
+      }
+      dropFuryoTag();
       // 入力中に他端末の同期で立面図が再描画されている可能性があるため、
       // 部屋番号から改めて「今画面にある」セルを取得してから反映する
       const cell = getLiveCell(furyoRoom) || furyoCell;
@@ -6981,6 +7216,8 @@
         pendingPhoto = null;
         closePhotoViewModal();
         if (window.addLog) window.addLog('不良写真', { room: room, detail: '写真を保存' });
+        // 不良テキストがまだ無ければ、写真だけの不良にする（責任者の画面にも赤ふちが出る）
+        markPhotoOnlyFuryo(room, bid);
         // 保存後に取り直す（他端末の分もここで揃う）
         if (furyoPhotoRoom === room) {
           furyoPhotoList = await window.loadRoomPhotoMeta(bid, room);
@@ -7088,10 +7325,12 @@
       try {
         await window.deletePhotoFromCloud(photoId);
         if (window.addLog) window.addLog('不良写真', { room: room, detail: '写真を削除' });
+        const left = await window.loadRoomPhotoMeta(bid, room);
         if (furyoPhotoRoom === room) {
-          furyoPhotoList = await window.loadRoomPhotoMeta(bid, room);
+          furyoPhotoList = left;
           renderFuryoPhotos();
         }
+        if (left.length === 0) unmarkPhotoOnlyFuryo(room, bid);
       } catch (e) {
         window.showAppAlert('写真を削除できませんでした：' + (e && e.message));
       }
@@ -7639,6 +7878,74 @@
       }).join('');
     }
 
+    // スケジュールの「階」の選択肢の上限（最上階）を求める。
+    //
+    // 【設定画面では入力欄の今の値を見る（Session 36）】
+    // 号棟データの階数は「設定内容で立面図を作成」（複数棟は「住戸構成を登録」）を押すまで
+    // 書き換わらない。以前はこの号棟データだけを見ていたため、新規物件で階数に8を入れても
+    // スケジュールの階は初期値の1〜3のままで、立面図を作ってから戻るまで直らなかった。
+    // 設定画面が出ている間は、画面の入力欄に今入っている数字を優先する。
+    //
+    // 【4階カットの分を足す（Session 36）】
+    // 4階をカットすると、4を飛ばして1つ上に伸びる（階数8なら 1,2,3,5,6,7,8,9 階）。
+    // 階数の数字だけを見ると最上階（9階）が選べなかった。
+    function scheduleMaxFloor() {
+      const top = (count, cut4) => {
+        const n = parseInt(toHankaku(String(count || ''))) || 0;
+        return n > 0 ? (cut4 ? n + 1 : n) : 0;
+      };
+      let max = 1;
+      const setupEl = document.getElementById('setup');
+      const onSetup = setupEl && setupEl.style.display !== 'none';
+      const multiArea = document.getElementById('multiBuildingArea');
+      const multiOn = multiArea && multiArea.style.display !== 'none';
+      if (onSetup && multiOn) {
+        // 複数棟の入力：各棟の入力欄が号棟の全体を表す
+        let found = false;
+        document.querySelectorAll('input[id^="mb_floor_"]').forEach((el) => {
+          const i = el.id.split('_').pop();
+          const cutEl = document.getElementById('mb_cut4floor_' + i);
+          const t = top(el.value, cutEl && cutEl.checked);
+          found = true;
+          if (t > max) max = t;
+        });
+        if (found) return max;
+      }
+      buildings.forEach((b, i) => {
+        let t;
+        if (onSetup && !multiOn && i === currentBuildingIdx && document.getElementById('floorCount')) {
+          // 1棟の入力：今編集している号棟は入力欄の値、ほかの号棟は登録済みの値
+          const cutEl = document.getElementById('cut4Floor');
+          t = top(document.getElementById('floorCount').value, cutEl && cutEl.checked);
+        } else {
+          t = top(b.setup && b.setup.floorCount, b.setup && b.setup.cut4Floor);
+        }
+        if (t > max) max = t;
+      });
+      return max;
+    }
+
+    // 設定画面で階数・4階カットを変えたら、スケジュールの「階」の選択肢をその場で作り直す。
+    // 打つたびに作り直すと重いので、手が止まってから0.3秒後に1回だけ。
+    // 書きかけのスケジュールは flushScheduleDOM で読み取ってから作り直すので消えない。
+    let _scheduleFloorRefreshTimer = null;
+    function refreshScheduleFloorsSoon() {
+      clearTimeout(_scheduleFloorRefreshTimer);
+      _scheduleFloorRefreshTimer = setTimeout(() => {
+        const setupEl = document.getElementById('setup');
+        if (!setupEl || setupEl.style.display === 'none') return;
+        flushScheduleDOM();
+        renderScheduleDayList();
+      }, 300);
+    }
+    function isFloorSettingInput(el) {
+      if (!el || !el.id) return false;
+      return el.id === 'floorCount' || el.id === 'cut4Floor' ||
+        el.id.indexOf('mb_floor_') === 0 || el.id.indexOf('mb_cut4floor_') === 0;
+    }
+    document.addEventListener('input', (e) => { if (isFloorSettingInput(e.target)) refreshScheduleFloorsSoon(); }, true);
+    document.addEventListener('change', (e) => { if (isFloorSettingInput(e.target)) refreshScheduleFloorsSoon(); }, true);
+
     function renderScheduleDayList() {
       const container = document.getElementById('scheduleDayList');
       if (scheduleData.length === 0) {
@@ -7668,13 +7975,9 @@
       // 画面には「５」と見えているのに読み取ると空なので、再描画のたびに1階へ戻っていた。
       // プルダウンなら全角の入る余地が原理的に無くなり、その現場に存在しない階も選べなくなる。
       //
-      // 選択肢の上限は、登録されている全号棟のうち一番高い階数に合わせる。
+      // 選択肢の上限は、全号棟のうち一番高い「最上階」に合わせる（scheduleMaxFloor）。
       const scheduleFloorOptions = (selected) => {
-        let max = 1;
-        buildings.forEach(b => {
-          const n = parseInt(toHankaku(String((b.setup && b.setup.floorCount) || ''))) || 0;
-          if (n > max) max = n;
-        });
+        let max = scheduleMaxFloor();
         const sel = parseInt(selected) || 1;
         // 階数を減らす前に設定した値が残っている場合でも、その値を消さずに選べるようにしておく
         if (sel > max) max = sel;
