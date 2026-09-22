@@ -536,7 +536,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-21-c';
+    const APP_BUILD = '2026-09-21-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -7889,40 +7889,52 @@
     // 【4階カットの分を足す（Session 36）】
     // 4階をカットすると、4を飛ばして1つ上に伸びる（階数8なら 1,2,3,5,6,7,8,9 階）。
     // 階数の数字だけを見ると最上階（9階）が選べなかった。
-    function scheduleMaxFloor() {
+    //
+    // 【4階の有無（Session 36）】全棟が4階カットなら、4は存在しない階なので選択肢から外す。
+    // 4階カットする棟としない棟が混ざっていれば、しない棟に4階が実在するので残す。
+    // 返り値：{ max: 最上階, has4: 4階がどこかの棟に実在するか }
+    function scheduleFloorInfo() {
       const top = (count, cut4) => {
         const n = parseInt(toHankaku(String(count || ''))) || 0;
         return n > 0 ? (cut4 ? n + 1 : n) : 0;
       };
       let max = 1;
+      let has4 = false;
+      let seen = false;
+      const note = (t, cut4) => {
+        seen = true;
+        if (t > max) max = t;
+        if (t >= 4 && !cut4) has4 = true;
+      };
       const setupEl = document.getElementById('setup');
       const onSetup = setupEl && setupEl.style.display !== 'none';
       const multiArea = document.getElementById('multiBuildingArea');
       const multiOn = multiArea && multiArea.style.display !== 'none';
       if (onSetup && multiOn) {
         // 複数棟の入力：各棟の入力欄が号棟の全体を表す
-        let found = false;
         document.querySelectorAll('input[id^="mb_floor_"]').forEach((el) => {
           const i = el.id.split('_').pop();
           const cutEl = document.getElementById('mb_cut4floor_' + i);
-          const t = top(el.value, cutEl && cutEl.checked);
-          found = true;
-          if (t > max) max = t;
+          const cut4 = !!(cutEl && cutEl.checked);
+          note(top(el.value, cut4), cut4);
         });
-        if (found) return max;
+        if (seen) return { max: max, has4: has4 || max < 4 };
       }
       buildings.forEach((b, i) => {
-        let t;
+        let t, cut4;
         if (onSetup && !multiOn && i === currentBuildingIdx && document.getElementById('floorCount')) {
           // 1棟の入力：今編集している号棟は入力欄の値、ほかの号棟は登録済みの値
           const cutEl = document.getElementById('cut4Floor');
-          t = top(document.getElementById('floorCount').value, cutEl && cutEl.checked);
+          cut4 = !!(cutEl && cutEl.checked);
+          t = top(document.getElementById('floorCount').value, cut4);
         } else {
-          t = top(b.setup && b.setup.floorCount, b.setup && b.setup.cut4Floor);
+          cut4 = !!(b.setup && b.setup.cut4Floor);
+          t = top(b.setup && b.setup.floorCount, cut4);
         }
-        if (t > max) max = t;
+        note(t, cut4);
       });
-      return max;
+      // 4階建て未満の現場では4がそもそも選択肢に出ないので、has4 の判定は関係ない
+      return { max: max, has4: has4 || max < 4 };
     }
 
     // 設定画面で階数・4階カットを変えたら、スケジュールの「階」の選択肢をその場で作り直す。
@@ -7975,14 +7987,17 @@
       // 画面には「５」と見えているのに読み取ると空なので、再描画のたびに1階へ戻っていた。
       // プルダウンなら全角の入る余地が原理的に無くなり、その現場に存在しない階も選べなくなる。
       //
-      // 選択肢の上限は、全号棟のうち一番高い「最上階」に合わせる（scheduleMaxFloor）。
+      // 選択肢の上限は、全号棟のうち一番高い「最上階」に合わせる（scheduleFloorInfo）。
       const scheduleFloorOptions = (selected) => {
-        let max = scheduleMaxFloor();
+        const info = scheduleFloorInfo();
+        let max = info.max;
         const sel = parseInt(selected) || 1;
         // 階数を減らす前に設定した値が残っている場合でも、その値を消さずに選べるようにしておく
         if (sel > max) max = sel;
         let html = '';
         for (let f = 1; f <= max; f++) {
+          // 全棟が4階カットなら4を出さない。ただし、すでに4が設定されていれば消さずに残す
+          if (f === 4 && !info.has4 && sel !== 4) continue;
           html += '<option value="' + f + '"' + (f === sel ? ' selected' : '') + '>' + f + '</option>';
         }
         return html;
