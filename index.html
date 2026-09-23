@@ -541,7 +541,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-f';
+    const APP_BUILD = '2026-09-23-g';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2570,6 +2570,18 @@
       });
     };
 
+    // 本体を1枚取り出すが、控えには残さない（ZIP 用）。控えにあればそれを使う。
+    window.loadPhotoDataNoCache = function(photoId) {
+      if (window._photoDataCache[photoId]) return Promise.resolve(window._photoDataCache[photoId]);
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      return getDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId)).then((snap) => {
+        if (!snap.exists()) throw new Error('写真が見つかりません（すでに削除された可能性があります）');
+        const data = (snap.data() || {}).data || '';
+        if (!data) throw new Error('写真の中身が空です');
+        return data;
+      });
+    };
+
     // 1枚保存する。
     // 【書く順番】本体 → 覚え書き の順。逆にすると、途中で切れたときに
     // 「一覧には出るが開けない写真」ができる。この順なら、切れても
@@ -3603,6 +3615,7 @@
           <button id="jobListBtn" onclick="openJobListModal()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📋</span> 現場一覧</button>
           <button id="toSetupBtn" onclick="backToSetupConfirmed()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">⚙️</span> 一括設定画面へ</button>
           <button id="downloadDataBtn" onclick="downloadPropertyData()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">💾</span> 物件データをダウンロード</button>
+          <button id="photoZipBtn" onclick="openPhotoZip()" style="display:none;flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:rgba(255,255,255,0.55);color:#1a1a1a;border:1px solid rgba(0,0,0,0.15);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">📦</span> 写真をZIPで保存</button>
           <button id="leaveJobBtn" onclick="confirmLeaveJob()" style="flex:1;min-width:120px;font-size:15px;padding:9px 10px;background:#336699;color:white;font-weight:bold;border:1px solid rgba(255,255,255,0.2);border-bottom:3px solid #ff8c42;border-radius:6px;cursor:pointer;"><span style="font-size:20px;">🚪</span> この現場から退場</button>
         </div>
       </div>
@@ -3938,6 +3951,15 @@
         <button onclick="closeFuryoPrePrint()">やめる</button>
         <button id="furyoPrePrintGo" onclick="goFuryoPrePrint()" style="background:#ff8c42;color:#fff;border-color:#ff8c42;font-weight:bold;">この内容で印刷</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 写真の ZIP 保存（親機・写真モード ON のときだけ） -->
+  <div id="photoZipModal" class="modal">
+    <div class="modal-box" style="max-width:460px;">
+      <h2>写真をZIPで保存</h2>
+      <div id="photoZipBody" style="text-align:left;font-size:13px;"></div>
+      <div id="photoZipButtons" class="modal-buttons" style="margin-top:14px;"></div>
     </div>
   </div>
 
@@ -4862,6 +4884,7 @@
       if (toSetupBtn) toSetupBtn.style.display = isAdmin ? 'inline-block' : 'none';
       const downloadDataBtn = document.getElementById('downloadDataBtn');
       if (downloadDataBtn) downloadDataBtn.style.display = isAdmin ? 'inline-block' : 'none';
+      updatePhotoZipBtn();
       const actionButtonsWrap = document.getElementById('actionButtonsWrap');
       // 「この現場から退場」「スケジュール確認」は全員が使うため、行自体は常に表示し、
       // 個々のボタンの表示・非表示は下でそれぞれ制御する
@@ -10227,6 +10250,8 @@
       if (!row || !btn) return;
       const isOpen = row.style.display !== 'none';
       row.style.display = isOpen ? 'none' : 'flex';
+      // 写真モードは旗を読んだあとに決まるので、開くたびに出し直す
+      if (!isOpen) updatePhotoZipBtn();
       btn.textContent = isOpen ? '▼ 操作メニューを開く' : '▲ 操作メニューを閉じる';
     }
 
@@ -10673,6 +10698,354 @@ ${bodyHtml}
           setTimeout(() => win.print(), imgs.length ? 300 : 500);
         });
       });
+    }
+
+    // ===== 写真の ZIP 保存（Session 39） =====
+    // 物件の写真をすべて（載せる印の有無に関係なく）ZIP にまとめて落とす。保管が目的。
+    // ZIP の中は2つのフォルダ：
+    //   部屋番号入り/ … 右下に「物件名 号棟 部屋 写真n」を焼き込んだもの
+    //   元の写真/     … 保存済みの写真そのまま（作り直さないので画質は変わらない）
+    // 【両方入れる理由】焼き込みが要るかどうかは台帳を作る業者によって違う。
+    // どちらを使うかを受け取った側で決められる。不良写真は物件あたりの枚数が少ないので、
+    // 大きさ（元の約2.2倍）と時間（1枚0.1秒前後）の上乗せは気にならない。
+    // 【焼き込む理由】住戸内の不良写真は個人情報を写さないように撮るので、どの部屋も
+    // ほとんど同じに見える。アプリの外に出たあとは、ファイル名が変わると部屋を戻せない。
+    // ファイル名は両方のフォルダで同じ（mcPhotoFileName。番号は印刷と同じ撮影順）。
+
+    // 物件の写真ボタンは、親機で、写真モードが ON のときだけ出す
+    function updatePhotoZipBtn() {
+      const btn = document.getElementById('photoZipBtn');
+      if (btn) btn.style.display = (window.isJobOwner && window.photoMode) ? 'inline-block' : 'none';
+    }
+
+    // --- 無圧縮（store）の ZIP を組み立てる ---
+    // 写真は JPEG で圧縮済みなので、ZIP 側で縮める意味が無い。
+    // 【ファイル名は UTF-8】日本語の名前が化けないよう、汎用ビット11（UTF-8 の印）を立てる。
+    const MC_CRC_TABLE = (() => {
+      const t = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[n] = c >>> 0;
+      }
+      return t;
+    })();
+    function mcCrc32(bytes) {
+      let c = 0xFFFFFFFF;
+      for (let i = 0; i < bytes.length; i++) c = MC_CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+      return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+    function mcZipBuilder() {
+      const parts = [];
+      const central = [];
+      let offset = 0;
+      const now = new Date();
+      const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+      const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+      const enc = new TextEncoder();
+      function add(name, data, isDir) {
+        const nameBytes = enc.encode(name);
+        data = data || new Uint8Array(0);
+        const crc = isDir ? 0 : mcCrc32(data);
+        const lh = new DataView(new ArrayBuffer(30));
+        lh.setUint32(0, 0x04034b50, true);
+        lh.setUint16(4, 20, true);
+        lh.setUint16(6, 0x0800, true);          // UTF-8
+        lh.setUint16(8, 0, true);               // store
+        lh.setUint16(10, dosTime, true);
+        lh.setUint16(12, dosDate, true);
+        lh.setUint32(14, crc, true);
+        lh.setUint32(18, data.length, true);
+        lh.setUint32(22, data.length, true);
+        lh.setUint16(26, nameBytes.length, true);
+        lh.setUint16(28, 0, true);
+        parts.push(new Uint8Array(lh.buffer), nameBytes, data);
+        const ch = new DataView(new ArrayBuffer(46));
+        ch.setUint32(0, 0x02014b50, true);
+        ch.setUint16(4, 20, true);
+        ch.setUint16(6, 20, true);
+        ch.setUint16(8, 0x0800, true);
+        ch.setUint16(10, 0, true);
+        ch.setUint16(12, dosTime, true);
+        ch.setUint16(14, dosDate, true);
+        ch.setUint32(16, crc, true);
+        ch.setUint32(20, data.length, true);
+        ch.setUint32(24, data.length, true);
+        ch.setUint16(28, nameBytes.length, true);
+        ch.setUint16(30, 0, true);
+        ch.setUint16(32, 0, true);
+        ch.setUint16(34, 0, true);
+        ch.setUint16(36, 0, true);
+        ch.setUint32(38, isDir ? 0x10 : 0, true);
+        ch.setUint32(42, offset, true);
+        central.push(new Uint8Array(ch.buffer), nameBytes);
+        offset += 30 + nameBytes.length + data.length;
+      }
+      function finish() {
+        let size = 0;
+        central.forEach((c) => { size += c.length; });
+        const count = central.length / 2;
+        const end = new DataView(new ArrayBuffer(22));
+        end.setUint32(0, 0x06054b50, true);
+        end.setUint16(8, count, true);
+        end.setUint16(10, count, true);
+        end.setUint32(12, size, true);
+        end.setUint32(16, offset, true);
+        return new Blob(parts.concat(central, [new Uint8Array(end.buffer)]), { type: 'application/zip' });
+      }
+      return { add: add, finish: finish };
+    }
+
+    function mcDataUrlToBytes(dataUrl) {
+      const bin = atob(dataUrl.split(',')[1] || '');
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return buf;
+    }
+
+    // 右下に半透明の帯を敷いて、白い文字を入れる。文字は長辺の3%前後。
+    // 写真の幅に収まらなければ、収まるまで文字を小さくする。
+    function mcStampPhoto(dataUrl, text) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const w = img.naturalWidth, h = img.naturalHeight;
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            const c = cv.getContext('2d');
+            c.drawImage(img, 0, 0, w, h);
+            let fs = Math.max(12, Math.round(Math.max(w, h) * 0.03));
+            const family = '"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
+            let pad, tw;
+            for (;;) {
+              c.font = 'bold ' + fs + 'px ' + family;
+              pad = Math.round(fs * 0.4);
+              tw = c.measureText(text).width;
+              if (tw + pad * 2 <= w || fs <= 10) break;
+              fs = Math.floor(fs * 0.9);
+            }
+            const bw = Math.min(w, Math.ceil(tw + pad * 2));
+            const bh = Math.ceil(fs + pad * 2);
+            c.fillStyle = 'rgba(0,0,0,0.55)';
+            c.fillRect(w - bw, h - bh, bw, bh);
+            c.fillStyle = '#fff';
+            c.textBaseline = 'middle';
+            c.fillText(text, w - bw + pad, h - bh / 2);
+            const out = cv.toDataURL('image/jpeg', 0.92);
+            resolve(mcDataUrlToBytes(out));
+          } catch (e) { reject(e); }
+        };
+        img.onerror = () => reject(new Error('写真を読み込めませんでした'));
+        img.src = dataUrl;
+      });
+    }
+
+    // ZIP に入れる順番に並べる。号棟順 → 部屋番号順 → 撮影順。
+    // 今の号棟の並びに無い写真（号棟を消した後の写真など）は最後に回す。
+    function mcZipEntries(byKey) {
+      const order = {};
+      buildings.forEach((b, i) => { order[String(b.id)] = i; });
+      const rooms = [];
+      Object.keys(byKey).forEach((k) => {
+        const list = byKey[k];
+        if (!list.length) return;
+        const bid = list[0].buildingId, room = list[0].room;
+        rooms.push({ bid: bid, room: room, list: list,
+          bOrder: (bid in order) ? order[bid] : 9999 });
+      });
+      rooms.sort((a, b) => (a.bOrder - b.bOrder) ||
+        ((parseInt(a.room, 10) || 0) - (parseInt(b.room, 10) || 0)) ||
+        (a.room < b.room ? -1 : a.room > b.room ? 1 : 0));
+      const entries = [];
+      rooms.forEach((r) => {
+        const idx = order[r.bid];
+        const b = buildings[idx];
+        const label = b ? ((b.name && b.name.trim()) ? b.name.trim() : ('号棟' + (idx + 1))) : '';
+        r.list.forEach((p, i) => {
+          entries.push({ photo: p, n: i + 1, fileName: mcPhotoFileName(r.bid, r.room, i + 1),
+            label: label, room: r.room });
+        });
+      });
+      return entries;
+    }
+
+    // --- 画面 ---
+    let photoZip = null;   // { entries, cancel, doneIds, busy }
+
+    function photoZipSet(html, buttons) {
+      document.getElementById('photoZipBody').innerHTML = html;
+      document.getElementById('photoZipButtons').innerHTML = buttons || '';
+    }
+    const PZ_BTN_GREY = 'background:#f5f5f5;border:1px solid #ccc;color:#555;';
+    const PZ_BTN_MAIN = 'background:#ff8c42;color:#fff;border-color:#ff8c42;font-weight:bold;';
+
+    function openPhotoZip() {
+      if (!window.isJobOwner) { window.showAppAlert('この操作は現場を開始した人（親機）のみ行えます。'); return; }
+      if (!window.photoMode) { window.showAppAlert('写真共有モードが OFF です。'); return; }
+      snapshotCurrentBuilding();
+      const st = { entries: [], cancel: false, doneIds: [], busy: false };
+      photoZip = st;
+      photoZipSet('<p style="color:#888;">読み込み中…</p>',
+        '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">やめる</button>');
+      document.getElementById('photoZipModal').classList.add('active');
+      window.loadJobPhotoMeta().then((byKey) => {
+        if (photoZip !== st) return;
+        st.entries = mcZipEntries(byKey);
+        if (!st.entries.length) {
+          photoZipSet('<p>この物件には写真がありません。</p>',
+            '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">閉じる</button>');
+          return;
+        }
+        // 覚え書きの bytes は base64 の長さ（本体＋見本）。実際の大きさはその3/4ほど。
+        // ZIP は「元の写真」と、少し大きめに書き出す「部屋番号入り」で、元の約2.2倍。
+        let b64 = 0;
+        st.entries.forEach((e) => { b64 += e.photo.bytes || 0; });
+        const mb = Math.max(0.1, Math.round(b64 * 0.75 * 2.2 / 1024 / 1024 * 10) / 10);
+        photoZipSet(
+          '<p>この物件の写真 <b>' + st.entries.length + '枚</b> を ZIP にまとめます（およそ ' + mb + 'MB）。</p>' +
+          '<p style="font-size:12px;color:#666;line-height:1.7;">ZIP の中は2つのフォルダに分かれています。<br>' +
+          '・<b>部屋番号入り</b> … 写真の右下に物件名と部屋番号が入ったもの<br>' +
+          '・<b>元の写真</b> … 文字の入っていないもの<br>' +
+          '使わない方は削除してかまいません。</p>',
+          '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">やめる</button>' +
+          '<button onclick="runPhotoZip()" style="' + PZ_BTN_MAIN + '">ZIPを作る</button>');
+      }).catch((e) => {
+        if (photoZip !== st) return;
+        photoZipSet('<p style="color:#c00;">写真の情報を読めませんでした（' + (e && e.message) + '）</p>',
+          '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">閉じる</button>');
+      });
+    }
+
+    function closePhotoZip() {
+      const st = photoZip;
+      if (st && st.busy) { st.cancel = true; return; }
+      document.getElementById('photoZipModal').classList.remove('active');
+      photoZip = null;
+    }
+
+    async function runPhotoZip() {
+      const st = photoZip;
+      if (!st || st.busy) return;
+      st.busy = true;
+      st.cancel = false;
+      const total = st.entries.length;
+      const progress = (n) => photoZipSet(
+        '<p>写真を読み込んでいます ' + n + ' / ' + total + '</p>',
+        '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">やめる</button>');
+      progress(0);
+
+      const propName = (getProperty().name || '物件').trim();
+      const results = new Array(total);   // { orig, stamped } または null
+      let next = 0, done = 0;
+      const worker = async () => {
+        while (!st.cancel && next < total) {
+          const i = next++;
+          const e = st.entries[i];
+          try {
+            // 【控えに残さない】100MB 級の物件だと、画面を閉じるまで PC のメモリに居座るため
+            const dataUrl = await window.loadPhotoDataNoCache(e.photo.id);
+            const text = [propName, e.label, e.room, '写真' + e.n].filter(Boolean).join(' ');
+            results[i] = { orig: mcDataUrlToBytes(dataUrl), stamped: await mcStampPhoto(dataUrl, text) };
+          } catch (err) {
+            results[i] = null;
+            dlog('ZIP / 写真を入れられない / ' + e.photo.id + ' / ' + (err && err.message));
+          }
+          done++;
+          if (!st.cancel && photoZip === st) progress(done);
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+
+      if (st.cancel || photoZip !== st) {
+        st.busy = false;
+        if (photoZip === st) {
+          photoZipSet('<p>ZIP の作成をやめました。</p>',
+            '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">閉じる</button>');
+        }
+        return;
+      }
+
+      const zip = mcZipBuilder();
+      const DIR_S = '部屋番号入り/', DIR_O = '元の写真/';
+      zip.add(DIR_S, null, true);
+      st.entries.forEach((e, i) => { if (results[i]) zip.add(DIR_S + e.fileName, results[i].stamped); });
+      zip.add(DIR_O, null, true);
+      st.entries.forEach((e, i) => { if (results[i]) zip.add(DIR_O + e.fileName, results[i].orig); });
+      const blob = zip.finish();
+
+      const failed = [];
+      st.doneIds = [];
+      st.entries.forEach((e, i) => {
+        if (results[i]) st.doneIds.push({ id: e.photo.id, bytes: e.photo.bytes });
+        else failed.push(e.fileName);
+      });
+
+      const now = new Date();
+      const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      const zipName = propName.replace(/[\/\\:*?"<>|]/g, '_').replace(/\s+/g, '') + '_写真_' + dateStr + '.zip';
+      if (st.doneIds.length) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = zipName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        if (window.addLog) window.addLog('写真ZIP', { room: '', detail: st.doneIds.length + '枚をZIPで保存' });
+      }
+      st.busy = false;
+      dlog('ZIP / ' + zipName + ' / ' + st.doneIds.length + '枚 / 失敗 ' + failed.length + ' / ' + Math.round(blob.size / 1024) + 'KB');
+
+      const failHtml = failed.length
+        ? '<p style="color:#c00;font-size:12px;">次の写真は読み込めず、ZIP に入っていません：<br>' + failed.join('<br>') + '</p>'
+        : '';
+      if (!st.doneIds.length) {
+        photoZipSet('<p style="color:#c00;">写真を1枚も読み込めませんでした。通信状態を確かめて、もう一度お試しください。</p>' + failHtml,
+          '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">閉じる</button>');
+        return;
+      }
+      // 【消すのは二段階】ブラウザは ZIP が実際に保存されたかをアプリに返さない
+      // （保存の画面でキャンセルされても区別がつかない）。落とした＝消してよい、にはできない。
+      photoZipSet(
+        '<p>「' + zipName + '」をダウンロードしました（' + st.doneIds.length + '枚）。</p>' + failHtml +
+        '<p style="font-size:12px;color:#444;line-height:1.7;margin-top:10px;">ZIP は保存できましたか？<br>' +
+        '保存できていれば、保存容量の節約のため、この物件の写真データを削除できます。<br>' +
+        '<b>削除すると元に戻せません。</b>不良一覧の印刷にも写真が出なくなるので、台帳を作り終えてから削除してください。</p>',
+        '<button onclick="closePhotoZip()" style="' + PZ_BTN_MAIN + '">削除しないで閉じる</button>' +
+        '<button onclick="deletePhotosAfterZip()" style="background:#fff;border:1px solid #c88;color:#c00;">写真データを削除する</button>');
+    }
+
+    // ZIP に入れた写真だけを消す（作っている間に子機が撮った写真は消さない）。
+    // 「（写真あり・内容未記入）」の不良テキストは残す。台帳を作り終えたあとなので、
+    // 不良そのものは事実として残すべき（1枚ずつ消して0枚になったときの取り消しとは違う）。
+    async function deletePhotosAfterZip() {
+      const st = photoZip;
+      if (!st || st.busy || !st.doneIds.length) return;
+      const n = st.doneIds.length;
+      const ok = await window.showAppConfirm(
+        'ZIP に入れた写真 ' + n + '枚を削除します。\n\n削除すると元に戻せません。ほかの端末からも見えなくなり、不良一覧の印刷にも出なくなります。',
+        { danger: true, okLabel: '削除する' });
+      if (!ok || photoZip !== st) return;
+      st.busy = true;
+      let okCount = 0, ngCount = 0;
+      for (let i = 0; i < n; i++) {
+        photoZipSet('<p>削除しています ' + i + ' / ' + n + '</p>', '');
+        try {
+          await window.deletePhotoFromCloud(st.doneIds[i].id, st.doneIds[i].bytes);
+          okCount++;
+        } catch (e) {
+          ngCount++;
+          dlog('ZIP後の削除 / 失敗 / ' + st.doneIds[i].id + ' / ' + (e && e.message));
+        }
+      }
+      st.busy = false;
+      st.doneIds = [];
+      if (window.addLog) window.addLog('写真ZIP', { room: '', detail: 'ZIP保存後に写真を削除（' + okCount + '枚）' });
+      photoZipSet('<p>' + okCount + '枚削除しました。' +
+        (ngCount ? '<br><span style="color:#c00;">' + ngCount + '枚は削除できませんでした。</span>' : '') + '</p>',
+        '<button onclick="closePhotoZip()" style="' + PZ_BTN_GREY + '">閉じる</button>');
     }
 
     // 戻るボタン対策：履歴を一段追加
