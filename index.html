@@ -457,6 +457,7 @@
       getAggregateFromServer,
       collectionGroup,
       sum,
+      count,
       disableNetwork,
       enableNetwork
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
@@ -540,7 +541,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-c';
+    const APP_BUILD = '2026-09-23-d';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -1651,53 +1652,163 @@
       if (el && el.parentNode) el.parentNode.removeChild(el);
     }
 
-    // 1つの月を掃除する。その月に属する現場のサイン画像を1件ずつ消す。
-    // 消した件数を返す。
+    // 1つの月を掃除する。その月に最後に作業した現場の、サイン画像と写真を1件ずつ消す。
+    // 現場の記録そのもの（点検の状態・不良テキストなど）は消さない。
+    //
+    // 【会社の一致では引かない（2026-09-23 Session 38）】
+    // 1つの Firebase に会社は1社だけなので、ここにある現場はすべてこの会社のもの。
+    // 「会社が一致」で引くと、紐付いていない現場（自動の紐付けが通信断で落ちた現場、
+    // 紐付けを解除した現場）が掃除の目に入らず、サインも写真も残り続ける。
+    // 月だけで引けば紐付けに関係なく拾える。等しい条件1つなので索引も要らない。
+    // ルール側で、旗が指す会社のオーナーにだけ、この引き方と削除を許している。
+    //
+    // 【写真の消し方】覚え書き → 本体 の順に1枚ずつ（ふだんの削除と同じ向き）。
+    // そのあと、残った本体の件数だけをサーバーで数え、1件以上あるときだけ本体を読んで消す。
+    // 残るのは保存が途中で切れた本体（覚え書きの無い本体）だけで、めったに無い。
+    // 本体は1枚300KB前後あるので、最初から一覧で読むと重くなる。
+    //
+    // 【積算はここでは引かない】消したバイト数を返し、掃除の最後にまとめて扱う
+    // （runMonthlySignCleanup の終わりを参照）。
+    //
+    // 返すもの：{ deleted, failed, photoBytes }
+    //   deleted    … 消したサインと写真の件数（覚え書きの無い本体も含む）
+    //   photoBytes … 消した写真のバイト数（覚え書きの bytes。覚え書きの無い本体は本体の文字数）
     function cleanupOneMonth(companyId, month) {
       const q = query(
         collection(db, 'inspections'),
-        where('companyId', '==', companyId),
         where('lastWorkedMonth', '==', month)
       );
       return getDocs(q).then((snap) => {
         const jobIds = [];
         snap.forEach((d) => jobIds.push(d.id));
-        if (!jobIds.length) return { deleted: 0, failed: 0 };
+        if (!jobIds.length) return { deleted: 0, failed: 0, photoBytes: 0 };
+
+        let failed = 0;
+        // 覚え書きの一覧を読めなかった現場・覚え書きを消せなかった現場。
+        // ここでは「覚え書きの無い本体」を探さない。覚え書きが残っている本体まで
+        // 残りものと見なして消し、「一覧に出るのに開けない写真」を作ってしまうため。
+        const unsafeJobs = {};
 
         // 先に総数を数えてから消す。数を先に出さないと進み具合が出せない。
+        // 覚え書きは見本（5〜10KB）込みで読むことになるが、本体に比べれば軽い。
         return jobIds.reduce((chain, jobId) => chain.then((acc) => {
           return getDocs(collection(db, 'inspections', jobId, 'signs')).then((s) => {
-            const refs = [];
-            s.forEach((d) => refs.push(d.ref));
-            acc.push({ jobId: jobId, refs: refs });
-            return acc;
-          }).catch(() => acc);
-        }), Promise.resolve([])).then((buckets) => {
-          const total = buckets.reduce((n, b) => n + b.refs.length, 0);
-          if (!total) return { deleted: 0, failed: 0 };
+            s.forEach((d) => acc.push({ kind: 'sign', ref: d.ref }));
+          }).catch((e) => {
+            failed++;
+            dlog('掃除：サインの一覧を読めない / ' + jobId + ' / ' + (e && e.message));
+          }).then(() => {
+            return getDocs(collection(db, 'inspections', jobId, 'photoMeta'));
+          }).then((m) => {
+            if (!m) return;
+            m.forEach((d) => acc.push({
+              kind: 'photo',
+              jobId: jobId,
+              id: d.id,
+              bytes: Number((d.data() || {}).bytes || 0)
+            }));
+          }).catch((e) => {
+            failed++;
+            unsafeJobs[jobId] = true;
+            dlog('掃除：写真の覚え書きを読めない / ' + jobId + ' / ' + (e && e.message));
+          }).then(() => acc);
+        }), Promise.resolve([])).then((tasks) => {
+          let total = tasks.length;
           let done = 0;
-          let failed = 0;
-          showCleanupBar('データを整理しています（0 / ' + total + '）');
+          let photoBytes = 0;
+          const bar = () => showCleanupBar('データを整理しています（' + done + ' / ' + total + '）');
+          if (total) bar();
+
           // 1件ずつ順に消す。まとめて投げないのは、途中で切れたときに
           // 「どこまで終わったか」が端末の都合で変わらないようにするため。
-          const all = [];
-          buckets.forEach((b) => b.refs.forEach((r) => all.push(r)));
-          return all.reduce((chain, ref) => chain.then(() => {
-            return deleteDoc(ref).then(() => {
+          const runTasks = tasks.reduce((chain, t) => chain.then(() => {
+            let p;
+            if (t.kind === 'sign') {
+              p = deleteDoc(t.ref);
+            } else {
+              p = deleteDoc(doc(db, 'inspections', t.jobId, 'photoMeta', t.id))
+                .catch((e) => { unsafeJobs[t.jobId] = true; throw e; })
+                .then(() => deleteDoc(doc(db, 'inspections', t.jobId, 'photos', t.id)))
+                .then(() => { photoBytes += t.bytes; });
+            }
+            return p.then(() => {
               done++;
-              showCleanupBar('データを整理しています（' + done + ' / ' + total + '）');
+              bar();
             }).catch((e) => {
               // 1件の失敗で全体を止めない。ただし失敗が1件でもあれば、
               // その月は「済み」にしない（次回もう一度なぞる）。
               failed++;
-              dlog('サイン掃除エラー / ' + e.message);
+              dlog('掃除エラー / ' + t.kind + ' / ' + (e && e.message));
             });
-          }), Promise.resolve()).then(() => ({ deleted: done, failed: failed }));
+          }), Promise.resolve());
+
+          // 覚え書きの無い本体を拾う。件数だけを先に数える（本体をダウンロードしない）。
+          // 【撮ったばかりの本体は残す】本体 → 覚え書き の順で書くので、誰かがちょうど今
+          // この現場で撮っていると、覚え書きが付く直前の本体がここに見えることがある。
+          // 写真IDの末尾は撮影時刻（ミリ秒＋乱数3桁）なので、10分以内のものは触らない。
+          const ORPHAN_GRACE_MS = 10 * 60 * 1000;
+          const takenMsFromId = (id) => {
+            const tail = String(id).split('_').pop() || '';
+            const ms = Number(tail.slice(0, -3));
+            return isFinite(ms) ? ms : 0;
+          };
+          const sweepOrphans = () => jobIds.reduce((chain, jobId) => chain.then(() => {
+            if (unsafeJobs[jobId]) return;
+            const ref = collection(db, 'inspections', jobId, 'photos');
+            return getAggregateFromServer(ref, { n: count() }).then((agg) => {
+              const n = Number(agg.data().n || 0);
+              if (!n) return;
+              dlog('掃除：覚え書きの無い本体 / ' + jobId + ' / ' + n + '件');
+              total += n;
+              bar();
+              return getDocs(ref).then((ps) => {
+                const list = [];
+                ps.forEach((d) => {
+                  if (Date.now() - takenMsFromId(d.id) < ORPHAN_GRACE_MS) {
+                    total--;
+                    dlog('掃除：撮ったばかりの本体なので残す / ' + d.id);
+                    return;
+                  }
+                  list.push({ ref: d.ref, len: String((d.data() || {}).data || '').length });
+                });
+                bar();
+                return list.reduce((c2, o) => c2.then(() => {
+                  return deleteDoc(o.ref).then(() => {
+                    photoBytes += o.len;
+                    done++;
+                    bar();
+                  }).catch((e) => {
+                    failed++;
+                    dlog('掃除エラー / 残りの本体 / ' + (e && e.message));
+                  });
+                }), Promise.resolve());
+              });
+            }).catch((e) => {
+              failed++;
+              dlog('掃除：本体の件数を数えられない / ' + jobId + ' / ' + (e && e.message));
+            });
+          }), Promise.resolve());
+
+          return runTasks.then(sweepOrphans).then(() => ({
+            deleted: done, failed: failed, photoBytes: photoBytes
+          }));
         });
       });
     }
 
     // 掃除の入口。オーナーが会社の画面を開いたときに呼ぶ。
+    // 名前は「Sign」のままだが、写真も同じ掃除で消す（2026-09-23 Session 38）。
+    // 会社の記録の lastSignCleanupMonth も、サインと写真の両方の「済み」を表す。
+    // 名前を変えると、すでに書かれている印の読み替えが要るため変えていない。
+    //
+    // 【積算の扱い】写真を消したら、最後に数え直し（recountPhotoUsage）を1回かける。
+    // 1枚ずつ引かない理由：会社の画面を開くと、画面側の数え直しとこの掃除が同時に走る。
+    // 1枚ずつ引くと、画面側が「消えたあとの合計」を書いた上にこちらの引き算が重なり、
+    // 実際より少なく見えることがある。最後に数え直せば、その時点の本当の値で上書きされる。
+    // 数え直せないとき（索引が無い・作成中）だけ、消した分をまとめて1回引く。
+    // このときは画面側の数え直しも失敗しているので、重ねて引くことは起きない。
+    // それ以外の失敗（通信など）では引かない（多い側にずれるだけで、次の数え直しで直る）。
+    //
     // 【この回で1か月だけ】中身のあった月を1つ片付けたら、そこで止めて次回に回す。
     // 中身の無い月は続けて飛ばす（問い合わせ1回で済むので溜め込まない）。
     // 【遡る上限】初めて走らせる会社では、24か月より前は対象にしない。
@@ -1705,6 +1816,7 @@
     window.runMonthlySignCleanup = function(companyId) {
       if (!companyId || !window.currentUser || window._signCleanupRunning) return Promise.resolve();
       window._signCleanupRunning = true;
+      let photoBytesRemoved = 0;
 
       const latest = addMonths(monthOfToday(), -3); // ここまでが掃除の対象（今月・先月・先々月は残す）
 
@@ -1736,7 +1848,9 @@
           // 何十回か問い合わせが続くことがあり、無表示だと「動いていない」ように見えるため。
           showCleanupBar('過去のデータを確認しています（' + target + '）');
           return cleanupOneMonth(companyId, target).then((res) => {
-            dlog('掃除：' + target + ' / 消した=' + res.deleted + ' / 失敗=' + res.failed);
+            photoBytesRemoved += res.photoBytes || 0;
+            dlog('掃除：' + target + ' / 消した=' + res.deleted + ' / 失敗=' + res.failed +
+              ' / 写真=' + Math.round((res.photoBytes || 0) / 1024) + 'KB');
             // 1件でも消せなかった月は「済み」にしない（次回もう一度なぞる）
             if (res.failed > 0) return finish();
             reached = target;
@@ -1750,10 +1864,34 @@
       }).catch((e) => {
         dlog('サイン掃除の中断 / ' + e.message);
       }).then(() => {
+        // 途中で中断しても、それまでに消した写真の分は片付ける
+        if (photoBytesRemoved > 0) return settlePhotoUsageAfterCleanup(photoBytesRemoved);
+      }).then(() => {
         hideCleanupBar();
         window._signCleanupRunning = false;
       });
     };
+
+    // 掃除で写真を消したあとの積算の後始末（上の【積算の扱い】を参照）
+    function settlePhotoUsageAfterCleanup(bytes) {
+      showCleanupBar('写真の使用量を数え直しています');
+      return window.recountPhotoUsage().catch((e) => {
+        const structural = window.isPhotoIndexMissing(e) || /not ready yet/.test((e && e.message) || '');
+        if (!structural) {
+          dlog('掃除後の数え直しに失敗（引かずにおく） / ' + (e && e.message));
+          return;
+        }
+        dlog('掃除後の数え直しができないので、まとめて引く / ' + Math.round(bytes / 1024) + 'KB');
+        return window.addPhotoUsage(-bytes);
+      }).then(() => {
+        // 会社の画面が開いたままなら、使用量の欄を描き直す（掃除の前の値が出ているため）
+        if (document.getElementById('photoUsageBox') && typeof window.renderPhotoUsageBox === 'function') {
+          window.renderPhotoUsageBox();
+        }
+      }).catch((e) => {
+        dlog('掃除後の使用量の後始末でエラー / ' + (e && e.message));
+      });
+    }
 
     // 保存先: companies/{companyId}, companies/{companyId}/members/{uid}
     // 「会社」は現場をまたいで人を束ねるための入れ物。
@@ -2402,7 +2540,7 @@
     // 1枚保存する。
     // 【書く順番】本体 → 覚え書き の順。逆にすると、途中で切れたときに
     // 「一覧には出るが開けない写真」ができる。この順なら、切れても
-    // 「どこにも出ない本体」が残るだけで、掃除のときに拾える（まとまり4）。
+    // 「どこにも出ない本体」が残るだけで、掃除のときに拾える（cleanupOneMonth）。
     window.savePhotoToCloud = function(buildingId, room, dataUrl, thumbUrl) {
       if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
       const photoId = window.mcPhotoKey(buildingId, room) + '_' +
@@ -2430,12 +2568,22 @@
       }).then(() => {
         window._photoDataCache[photoId] = dataUrl;
         dlog('写真保存OK / room=' + room + ' / ' + Math.round(bytes / 1024) + 'KB');
+        // 【現場の「最後に作業した月」を進める】写真を撮るのは作業なので、日付を今日にする。
+        // 不良テキストが既にある部屋に写真を足しただけだと、点検の保存が走らず月が進まない。
+        // 月が古いまま（例：6月の現場に9月に写真を足す）だと、その月はもう掃除済みなので、
+        // 写真が掃除の目に入らず残り続ける。骨組みの項目ではないので子機でも書ける。
+        // 失敗しても写真は保存できているので、画面には出さない。
+        const jobId = window.currentJobId;
+        window._jobOwnerReady.then(() => setDoc(doc(db, 'inspections', jobId),
+          workedNowFields(), { merge: true })).catch((e) => {
+          dlog('写真保存後の作業日の更新に失敗 / ' + (e && e.message));
+        });
         return photoId;
       }).catch((e) => {
         // 【引き戻す場合と、引き戻さない場合】
         // 本体を書く前に失敗したなら、容量は使っていないので引き戻す。
         // 本体を書いたあと（覚え書きで失敗）なら、その本体は場所を取っているので引き戻さない。
-        // 残った本体は掃除が拾い、そのときに引かれる。
+        // 残った本体は掃除が拾う。積算の余分は、次の数え直しで消える（数え直しは覚え書きしか数えないため）。
         if (bodyWritten) throw e;
         return window.addPhotoUsage(-bytes).then(() => { throw e; });
       });
