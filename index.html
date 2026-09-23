@@ -540,7 +540,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-a';
+    const APP_BUILD = '2026-09-23-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2251,11 +2251,21 @@
     window.MC_PHOTO_STOP   = 0.9;               // ここで写真の保存だけ止める
 
     // 積算を読む。読めなければ null（「0」とは区別する。0だと空だと決めつけてしまう）。
-    window.loadPhotoUsage = function() {
+    // 手元の控え（_photoUsageCache）は、部屋を次々に開くたびに読み直さないためのもの。
+    // 自分の端末で足し引きした分はその場で控えにも反映するので、3分の間でも大きくはずれない。
+    window._photoUsageCache = { bytes: null, at: 0 };
+    window.MC_PHOTO_USAGE_TTL = 3 * 60 * 1000;
+
+    window.loadPhotoUsage = function(allowCache) {
       if (!window.currentUser) return Promise.resolve(null);
+      const c = window._photoUsageCache;
+      if (allowCache && c.bytes !== null && (Date.now() - c.at) < window.MC_PHOTO_USAGE_TTL) {
+        return Promise.resolve(c.bytes);
+      }
       return getDoc(doc(db, 'config', 'usage')).then((snap) => {
-        if (!snap.exists()) return 0;
-        return Number((snap.data() || {}).photoBytes || 0);
+        const bytes = snap.exists() ? Number((snap.data() || {}).photoBytes || 0) : 0;
+        window._photoUsageCache = { bytes: bytes, at: Date.now() };
+        return bytes;
       }).catch((e) => {
         dlog('容量の積算を読めない / ' + (e && e.message));
         return null;
@@ -2269,7 +2279,11 @@
       return setDoc(doc(db, 'config', 'usage'), {
         photoBytes: increment(delta),
         updatedAt: serverTimestamp()
-      }, { merge: true }).then(() => true).catch((e) => {
+      }, { merge: true }).then(() => {
+        const c = window._photoUsageCache;
+        if (c.bytes !== null) c.bytes = Math.max(0, c.bytes + delta);
+        return true;
+      }).catch((e) => {
         // 引き算がマイナスに突き抜ける場合はルールが弾く（少なく見せないための備え）。
         dlog('容量の積算を書けない / ' + delta + ' / ' + (e && e.message));
         return false;
@@ -2280,7 +2294,7 @@
     // （通信が無ければ、どのみち保存は失敗する。止める仕組みで現場を余分に止めない）。
     window.isPhotoStorageFull = function() {
       if (window.photoBillingEnabled) return Promise.resolve(false);
-      return window.loadPhotoUsage().then((bytes) => {
+      return window.loadPhotoUsage(true).then((bytes) => {
         if (bytes === null) return false;
         return bytes >= window.MC_PHOTO_BUDGET * window.MC_PHOTO_STOP;
       });
@@ -2303,6 +2317,7 @@
           photoBytes: total,
           updatedAt: serverTimestamp()
         }, { merge: true }).then(() => {
+          window._photoUsageCache = { bytes: total, at: Date.now() };
           dlog('容量の数え直し / ' + Math.round(total / 1024) + 'KB');
           return total;
         });
@@ -3683,6 +3698,7 @@
           <span id="furyoPhotoCount" style="font-size:12px;color:#888;">写真は<span id="furyoPhotoMax">5</span>枚まで</span>
         </div>
         <div id="furyoPhotoList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
+        <div id="furyoPhotoFullNote" style="display:none;margin-top:8px;padding:8px 10px;border-radius:6px;background:#fff4f4;border:1px solid #e0b4b4;font-size:12px;color:#a33;">容量がいっぱいのため写真は保存されません。</div>
         <input type="file" id="furyoPhotoInput" accept="image/*" capture="environment" style="display:none;" onchange="onFuryoPhotoPicked(this)">
         <button id="furyoPhotoBtn" type="button" onclick="startFuryoPhotoCapture()" style="width:100%;margin-top:8px;">📷 写真を撮る</button>
         <div style="font-size:11px;color:#888;line-height:1.7;margin-top:8px;">
@@ -7081,6 +7097,8 @@
     let furyoPhotoRoom = null;        // 今の写真の欄が扱っている部屋
     let furyoPhotoBuildingId = null;  // 同じく号棟ID
     let furyoPhotoList = [];          // 覚え書きの一覧（撮影順）
+    let photoStorageFull = false;     // 容量が9割に届いていて、これ以上保存できない状態か
+    let furyoPhotoLoaded = false;     // 覚え書きを読み終えたか（読み込み中の表示を消さないため）
     let pendingPhoto = null;          // 撮ったが、まだ保存していない1枚
 
     // 不良モーダルを開いたときに、写真の欄を用意する。
@@ -7089,6 +7107,10 @@
       const section = document.getElementById('furyoPhotoSection');
       if (!section) return;
       pendingPhoto = null;
+      photoStorageFull = false;
+      furyoPhotoLoaded = false;
+      const fullNote = document.getElementById('furyoPhotoFullNote');
+      if (fullNote) fullNote.style.display = 'none';
       if (!window.photoMode) {
         section.style.display = 'none';
         furyoPhotoRoom = null;
@@ -7109,16 +7131,30 @@
       document.getElementById('furyoPhotoBtn').disabled = true;
 
       if (!window.loadRoomPhotoMeta) { section.style.display = 'none'; return; }
+
+      // 容量の見張り。読み終わるまでは撮れる側のまま置く（読めないときも同じ）。
+      // ここで止まるのは写真だけで、点検の入力には触れない。
+      if (window.isPhotoStorageFull) {
+        const roomAtCheck = cell.dataset.room;
+        window.isPhotoStorageFull().then((full) => {
+          if (furyoPhotoRoom !== roomAtCheck) return;
+          photoStorageFull = !!full;
+          // 覚え書きより先に返ってきたときは並べ直さない（「読み込み中…」を消さないため）。
+          if (furyoPhotoLoaded) renderFuryoPhotos();
+        }).catch(() => {});
+      }
+
       window.loadRoomPhotoMeta(bid, cell.dataset.room).then((list) => {
         // 読んでいるあいだに別の部屋を開いていたら捨てる
         if (furyoPhotoRoom !== cell.dataset.room) return;
         furyoPhotoList = list;
+        furyoPhotoLoaded = true;
         renderFuryoPhotos();
       }).catch((e) => {
         if (furyoPhotoRoom !== cell.dataset.room) return;
         document.getElementById('furyoPhotoList').innerHTML =
           '<span style="font-size:12px;color:#c00;">写真を読み込めませんでした（' + (e && e.message) + '）</span>';
-        document.getElementById('furyoPhotoBtn').disabled = false;
+        document.getElementById('furyoPhotoBtn').disabled = photoStorageFull;
       });
     }
 
@@ -7160,12 +7196,27 @@
         listEl.innerHTML = html;
       }
 
+      const fullNote = document.getElementById('furyoPhotoFullNote');
+      if (fullNote) fullNote.style.display = photoStorageFull ? 'block' : 'none';
+
+      // 【いっぱいのときも消せる形にしておく理由】削除まで止めると、空ける手立てが無くなる。
+      // 印の付け外しも同じ。止めるのは新しく撮ることだけ。
+      if (photoStorageFull) {
+        btn.disabled = true;
+        btn.textContent = '容量がいっぱいです';
+        return;
+      }
+
       btn.disabled = n >= max;
       btn.textContent = n >= max ? '写真は' + max + '枚までです' : '📷 写真を撮る';
     }
 
     // 撮影ボタン。カメラを直接開く。
     function startFuryoPhotoCapture() {
+      if (photoStorageFull) {
+        window.showAppAlert('容量がいっぱいのため写真は保存されません。\n\n点検の入力はこれまでどおり続けられます。');
+        return;
+      }
       if (furyoPhotoList.length >= window.MC_PHOTO_MAX) {
         window.showAppAlert('写真は' + window.MC_PHOTO_MAX + '枚までです。入れ替えたい場合は、先に不要な写真を × で削除してください。');
         return;
