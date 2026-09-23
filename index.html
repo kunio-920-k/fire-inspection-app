@@ -541,7 +541,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-d';
+    const APP_BUILD = '2026-09-23-e';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2524,6 +2524,39 @@
       });
     };
 
+    // 現場まるごとの覚え書きを1回で読み、部屋ごと（号棟ID_部屋番号）に撮影順で束ねる。
+    // 不良一覧テキストの枚数と、印刷の前の画面・印刷で使う。本体は読まない。
+    // 見本（thumb）も入っているので、印刷の前の画面のサムネイルもこれだけで出せる。
+    // 返り値：{ '号棟ID_部屋番号': [ { id, room, buildingId, bytes, listed, thumb, takenAt }, ... ] }
+    window.loadJobPhotoMeta = function() {
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      return getDocs(collection(db, 'inspections', window.currentJobId, 'photoMeta')).then((snap) => {
+        const byKey = {};
+        let total = 0;
+        snap.forEach((d) => {
+          const v = d.data() || {};
+          const room = String(v.room || '');
+          const buildingId = String(v.buildingId || '');
+          const key = String(v.key || window.mcPhotoKey(buildingId, room));
+          (byKey[key] = byKey[key] || []).push({
+            id: d.id,
+            room: room,
+            buildingId: buildingId,
+            bytes: Number(v.bytes || 0),
+            listed: !!v.listed,
+            thumb: v.thumb || '',
+            takenAt: Number(v.takenAt || 0)
+          });
+          total++;
+        });
+        Object.keys(byKey).forEach((k) => {
+          byKey[k].sort((a, b) => (a.takenAt - b.takenAt) || (a.id < b.id ? -1 : 1));
+        });
+        dlog('写真読込（現場まるごと） / ' + total + '枚 / ' + Object.keys(byKey).length + '部屋');
+        return byKey;
+      });
+    };
+
     // 本体（base64）を1枚取り出す。控えにあればそれを返す。
     window.loadPhotoData = function(photoId) {
       if (window._photoDataCache[photoId]) return Promise.resolve(window._photoDataCache[photoId]);
@@ -3860,6 +3893,20 @@
       <div id="printSelectButtons" class="modal-buttons" style="flex-direction:column;"></div>
       <div class="modal-buttons" style="margin-top:10px;">
         <button onclick="closePrintSelectModal()">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 不良一覧の印刷の前の画面（写真共有モードが ON のときだけ通る）。
+       事務所で見て初めて「載せる」の印を外す・足す場面があるため、ここでも触れるようにする。 -->
+  <div id="furyoPrePrintModal" class="modal">
+    <div class="modal-box" style="max-width:520px;">
+      <h2>印刷の前に</h2>
+      <p style="font-size:12px;color:#666;margin:0 0 10px;">不良一覧に載せる写真を選べます。ここで変えた印は保存されます。</p>
+      <div id="furyoPrePrintBody" style="text-align:left;"></div>
+      <div class="modal-buttons" style="margin-top:14px;">
+        <button onclick="closeFuryoPrePrint()">やめる</button>
+        <button id="furyoPrePrintGo" onclick="goFuryoPrePrint()" style="background:#ff8c42;color:#fff;border-color:#ff8c42;font-weight:bold;">この内容で印刷</button>
       </div>
     </div>
   </div>
@@ -9894,19 +9941,44 @@
       });
     }
 
+    // 不良一覧テキスト。画面に出ている号棟の分だけ（DOM から拾う）。
+    // 写真共有モードが ON なら、写真のある部屋にだけ「（写真3枚）」を1行添える。
+    // 数えるのはその部屋の写真すべて（載せる印の有無は問わない）。テキストは
+    // 「写真があります」と伝える用途が主で、載せる印は印刷のための印だから。
+    let furyoTextSeq = 0;
     function toggleFuryoText() {
       const ta = document.getElementById('textOutput');
       const btn = document.getElementById('furyoTextToggleBtn');
       const isShown = ta.style.display === 'block';
       if (isShown) {
+        furyoTextSeq++;
         ta.style.display = 'none';
         if (btn) btn.textContent = '不良一覧テキストを表示';
-      } else {
-        const list = getFuryoList();
-        ta.value = list.length === 0 ? '不良記録はありません' : list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
-        ta.style.display = 'block';
-        if (btn) btn.textContent = '不良一覧テキストをしまう';
+        return;
       }
+      const list = getFuryoList();
+      const plain = () => list.map(item => '【' + item.room + '】\n' + item.furyo).join('\n\n');
+      ta.style.display = 'block';
+      if (btn) btn.textContent = '不良一覧テキストをしまう';
+      if (list.length === 0) { ta.value = '不良記録はありません'; return; }
+      if (!window.photoMode || !window.loadJobPhotoMeta) { ta.value = plain(); return; }
+
+      // 読みに行っている間にしまう・出し直すと、古い結果で上書きしないよう番号で見分ける
+      const seq = ++furyoTextSeq;
+      ta.value = '読み込み中…';
+      let bid = '';
+      try { bid = String((buildings[currentBuildingIdx] || {}).id || ''); } catch (e) { bid = ''; }
+      window.loadJobPhotoMeta().then((byKey) => {
+        if (seq !== furyoTextSeq) return;
+        ta.value = list.map((item) => {
+          const n = (byKey[window.mcPhotoKey(bid, item.room)] || []).length;
+          return '【' + item.room + '】\n' + item.furyo + (n ? '\n（写真' + n + '枚）' : '');
+        }).join('\n\n');
+      }).catch((e) => {
+        if (seq !== furyoTextSeq) return;
+        dlog('不良一覧テキスト / 写真の枚数の読込失敗 / ' + (e && e.message));
+        ta.value = plain() + '\n\n（写真の枚数を読めませんでした）';
+      });
     }
 
     // ---- 印刷：内容選択モーダル（立面図／不良一覧） ----
@@ -10104,6 +10176,10 @@ ${sections}
     }
 
     // target: 号棟のindex（数値） または 'all'（全号棟まとめて） または undefined（1号棟のみの現場）
+    // 写真共有モードが ON なら、印刷の前の画面を通す（写真が1枚も無い現場でも通す）。
+    // 【必ず通す理由】印刷用の窓はタップの直後に開かないと、Safari などで止められる。
+    // 写真の有無を先に調べると、その間にタップの直後ではなくなる。前の画面の
+    // 「この内容で印刷」を窓を開く合図にすれば、写真の有無に関係なく確実に開ける。
     function printFuryo(target) {
       snapshotCurrentBuilding();
       if (buildings.length > 1 && target === undefined) {
@@ -10111,30 +10187,207 @@ ${sections}
         return;
       }
       const targets = (target === 'all') ? buildings.map((b, i) => i) : [(typeof target === 'number') ? target : 0];
-      const prop = getProperty();
+      if (window.photoMode && window.loadJobPhotoMeta) {
+        openFuryoPrePrint(targets);
+        return;
+      }
+      runFuryoPrint(targets, null);
+    }
 
-      let bodyHtml = '';
+    // ===== 印刷の前の画面 =====
+    // 状態：{ targets, byKey（null=読み込み中/失敗）, failed, entries（印のボタンと写真の対応） }
+    let furyoPre = null;
+
+    function openFuryoPrePrint(targets) {
+      furyoPre = { targets: targets, byKey: null, failed: false, entries: [] };
+      const state = furyoPre;
+      document.getElementById('furyoPrePrintBody').innerHTML =
+        '<p style="font-size:13px;color:#888;">読み込み中…</p>';
+      document.getElementById('furyoPrePrintGo').disabled = true;
+      document.getElementById('furyoPrePrintModal').classList.add('active');
+      window.loadJobPhotoMeta().then((byKey) => {
+        if (furyoPre !== state) return;
+        state.byKey = byKey;
+        renderFuryoPrePrint();
+      }).catch((e) => {
+        if (furyoPre !== state) return;
+        dlog('印刷の前の画面 / 写真の読込失敗 / ' + (e && e.message));
+        state.failed = true;
+        renderFuryoPrePrint();
+      });
+    }
+
+    function closeFuryoPrePrint() {
+      document.getElementById('furyoPrePrintModal').classList.remove('active');
+      furyoPre = null;
+    }
+
+    function renderFuryoPrePrint() {
+      const st = furyoPre;
+      if (!st) return;
+      const body = document.getElementById('furyoPrePrintBody');
+      document.getElementById('furyoPrePrintGo').disabled = false;
+      if (st.failed) {
+        body.innerHTML = '<p style="font-size:13px;color:#c00;">写真の情報を読めませんでした。</p>' +
+          '<p style="font-size:12px;color:#666;">「この内容で印刷」を押すと、写真なしで印刷します。</p>';
+        return;
+      }
+      st.entries = [];
+      let html = '';
+      let listedTotal = 0;
+      st.targets.forEach((idx) => {
+        const b = buildings[idx];
+        if (!b) return;
+        const bid = String(b.id || '');
+        const label = b.name ? b.name : ('号棟' + (idx + 1));
+        let part = '';
+        buildFuryoListForBuilding(b).forEach((item) => {
+          const photos = st.byKey[window.mcPhotoKey(bid, item.room)] || [];
+          if (!photos.length) return;
+          part += '<div style="margin:0 0 12px;">' +
+            '<div style="font-size:13px;font-weight:bold;margin-bottom:4px;">【' + item.room + '】</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+          photos.forEach((p, i) => {
+            const ei = st.entries.length;
+            st.entries.push(p);
+            if (p.listed) listedTotal++;
+            part += '<div style="width:80px;text-align:center;">' +
+              (p.thumb
+                ? '<img src="' + p.thumb + '" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #ccc;display:block;">'
+                : '<div style="width:80px;height:80px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;">見本なし</div>') +
+              '<div style="font-size:10px;color:#888;margin-top:2px;">写真' + (i + 1) + '</div>' +
+              '<button type="button" onclick="toggleFuryoPrePrintListed(' + ei + ')" ' +
+                'style="width:80px;margin-top:2px;padding:3px 0;font-size:11px;border-radius:4px;' +
+                (p.listed
+                  ? 'background:#2e7d32;color:#fff;border:1px solid #2e7d32;">☑ 載せる'
+                  : 'background:#f5f5f5;color:#666;border:1px solid #ccc;">☐ 載せる') +
+              '</button>' +
+            '</div>';
+          });
+          part += '</div></div>';
+        });
+        if (part && st.targets.length > 1) {
+          part = '<div style="font-size:13px;margin:6px 0 6px;padding-bottom:3px;border-bottom:2px solid #ff8c42;">【' + label + '】</div>' + part;
+        }
+        html += part;
+      });
+      if (!st.entries.length) {
+        body.innerHTML = '<p style="font-size:13px;color:#666;">印刷に載せる写真はありません。</p>';
+        return;
+      }
+      body.innerHTML = '<p style="font-size:12px;margin:0 0 8px;">載せる写真：<b>' + listedTotal + '枚</b></p>' + html;
+    }
+
+    // 印の付け外し。不良モーダルと同じく、見た目を先に変えて失敗したら戻す。
+    function toggleFuryoPrePrintListed(ei) {
+      const st = furyoPre;
+      if (!st) return;
+      const p = st.entries[ei];
+      if (!p) return;
+      const next = !p.listed;
+      p.listed = next;
+      renderFuryoPrePrint();
+      window.setPhotoListed(p.id, next).catch((e) => {
+        p.listed = !next;
+        if (furyoPre === st) renderFuryoPrePrint();
+        window.showAppAlert('印を変えられませんでした：' + (e && e.message));
+      });
+    }
+
+    function goFuryoPrePrint() {
+      const st = furyoPre;
+      if (!st) return;
+      closeFuryoPrePrint();
+      runFuryoPrint(st.targets, st.failed ? null : st.byKey);
+    }
+
+    // ===== 不良一覧の印刷の本体 =====
+    // byKey … 写真の覚え書き（部屋ごと）。null なら写真なしで今までどおり印刷する。
+    function runFuryoPrint(targets, byKey) {
+      const prop = getProperty();
+      const title = '不良一覧';
+
+      // ポップアップブロック対策：タップの直後、写真を読む前に窓を開いておく
+      const win = window.open('', '_blank');
+      if (!win) {
+        window.showAppAlert('印刷用の画面を開けませんでした。\n\nブラウザがポップアップを止めている可能性があります。');
+        return;
+      }
+      win.document.write('<p style="font-family:sans-serif;padding:20px;">準備中です…</p>');
+
+      // 部屋ごとに、載せる写真を撮影順の番号付きで拾う。
+      // 【番号は印の有無に関係なく撮影順】ZIP のファイル名（号棟_部屋_2.jpg）と同じ番号になり、
+      // 台帳と突き合わせられる。載せない写真があると「写真1・写真3」のように飛ぶが、それで合っている。
+      const sections = [];
+      const wanted = [];
       targets.forEach((idx) => {
         const b = buildings[idx];
         if (!b) return;
-        const label = b.name ? b.name : ('号棟' + (idx + 1));
-        if (buildings.length > 1) bodyHtml += '<h3 class="building-heading">【' + label + '】</h3>';
-        const list = buildFuryoListForBuilding(b);
-        if (list.length === 0) {
-          bodyHtml += '<p class="none-text">不良記録はありません</p>';
-        } else {
-          list.forEach((item, i) => {
+        const bid = String(b.id || '');
+        const items = buildFuryoListForBuilding(b).map((item) => {
+          const all = byKey ? (byKey[window.mcPhotoKey(bid, item.room)] || []) : [];
+          const photos = [];
+          all.forEach((p, i) => { if (p.listed) { photos.push({ id: p.id, n: i + 1 }); wanted.push(p.id); } });
+          return { room: item.room, furyo: item.furyo, photos: photos };
+        });
+        sections.push({ idx: idx, label: b.name ? b.name : ('号棟' + (idx + 1)), items: items });
+      });
+
+      const setProgress = (done) => {
+        try {
+          const el = win.document.getElementById('mcProgress');
+          if (el) el.textContent = '写真を読み込んでいます ' + done + ' / ' + wanted.length;
+        } catch (e) { /* 窓が閉じられた */ }
+      };
+
+      // 本体を3枚ずつ並行して読む。読めなかった写真は null（枠に文字で出す）。
+      const loaded = {};
+      const loadAll = () => {
+        if (!wanted.length) return Promise.resolve();
+        win.document.open();
+        win.document.write('<p id="mcProgress" style="font-family:sans-serif;padding:20px;">写真を読み込んでいます 0 / ' + wanted.length + '</p>');
+        win.document.close();
+        let next = 0, done = 0;
+        const worker = () => {
+          if (win.closed || next >= wanted.length) return Promise.resolve();
+          const id = wanted[next++];
+          return window.loadPhotoData(id).then((d) => { loaded[id] = d; }, (e) => {
+            loaded[id] = null;
+            dlog('不良一覧の印刷 / 写真の読込失敗 / ' + id + ' / ' + (e && e.message));
+          }).then(() => { done++; setProgress(done); return worker(); });
+        };
+        return Promise.all([worker(), worker(), worker()]);
+      };
+
+      loadAll().then(() => {
+        if (win.closed) return;
+        let bodyHtml = '';
+        sections.forEach((sec) => {
+          if (buildings.length > 1) bodyHtml += '<h3 class="building-heading">【' + sec.label + '】</h3>';
+          if (sec.items.length === 0) {
+            bodyHtml += '<p class="none-text">不良記録はありません</p>';
+            return;
+          }
+          sec.items.forEach((item, i) => {
             bodyHtml += '<div class="item">';
             bodyHtml += '<p class="room-title">' + (i + 1) + '. 【' + item.room + '】</p>';
             bodyHtml += '<p class="furyo-text">' + item.furyo.replace(/\n/g, '<br>') + '</p>';
+            if (item.photos.length) {
+              bodyHtml += '<div class="photos">';
+              item.photos.forEach((ph) => {
+                const d = loaded[ph.id];
+                bodyHtml += '<div class="photo"><div class="frame">' +
+                  (d ? '<img src="' + d + '">' : '<span class="miss">写真を読み込めませんでした</span>') +
+                  '</div><div class="cap">写真' + ph.n + '</div></div>';
+              });
+              bodyHtml += '</div>';
+            }
             bodyHtml += '</div>';
           });
-        }
-      });
+        });
 
-      const title = '不良一覧';
-      const win = window.open('', '_blank');
-      win.document.write(`<!DOCTYPE html>
+        win.document.open();
+        win.document.write(`<!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8">
 <title>${title}</title>
@@ -10148,6 +10401,13 @@ ${sections}
   .room-title { font-size: 13px; font-weight: bold; margin: 0 0 4px; }
   .furyo-text { margin: 0 0 8px; padding-left: 12px; }
   .none-text { font-size: 12px; color: #666; margin: 0 0 12px; }
+  .photos { display: flex; flex-wrap: wrap; gap: 3mm; padding-left: 12px; }
+  .photo { width: 52mm; break-inside: avoid; page-break-inside: avoid; }
+  .photo .frame { width: 52mm; height: 39mm; border: 1px solid #999; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
+  .photo .frame img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .photo .miss { font-size: 10px; color: #888; }
+  .photo .cap { font-size: 10px; text-align: center; margin-top: 1mm; }
   @media print { body { padding: 8mm; } }
 </style>
 </head><body>
@@ -10155,9 +10415,20 @@ ${sections}
 <div class="info">作業日：${prop.date}　担当：${prop.staff}</div>
 ${bodyHtml}
 </body></html>`);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 500);
+        win.document.close();
+
+        // 【画像の読み込みを待つ理由】読み込みが終わる前に印刷が走ると、写真の枠が白紙で出る。
+        // 全部の画像の onload / onerror を待つ。30秒たっても終わらなければ待つのをやめて進む。
+        const imgs = Array.from(win.document.images || []);
+        const waits = imgs.map((img) => (img.complete ? Promise.resolve() :
+          new Promise((res) => { img.onload = res; img.onerror = res; })));
+        const timeout = new Promise((res) => setTimeout(res, 30000));
+        Promise.race([Promise.all(waits), timeout]).then(() => {
+          if (win.closed) return;
+          win.focus();
+          setTimeout(() => win.print(), imgs.length ? 300 : 500);
+        });
+      });
     }
 
     // 戻るボタン対策：履歴を一段追加
