@@ -453,6 +453,10 @@
       query,
       where,
       updateDoc,
+      increment,
+      getAggregateFromServer,
+      collectionGroup,
+      sum,
       disableNetwork,
       enableNetwork
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
@@ -536,7 +540,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-21-d';
+    const APP_BUILD = '2026-09-23-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2155,14 +2159,21 @@
     // あちらは締め出すと現場が止まるので通す側に倒したが、写真は出なくても点検は進む。
     // 中途半端に写真の欄だけ出て保存できない状態を作るより、出さない方が現場が混乱しない。
     window.photoMode = false;
+    // Blaze（有料プラン）に切り替え済みかどうか。オーナーが会社の画面で印を付ける。
+    // true のときは容量の見張りを働かせない（超えた分は課金されるだけで、止まらないため）。
+    // プランが Blaze かどうかはアプリからは判定できないので、この印が唯一の手がかり。
+    window.photoBillingEnabled = false;
     window.refreshPhotoMode = function() {
       if (!window.loadCompanyFlag) { window.photoMode = false; return Promise.resolve(false); }
       return window.loadCompanyFlag().then((flag) => {
         window.photoMode = !!(flag && flag.photoMode);
-        dlog('写真共有モード / ' + (window.photoMode ? 'ON' : 'OFF'));
+        window.photoBillingEnabled = !!(flag && flag.billingEnabled);
+        dlog('写真共有モード / ' + (window.photoMode ? 'ON' : 'OFF') +
+          (window.photoBillingEnabled ? ' / Blaze' : ''));
         return window.photoMode;
       }).catch((e) => {
         window.photoMode = false;
+        window.photoBillingEnabled = false;
         dlog('写真共有モード / 旗を読めないので OFF に倒す / ' + (e && e.message));
         return false;
       });
@@ -2217,6 +2228,98 @@
       return String(buildingId) + '_' + String(room);
     };
 
+    // ===== 写真の容量の見張り =====
+    //
+    // 【なぜ自前で数えるか】Firestore の使用容量はアプリからは取れない。
+    // 管理画面（人が見る画面）には出るが、そこを読むには Google Cloud の権限が要り、
+    // 作業員の端末のログインでは届かない。
+    //
+    // 【なぜ止める必要があるか】無料の枠（Spark）は超えても課金に切り替わらず、
+    // 書き込みが静かに失敗するだけになる。読み取りは端末の控えから返るので画面は動いて見え、
+    // 現場では気づけない。9割で写真の保存だけを先に止め、点検は今までどおり通す。
+    //
+    // 【置き場所】config/usage（旗とは別）。旗はオーナーしか書けないが、写真を撮るのは子機で、
+    // 子機には会社のメンバーでない人も含まれる。旗に積算を置くとその人の保存だけが失敗する。
+    //
+    // 【ずれる向き】足すのは書く前、引くのは消した後。途中で切れたら多い側にずれる。
+    // 少なく見えると上限に気づけないまま失敗に入るので、ずれるならこの向きにする。
+    // 溜まった余分は、オーナーの数え直し（recountPhotoUsage）で丸ごと置き換わる。
+
+    window.MC_PHOTO_BUDGET = 600 * 1024 * 1024; // 写真に割り当てる枠。無料の1GiBは点検データとも共用
+    window.MC_PHOTO_WARN_1 = 0.4;               // ここから知らせる
+    window.MC_PHOTO_WARN_2 = 0.7;               // ここから強めに知らせる
+    window.MC_PHOTO_STOP   = 0.9;               // ここで写真の保存だけ止める
+
+    // 積算を読む。読めなければ null（「0」とは区別する。0だと空だと決めつけてしまう）。
+    window.loadPhotoUsage = function() {
+      if (!window.currentUser) return Promise.resolve(null);
+      return getDoc(doc(db, 'config', 'usage')).then((snap) => {
+        if (!snap.exists()) return 0;
+        return Number((snap.data() || {}).photoBytes || 0);
+      }).catch((e) => {
+        dlog('容量の積算を読めない / ' + (e && e.message));
+        return null;
+      });
+    };
+
+    // 積算を足し引きする。失敗しても画面には出さない（写真そのものは保存できているため）。
+    // 【merge で書く理由】まだドキュメントが無い Firebase でも、そのまま1件目が作られる。
+    window.addPhotoUsage = function(delta) {
+      if (!window.currentUser || !delta) return Promise.resolve(false);
+      return setDoc(doc(db, 'config', 'usage'), {
+        photoBytes: increment(delta),
+        updatedAt: serverTimestamp()
+      }, { merge: true }).then(() => true).catch((e) => {
+        // 引き算がマイナスに突き抜ける場合はルールが弾く（少なく見せないための備え）。
+        dlog('容量の積算を書けない / ' + delta + ' / ' + (e && e.message));
+        return false;
+      });
+    };
+
+    // 写真をこれ以上保存できない状態か。読めなかったときは通す側に倒す
+    // （通信が無ければ、どのみち保存は失敗する。止める仕組みで現場を余分に止めない）。
+    window.isPhotoStorageFull = function() {
+      if (window.photoBillingEnabled) return Promise.resolve(false);
+      return window.loadPhotoUsage().then((bytes) => {
+        if (bytes === null) return false;
+        return bytes >= window.MC_PHOTO_BUDGET * window.MC_PHOTO_STOP;
+      });
+    };
+
+    // 数え直し。覚え書き（photoMeta）の bytes をサーバー側で合計し、積算をその値に置き換える。
+    // 現場をまたぐので、会社に紐付いていない現場の写真も拾える（容量はこの Firebase 全体で効くため）。
+    // 呼べるのはオーナーだけ（ルールでも弾かれる）。
+    //
+    // 【索引について】この合計には Firebase ごとに索引（photoMeta の bytes）が1つ要る。
+    // 無い場合は failed-precondition が返り、作成用のリンクがメッセージに入っている。
+    // 画面ではそのリンクを出して、オーナーに1回だけ作ってもらう。
+    window.recountPhotoUsage = function() {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return getAggregateFromServer(collectionGroup(db, 'photoMeta'), {
+        total: sum('bytes')
+      }).then((snap) => {
+        const total = Number(snap.data().total || 0);
+        return setDoc(doc(db, 'config', 'usage'), {
+          photoBytes: total,
+          updatedAt: serverTimestamp()
+        }, { merge: true }).then(() => {
+          dlog('容量の数え直し / ' + Math.round(total / 1024) + 'KB');
+          return total;
+        });
+      });
+    };
+
+    // 索引がまだ無いときのエラーから、作成用のリンクを取り出す。
+    window.photoIndexLinkFromError = function(e) {
+      const msg = (e && e.message) || '';
+      const m = msg.match(/https:\/\/console\.firebase\.google\.com\/\S+/);
+      return m ? m[0] : null;
+    };
+
+    window.isPhotoIndexMissing = function(e) {
+      return !!(e && (e.code === 'failed-precondition') && window.photoIndexLinkFromError(e));
+    };
+
     // 本体（base64）の手元の控え。同じ写真を何度も取りに行かないため。
     // 画面を閉じても残るが、リロードで消える。ずれても実害が無い種類の控え。
     window._photoDataCache = {};
@@ -2268,9 +2371,15 @@
       const photoId = window.mcPhotoKey(buildingId, room) + '_' +
         Date.now() + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
       const bytes = dataUrl.length + (thumbUrl || '').length;
-      return setDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId), {
-        data: dataUrl
+      // 【積算を先に足す理由】足したあとに切れると多めにずれる。書いたあとに足す形だと
+      // 少なめにずれ、上限に気づけないまま保存が失敗する状態に入る。ずれるなら多い側に倒す。
+      let bodyWritten = false;
+      return window.addPhotoUsage(bytes).then(() => {
+        return setDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId), {
+          data: dataUrl
+        });
       }).then(() => {
+        bodyWritten = true;
         return setDoc(doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId), {
           key: window.mcPhotoKey(buildingId, room),
           room: String(room),
@@ -2285,18 +2394,34 @@
         window._photoDataCache[photoId] = dataUrl;
         dlog('写真保存OK / room=' + room + ' / ' + Math.round(bytes / 1024) + 'KB');
         return photoId;
+      }).catch((e) => {
+        // 【引き戻す場合と、引き戻さない場合】
+        // 本体を書く前に失敗したなら、容量は使っていないので引き戻す。
+        // 本体を書いたあと（覚え書きで失敗）なら、その本体は場所を取っているので引き戻さない。
+        // 残った本体は掃除が拾い、そのときに引かれる。
+        if (bodyWritten) throw e;
+        return window.addPhotoUsage(-bytes).then(() => { throw e; });
       });
     };
 
     // 1枚消す。覚え書き → 本体 の順。
     // 逆にすると、切れたときに「開けない写真が一覧に出る」状態になる。
-    window.deletePhotoFromCloud = function(photoId) {
+    // 【積算を最後に引く理由】消し終える前に引くと、途中で切れたときに
+    // 「消えていないのに数字だけ減った」状態になり、実際より少なく見える。
+    // bytesHint … 呼ぶ側が覚え書きを既に持っているときに渡す（読み取りを1回省ける）。
+    window.deletePhotoFromCloud = function(photoId, bytesHint) {
       if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
-      return deleteDoc(doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId)).then(() => {
+      const metaRef = doc(db, 'inspections', window.currentJobId, 'photoMeta', photoId);
+      let bytes = Number(bytesHint || 0);
+      return (bytes > 0 ? Promise.resolve(null) : getDoc(metaRef)).then((snap) => {
+        if (snap) bytes = snap.exists() ? Number((snap.data() || {}).bytes || 0) : 0;
+        return deleteDoc(metaRef);
+      }).then(() => {
         return deleteDoc(doc(db, 'inspections', window.currentJobId, 'photos', photoId));
       }).then(() => {
         delete window._photoDataCache[photoId];
-        dlog('写真削除OK / ' + photoId);
+        dlog('写真削除OK / ' + photoId + ' / ' + Math.round(bytes / 1024) + 'KB');
+        if (bytes > 0) return window.addPhotoUsage(-bytes);
       });
     };
 
@@ -7323,7 +7448,7 @@
       const room = furyoPhotoRoom;
       const bid = furyoPhotoBuildingId;
       try {
-        await window.deletePhotoFromCloud(photoId);
+        await window.deletePhotoFromCloud(photoId, (furyoPhotoList[idx] || {}).bytes);
         if (window.addLog) window.addLog('不良写真', { room: room, detail: '写真を削除' });
         const left = await window.loadRoomPhotoMeta(bid, room);
         if (furyoPhotoRoom === room) {
