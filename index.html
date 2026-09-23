@@ -540,7 +540,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-b';
+    const APP_BUILD = '2026-09-23-c';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2194,6 +2194,28 @@
       });
     };
 
+    // Blaze（有料プラン）に切り替え済みかどうかの印。オーナーだけが書ける（旗の中）。
+    // プランそのものはアプリから確かめられないので、ここは自己申告の印になる。
+    // 印を付けると容量の見張りが働かなくなるため、付けるときだけ確認を挟む。
+    window.setBillingEnabled = function(on) {
+      const flagRef = doc(db, 'config', 'system');
+      return getDoc(flagRef).then((snap) => {
+        if (!snap.exists()) throw new Error('この Firebase にはまだ会社が登録されていません。');
+        return updateDoc(flagRef, { billingEnabled: !!on });
+      }).then(() => {
+        window.photoBillingEnabled = !!on;
+        dlog('Blazeの印 / ' + (on ? 'ON' : 'OFF'));
+        return !!on;
+      });
+    };
+
+    // 大きさを読みやすい単位にする（1MB未満はKB）。
+    window.mcFormatBytes = function(bytes) {
+      const b = Number(bytes || 0);
+      if (b < 1024 * 1024) return Math.round(b / 1024) + 'KB';
+      return (b / 1024 / 1024).toFixed(1) + 'MB';
+    };
+
     // ===== 不良写真の保存と読み出し =====
     //
     // 【中身と覚え書きを分けている理由】
@@ -2526,6 +2548,17 @@
     };
 
     // 現在開いている現場を、指定した会社に紐付ける（会社の管理者がこの現場に無招待で入れるようになる）
+    // 【2026-09-23 修正】現場がどの会社に紐付いているかを読む。
+    // これまで会社モーダル側（別の script ブロック）から getDoc/doc/db を直に呼んでいたが、
+    // それらは module のスコープにしか無く、外からは参照できない。
+    // そのため「今開いている現場の会社紐付け」の欄が「確認中…」のまま止まっていた。
+    window.getJobCompanyId = function(jobId) {
+      if (!jobId) return Promise.resolve(null);
+      return getDoc(doc(db, 'inspections', jobId)).then((snap) => {
+        return (snap.exists() && snap.data() && snap.data().companyId) || null;
+      });
+    };
+
     window.linkJobToCompany = function(jobId, companyId) {
       if (!jobId || !companyId) return Promise.reject(new Error('現場または会社が指定されていません'));
       return updateDoc(doc(db, 'inspections', jobId), { companyId: companyId }).then(() => {
@@ -9192,6 +9225,14 @@
           '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">写真共有モード</div>' +
           '<p id="photoModeStateText" style="font-size:12px;color:#666;margin:0 0 8px;">確認中…</p>' +
           '<div id="photoModeButtonWrap"></div>' +
+          '<div id="photoUsageBox" style="margin-top:12px;padding:10px;border-radius:6px;background:#fafafa;border:1px solid #eee;font-size:12px;color:#666;">確認中…</div>' +
+          '<div id="photoBillingWrap" style="margin-top:10px;"></div>' +
+          '<div style="font-size:11px;color:#888;line-height:1.7;margin-top:6px;">' +
+            '<p style="margin:0 0 6px;">Firebase を Blaze に切り替えたら、上の印を付けてください。' +
+            '容量の知らせが出なくなり、容量が9割に達しても写真の保存を止めなくなります。</p>' +
+            '<p style="margin:0;">切り替えていないのに印を付けると、容量の上限に達したときに写真の保存が失敗するようになります' +
+            '（点検の記録は続けられます）。</p>' +
+          '</div>' +
           '<div style="font-size:11px;color:#888;line-height:1.7;margin-top:10px;">' +
             '<p style="margin:0 0 6px;">不良のあった部屋に写真を付けられるようになります。</p>' +
             '<p style="margin:0 0 6px;">・写真はFirebaseの無料の範囲（1GiB）に保存されます。' +
@@ -9265,9 +9306,115 @@
         btnWrap.innerHTML = on
           ? '<button onclick="submitTogglePhotoMode(false)" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">写真共有モードを終了する</button>'
           : '<button onclick="submitTogglePhotoMode(true)" style="width:100%;">写真共有モードを開始する</button>';
+        window.photoBillingEnabled = !!flag.billingEnabled;
+        renderPhotoBillingMark();
+        renderPhotoUsageBox();
       }).catch((e) => {
         textEl.textContent = '状態を読み込めませんでした（' + (e && e.message) + '）。通信状態を確かめてから開き直してください。';
       });
+    }
+
+    // ---- 写真の使用量（会社モーダル・オーナーのみ）----
+    //
+    // 【ここでしか出さない理由】使用量の知らせを現場の画面に出しても、作業員には手の打ちようがない。
+    // 打てるのはオーナーだけ（古い写真を消す／Blazeへ切り替える）なので、知らせもここに集める。
+    // 会社の画面は3か月前のデータの掃除が走る場所でもあり、月に一度は開く場所になる。
+    //
+    // 【開いたときに数え直す理由】積算は通信が切れると多い側にずれる。ここで覚え書きの合計に
+    // 置き換えることで、ずれが溜まらない。合計はサーバー側の集計1回で済む。
+    function renderPhotoUsageBox() {
+      const box = document.getElementById('photoUsageBox');
+      if (!box) return;
+      box.innerHTML = '確認中…';
+
+      const show = (bytes, note) => {
+        const budget = window.MC_PHOTO_BUDGET;
+        const ratio = bytes / budget;
+        const pct = (ratio * 100).toFixed(1);
+        if (window.photoBillingEnabled) {
+          box.style.background = '#fafafa';
+          box.style.borderColor = '#eee';
+          box.innerHTML = '<div style="color:#444;">写真 ' + window.mcFormatBytes(bytes) +
+            '（Blaze のため上限なし）</div>' + (note || '');
+          return;
+        }
+        let color = '#666', bg = '#fafafa', border = '#eee', msg = '';
+        if (ratio >= window.MC_PHOTO_STOP) {
+          color = '#a33'; bg = '#fff4f4'; border = '#e0b4b4';
+          msg = '<p style="margin:6px 0 0;">写真の枠の9割に達したため、<b>写真の保存を止めています</b>。' +
+            '点検の記録はこれまでどおり続けられます。古い写真を削除するか、Blaze へ切り替えてください。</p>';
+        } else if (ratio >= window.MC_PHOTO_WARN_2) {
+          color = '#b36b00'; bg = '#fff8ef'; border = '#e8cfa8';
+          msg = '<p style="margin:6px 0 0;">写真の枠の7割を超えました。Blaze への切り替えを考える時期です。' +
+            '切り替えない場合、9割で写真の保存を止めます。</p>';
+        } else if (ratio >= window.MC_PHOTO_WARN_1) {
+          color = '#8a6d00'; bg = '#fffdf0'; border = '#e4dca8';
+          msg = '<p style="margin:6px 0 0;">写真の枠の4割を超えました。9割に達すると写真の保存を止めます。' +
+            '写真は3か月で自動的に削除されるので、このまま様子を見ても構いません。</p>';
+        }
+        box.style.background = bg;
+        box.style.borderColor = border;
+        box.innerHTML = '<div style="color:' + color + ';font-weight:bold;">写真 ' +
+          window.mcFormatBytes(bytes) + ' / ' + window.mcFormatBytes(window.MC_PHOTO_BUDGET) +
+          '（' + pct + '%）</div>' + msg + (note || '');
+      };
+
+      if (!window.recountPhotoUsage) return;
+      window.recountPhotoUsage().then((bytes) => {
+        show(bytes, '');
+      }).catch((e) => {
+        // 索引がまだ無い／作っている最中は、同じ種類のエラーで返ってくる。中身で見分ける。
+        const building = /not ready yet/.test((e && e.message) || '');
+        const link = window.photoIndexLinkFromError(e);
+        const fallback = (note) => {
+          window.loadPhotoUsage().then((bytes) => {
+            if (bytes === null) {
+              box.innerHTML = '<div style="color:#888;">使用量を確認できませんでした。' +
+                '通信状態を確かめてから開き直してください。</div>';
+              return;
+            }
+            show(bytes, note);
+          });
+        };
+        if (building) {
+          fallback('<p style="margin:6px 0 0;color:#888;">数え直しの準備中です（索引の作成中）。' +
+            '数分後にこの画面を開き直すと、正しい値に直ります。</p>');
+        } else if (link) {
+          fallback('<p style="margin:6px 0 0;color:#888;">数え直しには索引が1つ必要です。' +
+            '<a href="' + link + '" target="_blank" rel="noopener">このリンク</a>を開いて作成してください（最初の1回だけ）。' +
+            'それまでは、上の値が実際より多めに出ることがあります。</p>');
+        } else {
+          fallback('<p style="margin:6px 0 0;color:#888;">数え直しに失敗しました（' +
+            ((e && e.message) || '') + '）。上の値は前回までの積み上げです。</p>');
+        }
+      });
+    }
+
+    // Blaze の印。付けるときだけ確認を挟む（見張りが止まるため）。外すのは安全側なのでそのまま。
+    function renderPhotoBillingMark() {
+      const wrap = document.getElementById('photoBillingWrap');
+      if (!wrap) return;
+      const on = !!window.photoBillingEnabled;
+      wrap.innerHTML = '<button onclick="submitToggleBilling(' + (on ? 'false' : 'true') + ')" ' +
+        'style="width:100%;font-size:12px;' +
+        (on
+          ? 'background:#2e7d32;color:#fff;border:1px solid #2e7d32;">☑ Blaze（有料プラン）に切り替え済み'
+          : 'background:#f5f5f5;color:#555;border:1px solid #ccc;">☐ Blaze（有料プラン）に切り替え済み') +
+        '</button>';
+    }
+
+    const PHOTO_BILLING_ON_MSG =
+      'Blaze に切り替え済みとして扱います。\n\n' +
+      '容量の知らせと、9割での写真の保存停止がなくなります。\n' +
+      'Firebase の管理画面で Blaze になっていることを確かめてから進めてください。\n\n' +
+      'よろしいですか？';
+
+    async function submitToggleBilling(on) {
+      if (on && !await window.showAppConfirm(PHOTO_BILLING_ON_MSG, { alignLeft: true })) return;
+      window.setBillingEnabled(on).then(() => {
+        renderPhotoBillingMark();
+        renderPhotoUsageBox();
+      }).catch((e) => window.showAppAlert('切り替えに失敗しました：' + e.message));
     }
 
     // 開始・終了の確認。読み物は会社モーダルの欄に常設したので、ここは3行に絞る。
@@ -9298,8 +9445,7 @@
     function renderJobCompanyLinkSection(myCompanyId, myCompanyName) {
       const el = document.getElementById('jobCompanyLinkStatus');
       if (!el || !window.currentJobId) return;
-      getDoc(doc(db, 'inspections', window.currentJobId)).then((snap) => {
-        const jobCompanyId = (snap.exists() && snap.data() && snap.data().companyId) || null;
+      window.getJobCompanyId(window.currentJobId).then((jobCompanyId) => {
         const escapedName = myCompanyName.replace(/'/g, "\\'");
         if (jobCompanyId && jobCompanyId === myCompanyId) {
           el.innerHTML =
