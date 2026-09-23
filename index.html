@@ -541,7 +541,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-e';
+    const APP_BUILD = '2026-09-23-f';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -2620,6 +2620,36 @@
         if (bodyWritten) throw e;
         return window.addPhotoUsage(-bytes).then(() => { throw e; });
       });
+    };
+
+    // 保存済みの写真の中身を差し替える（向きを直したとき）。
+    // 【書く順番】本体 → 覚え書き。途中で切れても、見本の向きが古いまま残るだけで済む。
+    // 【本体は update で書く】ほかの端末で消された直後に set で書くと、
+    // 覚え書きの無い本体を作り直してしまう。update なら、無ければ失敗する。
+    // 【積算】大きさの差だけ足し引きする。増えるなら書く前に足し、減るなら書いたあとに引く
+    // （ずれるなら多い側に倒す。savePhotoToCloud / deletePhotoFromCloud と同じ考え方）。
+    // 覚え書きで失敗した場合、覚え書きの bytes は古いまま残る。差は数KBで、次の数え直しに任せる。
+    window.replacePhotoData = function(photoId, dataUrl, thumbUrl, oldBytes) {
+      if (!window.currentUser || !window.currentJobId) return Promise.reject(new Error('ログインが完了していません'));
+      const jobId = window.currentJobId;
+      const bytes = dataUrl.length + (thumbUrl || '').length;
+      const delta = bytes - Number(oldBytes || 0);
+      let added = false;
+      return (delta > 0 ? window.addPhotoUsage(delta).then(() => { added = true; }) : Promise.resolve()).then(() => {
+        return updateDoc(doc(db, 'inspections', jobId, 'photos', photoId), { data: dataUrl });
+      }).catch((e) => {
+        if (added) return window.addPhotoUsage(-delta).then(() => { throw e; });
+        throw e;
+      }).then(() => {
+        window._photoDataCache[photoId] = dataUrl;
+        return updateDoc(doc(db, 'inspections', jobId, 'photoMeta', photoId), {
+          thumb: thumbUrl || '',
+          bytes: bytes
+        });
+      }).then(() => {
+        dlog('写真の向きを保存 / ' + photoId + ' / ' + Math.round(bytes / 1024) + 'KB');
+        if (delta < 0) return window.addPhotoUsage(delta);
+      }).then(() => bytes);
     };
 
     // 1枚消す。覚え書き → 本体 の順。
@@ -7463,7 +7493,11 @@
       btn.disabled = true;
       btn.textContent = '処理中…';
       try {
-        const made = await mcCompressPhoto(file);
+        const made = await mcCompressPhoto(file, 0);
+        // 【元の画像を持っておく理由】回すときに、縮めた後の写真ではなく元の画像から
+        // 縮め直す。縮めた後を回すと JPEG の圧縮が二重にかかり、画質が落ちる。
+        made.file = file;
+        made.turns = 0;
         pendingPhoto = made;
         openPhotoConfirm(made);
       } catch (e) {
@@ -7481,7 +7515,13 @@
     //
     // 【大きさの保険】Firestore の1ドキュメント上限は1MiB。
     // 細かい模様の多い写真は0.8でも膨らむことがあるので、900KBを超えたら段階的に落とす。
-    async function mcCompressPhoto(file) {
+    //
+    // 【turns】時計回りに何回（90度ずつ）回して描くか。0〜3。
+    // 撮影の寸前まで縦に持っていて、倒した直後に撮ると、端末が向きの変化に気づく前に
+    // 撮れて「縦の写真」として残ることがある。確認画面・拡大画面から回して直す。
+    // file は Blob でもよい（保存済みの写真を回すときは、本体を Blob にして渡す）。
+    async function mcCompressPhoto(file, turns) {
+      turns = ((Number(turns) || 0) % 4 + 4) % 4;
       let src = null;
       let needClose = false;
       if (window.createImageBitmap) {
@@ -7508,11 +7548,15 @@
         const w = Math.max(1, Math.round(sw * scale));
         const h = Math.max(1, Math.round(sh * scale));
         const cv = document.createElement('canvas');
-        cv.width = w; cv.height = h;
+        const odd = (turns % 2) === 1;
+        cv.width = odd ? h : w;
+        cv.height = odd ? w : h;
         const c = cv.getContext('2d');
         c.fillStyle = '#fff';
-        c.fillRect(0, 0, w, h);
-        c.drawImage(src, 0, 0, w, h);
+        c.fillRect(0, 0, cv.width, cv.height);
+        c.translate(cv.width / 2, cv.height / 2);
+        c.rotate(turns * Math.PI / 2);
+        c.drawImage(src, -w / 2, -h / 2, w, h);
         return cv.toDataURL('image/jpeg', quality);
       }
 
@@ -7551,6 +7595,37 @@
     function closePhotoViewModal() {
       document.getElementById('photoViewModal').classList.remove('active');
       document.getElementById('photoViewImg').src = '';
+      photoViewCtx = null;
+      pendingRotating = false;
+    }
+
+    // 画像を差し替えたときに、等倍表示を画面合わせに戻す
+    function resetPhotoZoom() {
+      const img = document.getElementById('photoViewImg');
+      const stage = document.getElementById('photoViewStage');
+      photoViewZoomed = false;
+      img.style.maxWidth = '100%';
+      img.style.maxHeight = '50vh';
+      img.style.width = '';
+      stage.scrollTop = 0;
+      stage.scrollLeft = 0;
+    }
+
+    function mcDataUrlToBlob(dataUrl) {
+      const bin = atob(dataUrl.split(',')[1] || '');
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return new Blob([buf], { type: 'image/jpeg' });
+    }
+
+    // 回すボタン2つの並び。onLeft / onRight は onclick に入れる文字列。
+    function mcRotateButtonsHtml(onLeft, onRight, disabled) {
+      const st = 'flex:1;background:#f5f5f5;border:1px solid #ccc;color:#333;';
+      const dis = disabled ? ' disabled' : '';
+      return '<div style="display:flex;gap:8px;width:100%;">' +
+        '<button type="button" onclick="' + onLeft + '" style="' + st + '"' + dis + '>⟲ 左に回す</button>' +
+        '<button type="button" onclick="' + onRight + '" style="' + st + '"' + dis + '>⟳ 右に回す</button>' +
+        '</div>';
     }
 
     // 画面に合わせた表示と等倍（長辺1600pxそのまま）を行き来する。
@@ -7579,16 +7654,62 @@
     }
 
     // 撮った直後の確認。ここで「保存する」を押すまで Firestore には何も書かない。
+    let pendingRotating = false;
     function openPhotoConfirm(made) {
       openPhotoViewModal({
         title: (furyoPhotoRoom || '') + ' の写真を確認',
         dataUrl: made.dataUrl,
-        hint: 'ブレ・写り込みを確かめてください。写真をタップすると等倍で見られます。<br>' +
-          'これが実際に保存される写真です（およそ ' + Math.round(made.dataUrl.length / 1024) + 'KB）。',
-        buttons:
-          '<button id="photoConfirmSave" onclick="submitSavePhoto()" style="width:100%;">この写真を保存する</button>' +
-          '<button onclick="retakePhoto()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">撮り直す</button>'
+        hint: photoConfirmHint(made),
+        buttons: photoConfirmButtons(false)
       });
+    }
+
+    function photoConfirmHint(made) {
+      return 'ブレ・写り込みを確かめてください。写真をタップすると等倍で見られます。<br>' +
+        '横向きに撮ったのに縦で写っていたら、回して直せます。<br>' +
+        'これが実際に保存される写真です（およそ ' + Math.round(made.dataUrl.length / 1024) + 'KB）。';
+    }
+
+    function photoConfirmButtons(busy) {
+      return mcRotateButtonsHtml('rotatePendingPhoto(-1)', 'rotatePendingPhoto(1)', busy) +
+        '<button id="photoConfirmSave" onclick="submitSavePhoto()" style="width:100%;"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? '回しています…' : 'この写真を保存する') + '</button>' +
+        '<button onclick="retakePhoto()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;"' + (busy ? ' disabled' : '') + '>撮り直す</button>';
+    }
+
+    // 確認画面で回す。元の画像から、合計の回数で縮め直す。
+    // 元の画像を読み直せない端末では、縮めた後の写真を回す（圧縮が1回余分にかかる）。
+    async function rotatePendingPhoto(dir) {
+      const pp = pendingPhoto;
+      if (!pp || pendingRotating) return;
+      pendingRotating = true;
+      document.getElementById('photoViewButtons').innerHTML = photoConfirmButtons(true);
+      const turns = ((pp.turns + dir) % 4 + 4) % 4;
+      try {
+        let made;
+        try {
+          made = await mcCompressPhoto(pp.file, turns);
+          made.file = pp.file;
+          made.turns = turns;
+        } catch (e1) {
+          dlog('確認画面の回転 / 元の画像から作れず、縮めた写真を回す / ' + (e1 && e1.message));
+          made = await mcCompressPhoto(mcDataUrlToBlob(pp.dataUrl), (dir + 4) % 4);
+          made.file = mcDataUrlToBlob(made.dataUrl);
+          made.turns = 0;
+        }
+        if (pendingPhoto !== pp) return;   // 回している間に閉じた・撮り直した
+        pendingPhoto = made;
+        document.getElementById('photoViewImg').src = made.dataUrl;
+        resetPhotoZoom();
+        document.getElementById('photoViewHint').innerHTML = photoConfirmHint(made);
+      } catch (e) {
+        if (pendingPhoto === pp) window.showAppAlert('写真を回せませんでした：' + (e && e.message));
+      } finally {
+        if (pendingPhoto && document.getElementById('photoViewModal').classList.contains('active')) {
+          pendingRotating = false;
+          document.getElementById('photoViewButtons').innerHTML = photoConfirmButtons(false);
+        }
+      }
     }
 
     // 「撮り直す」。保存していないので、Firestore には何も残らない。
@@ -7599,6 +7720,7 @@
     }
 
     async function submitSavePhoto() {
+      if (pendingRotating) return;
       if (!pendingPhoto) { closePhotoViewModal(); return; }
       const saveBtn = document.getElementById('photoConfirmSave');
       if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中…'; }
@@ -7634,29 +7756,133 @@
       }
     }
 
-    // 保存済みの写真を開く。ここで初めて本体を取りに行く。
+    // ===== 保存済みの写真の拡大画面 =====
+    // 不良モーダルのサムネイルからも、印刷の前の画面の見本からも開く。
+    // photoViewCtx … { photo（覚え書きの1件。回したら thumb / bytes をここで書き換える）,
+    //                  n（部屋の中の撮影順）, room, buildingId, onChanged（見本の描き直し）,
+    //                  original（本体）, turns（画面の上だけで回した回数）, rotated（回した結果）, busy }
+    let photoViewCtx = null;
+
+    // 不良モーダルのサムネイルから開く
     function openSavedPhoto(photoId) {
       const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
-      const p = furyoPhotoList[idx] || {};
-      openPhotoViewModal({
-        title: (furyoPhotoRoom || '') + ' の写真' + (idx >= 0 ? ' ' + (idx + 1) + '枚目' : ''),
-        dataUrl: p.thumb || '',
-        hint: '読み込み中…',
-        buttons: '<button onclick="closePhotoViewModal()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">閉じる</button>'
+      if (idx < 0) return;
+      const room = furyoPhotoRoom;
+      openSavedPhotoView({
+        photo: furyoPhotoList[idx], n: idx + 1, room: room, buildingId: furyoPhotoBuildingId,
+        onChanged: () => { if (furyoPhotoRoom === room) renderFuryoPhotos(); }
       });
-      window.loadPhotoData(photoId).then((data) => {
-        const modal = document.getElementById('photoViewModal');
-        if (!modal.classList.contains('active')) return;
+    }
+
+    // ここで初めて本体を取りに行く。
+    function openSavedPhotoView(ctx) {
+      openPhotoViewModal({
+        title: (ctx.room || '') + ' の写真 ' + ctx.n + '枚目',
+        dataUrl: ctx.photo.thumb || '',
+        hint: '読み込み中…',
+        buttons: '<button onclick="closeSavedPhotoView()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">閉じる</button>'
+      });
+      ctx.original = null; ctx.turns = 0; ctx.rotated = null; ctx.busy = false;
+      photoViewCtx = ctx;
+      window.loadPhotoData(ctx.photo.id).then((data) => {
+        if (photoViewCtx !== ctx) return;
+        ctx.original = data;
         document.getElementById('photoViewImg').src = data;
-        document.getElementById('photoViewHint').innerHTML =
-          '写真をタップすると等倍で見られます。';
-        document.getElementById('photoViewButtons').innerHTML =
-          '<button onclick="savePhotoToDevice(\'' + photoId + '\')" style="width:100%;">この写真を端末に保存</button>' +
-          '<button onclick="closePhotoViewModal()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;">閉じる</button>';
+        renderSavedPhotoView('写真をタップすると等倍で見られます。');
       }).catch((e) => {
+        if (photoViewCtx !== ctx) return;
         document.getElementById('photoViewHint').innerHTML =
           '<span style="color:#c00;">写真を読み込めませんでした（' + (e && e.message) + '）</span>';
       });
+    }
+
+    function renderSavedPhotoView(hint) {
+      const ctx = photoViewCtx;
+      if (!ctx) return;
+      if (hint !== undefined) document.getElementById('photoViewHint').innerHTML = hint;
+      const busy = ctx.busy;
+      const dis = busy ? ' disabled' : '';
+      let html = mcRotateButtonsHtml('rotateSavedPhoto(-1)', 'rotateSavedPhoto(1)', busy);
+      if (ctx.turns !== 0) {
+        // 回すたびに書き直すと、そのたびに圧縮がかかって画質が落ちる。決めたときに1回だけ書く。
+        html += '<button onclick="saveSavedPhotoRotation()" style="width:100%;background:#ff8c42;color:#fff;border-color:#ff8c42;font-weight:bold;"' + dis + '>' +
+          (busy ? '処理中…' : 'この向きで保存') + '</button>';
+      } else {
+        // 回した向きを保存していない間は、端末への保存を出さない（古い向きで保存されて紛らわしいため）
+        html += '<button onclick="savePhotoToDevice(\'' + ctx.photo.id + '\')" style="width:100%;"' + dis + '>この写真を端末に保存</button>';
+      }
+      html += '<button onclick="closeSavedPhotoView()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;"' + dis + '>閉じる</button>';
+      document.getElementById('photoViewButtons').innerHTML = html;
+    }
+
+    // 画面の上だけで回す（まだ保存しない）。回した結果は、いつも保存済みの本体から作る
+    // （回した結果をさらに回すと、圧縮が重なって画質が落ちるため）。
+    async function rotateSavedPhoto(dir) {
+      const ctx = photoViewCtx;
+      if (!ctx || !ctx.original || ctx.busy) return;
+      const turns = ((ctx.turns + dir) % 4 + 4) % 4;
+      ctx.busy = true;
+      renderSavedPhotoView();
+      try {
+        if (turns === 0) {
+          ctx.rotated = null;
+        } else {
+          const made = await mcCompressPhoto(mcDataUrlToBlob(ctx.original), turns);
+          if (photoViewCtx !== ctx) return;
+          ctx.rotated = made;
+        }
+        ctx.turns = turns;
+        document.getElementById('photoViewImg').src = turns ? ctx.rotated.dataUrl : ctx.original;
+        resetPhotoZoom();
+        ctx.busy = false;
+        renderSavedPhotoView(turns
+          ? 'まだ保存していません。この向きでよければ「この向きで保存」を押してください。'
+          : '写真をタップすると等倍で見られます。');
+      } catch (e) {
+        if (photoViewCtx !== ctx) return;
+        ctx.busy = false;
+        renderSavedPhotoView();
+        window.showAppAlert('写真を回せませんでした：' + (e && e.message));
+      }
+    }
+
+    async function saveSavedPhotoRotation() {
+      const ctx = photoViewCtx;
+      if (!ctx || !ctx.rotated || ctx.busy) return;
+      ctx.busy = true;
+      renderSavedPhotoView();
+      const made = ctx.rotated;
+      try {
+        const bytes = await window.replacePhotoData(ctx.photo.id, made.dataUrl, made.thumbUrl, ctx.photo.bytes);
+        ctx.photo.thumb = made.thumbUrl;
+        ctx.photo.bytes = bytes;
+        if (window.addLog) window.addLog('不良写真', { room: ctx.room, detail: '写真の向きを直した' });
+        if (ctx.onChanged) ctx.onChanged();
+        if (photoViewCtx !== ctx) return;
+        ctx.original = made.dataUrl;
+        ctx.rotated = null;
+        ctx.turns = 0;
+        ctx.busy = false;
+        renderSavedPhotoView('向きを保存しました。写真をタップすると等倍で見られます。');
+      } catch (e) {
+        if (photoViewCtx !== ctx) return;
+        ctx.busy = false;
+        renderSavedPhotoView();
+        window.showAppAlert('向きを保存できませんでした：' + (e && e.message) +
+          '\n\nほかの端末で削除された可能性もあります。通信状態を確かめて、もう一度お試しください。');
+      }
+    }
+
+    // 回したまま保存していなければ、閉じる前に確かめる
+    async function closeSavedPhotoView() {
+      const ctx = photoViewCtx;
+      if (ctx && ctx.busy) return;
+      if (ctx && ctx.turns !== 0) {
+        const ok = await window.showAppConfirm('向きの変更をまだ保存していません。\n\n保存せずに閉じますか？',
+          { okLabel: '保存せずに閉じる' });
+        if (!ok) return;
+      }
+      closePhotoViewModal();
     }
 
     // 写真のファイル名を作る。例：A棟_203_1.jpg
@@ -7685,16 +7911,21 @@
     // 保存されないことがある。Blob にしてから URL を作る。
     function savePhotoToDevice(photoId) {
       window.loadPhotoData(photoId).then((dataUrl) => {
-        const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
-        const p = furyoPhotoList[idx] || {};
-        const bin = atob(dataUrl.split(',')[1] || '');
-        const buf = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-        const blob = new Blob([buf], { type: 'image/jpeg' });
+        // 名前の材料は拡大画面の文脈から取る（不良モーダルからも印刷の前の画面からも開くため）
+        const ctx = (photoViewCtx && photoViewCtx.photo.id === photoId) ? photoViewCtx : null;
+        let bid, room, n;
+        if (ctx) {
+          bid = ctx.photo.buildingId || ctx.buildingId; room = ctx.photo.room || ctx.room; n = ctx.n;
+        } else {
+          const idx = furyoPhotoList.findIndex((p) => p.id === photoId);
+          const p = furyoPhotoList[idx] || {};
+          bid = p.buildingId || furyoPhotoBuildingId; room = p.room || furyoPhotoRoom; n = idx >= 0 ? idx + 1 : 1;
+        }
+        const blob = mcDataUrlToBlob(dataUrl);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = mcPhotoFileName(p.buildingId || furyoPhotoBuildingId, p.room || furyoPhotoRoom, idx >= 0 ? idx + 1 : 1);
+        a.download = mcPhotoFileName(bid, room, n);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -10249,12 +10480,12 @@ ${sections}
             '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
           photos.forEach((p, i) => {
             const ei = st.entries.length;
-            st.entries.push(p);
+            st.entries.push({ p: p, n: i + 1 });
             if (p.listed) listedTotal++;
             part += '<div style="width:80px;text-align:center;">' +
               (p.thumb
-                ? '<img src="' + p.thumb + '" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #ccc;display:block;">'
-                : '<div style="width:80px;height:80px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;">見本なし</div>') +
+                ? '<img src="' + p.thumb + '" onclick="openFuryoPrePrintPhoto(' + ei + ')" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #ccc;display:block;cursor:pointer;">'
+                : '<div onclick="openFuryoPrePrintPhoto(' + ei + ')" style="cursor:pointer;width:80px;height:80px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;font-size:11px;color:#888;display:flex;align-items:center;justify-content:center;">見本なし</div>') +
               '<div style="font-size:10px;color:#888;margin-top:2px;">写真' + (i + 1) + '</div>' +
               '<button type="button" onclick="toggleFuryoPrePrintListed(' + ei + ')" ' +
                 'style="width:80px;margin-top:2px;padding:3px 0;font-size:11px;border-radius:4px;' +
@@ -10275,14 +10506,15 @@ ${sections}
         body.innerHTML = '<p style="font-size:13px;color:#666;">印刷に載せる写真はありません。</p>';
         return;
       }
-      body.innerHTML = '<p style="font-size:12px;margin:0 0 8px;">載せる写真：<b>' + listedTotal + '枚</b></p>' + html;
+      body.innerHTML = '<p style="font-size:12px;margin:0 0 8px;">載せる写真：<b>' + listedTotal + '枚</b>' +
+        '<span style="color:#888;">　写真をタップすると大きく見られます（向きも直せます）</span></p>' + html;
     }
 
     // 印の付け外し。不良モーダルと同じく、見た目を先に変えて失敗したら戻す。
     function toggleFuryoPrePrintListed(ei) {
       const st = furyoPre;
       if (!st) return;
-      const p = st.entries[ei];
+      const p = (st.entries[ei] || {}).p;
       if (!p) return;
       const next = !p.listed;
       p.listed = next;
@@ -10291,6 +10523,18 @@ ${sections}
         p.listed = !next;
         if (furyoPre === st) renderFuryoPrePrint();
         window.showAppAlert('印を変えられませんでした：' + (e && e.message));
+      });
+    }
+
+    // 見本をタップ → 拡大画面（回して直せる）。向きを保存したら見本を描き直す。
+    function openFuryoPrePrintPhoto(ei) {
+      const st = furyoPre;
+      if (!st) return;
+      const e = st.entries[ei];
+      if (!e) return;
+      openSavedPhotoView({
+        photo: e.p, n: e.n, room: e.p.room, buildingId: e.p.buildingId,
+        onChanged: () => { if (furyoPre === st) renderFuryoPrePrint(); }
       });
     }
 
