@@ -541,7 +541,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-g';
+    const APP_BUILD = '2026-09-23-h';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -3979,9 +3979,16 @@
         </div>
         <div id="furyoPhotoList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
         <div id="furyoPhotoFullNote" style="display:none;margin-top:8px;padding:8px 10px;border-radius:6px;background:#fff4f4;border:1px solid #e0b4b4;font-size:12px;color:#a33;">容量がいっぱいのため写真は保存されません。</div>
-        <input type="file" id="furyoPhotoInput" accept="image/*" capture="environment" style="display:none;" onchange="onFuryoPhotoPicked(this)">
-        <button id="furyoPhotoBtn" type="button" onclick="startFuryoPhotoCapture()" style="width:100%;margin-top:8px;">📷 写真を撮る</button>
+        <!-- 撮る：capture 付きでカメラが直接開く。選ぶ：capture 無しでアルバム（PC はファイル選択）が開く。
+             アプリを通さずに撮った写真（端末の標準カメラ・デジカメなど）も不良一覧に載せられるようにするため。 -->
+        <input type="file" id="furyoPhotoInput" accept="image/*" capture="environment" style="display:none;" onchange="onFuryoPhotoPicked(this, 'camera')">
+        <input type="file" id="furyoPhotoPickInput" accept="image/*" style="display:none;" onchange="onFuryoPhotoPicked(this, 'pick')">
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="furyoPhotoBtn" type="button" onclick="startFuryoPhotoCapture('camera')" style="flex:1;">📷 撮る</button>
+          <button id="furyoPhotoPickBtn" type="button" onclick="startFuryoPhotoCapture('pick')" style="flex:1;">🖼 選ぶ</button>
+        </div>
         <div style="font-size:11px;color:#888;line-height:1.7;margin-top:8px;">
+          <p style="margin:0 0 4px;">端末のアルバムにある写真も「選ぶ」から入れられます。</p>
           <p style="margin:0 0 4px;">この写真は共有用に粗くしています。型番など細かい部分が要る場合は、寄って別の1枚を撮ってください。</p>
           <p style="margin:0;">アプリの写真が端末のアルバムに残るかどうかは機種によります。手元に確実に残したい写真は、端末のカメラで別に撮ってください。</p>
         </div>
@@ -7409,7 +7416,11 @@
       if (maxEl) maxEl.textContent = window.MC_PHOTO_MAX;
       document.getElementById('furyoPhotoList').innerHTML =
         '<span style="font-size:12px;color:#888;">読み込み中…</span>';
-      document.getElementById('furyoPhotoBtn').disabled = true;
+      // 前の部屋で上限になって「選ぶ」を隠していても、読み終わるまでは元の見た目に戻しておく
+      document.getElementById('furyoPhotoBtn').textContent = '📷 撮る';
+      document.getElementById('furyoPhotoPickBtn').style.display = '';
+      document.getElementById('furyoPhotoPickBtn').textContent = '🖼 選ぶ';
+      setFuryoPhotoBtnsDisabled(true);
 
       if (!window.loadRoomPhotoMeta) { section.style.display = 'none'; return; }
 
@@ -7435,7 +7446,7 @@
         if (furyoPhotoRoom !== cell.dataset.room) return;
         document.getElementById('furyoPhotoList').innerHTML =
           '<span style="font-size:12px;color:#c00;">写真を読み込めませんでした（' + (e && e.message) + '）</span>';
-        document.getElementById('furyoPhotoBtn').disabled = photoStorageFull;
+        setFuryoPhotoBtnsDisabled(photoStorageFull);
       });
     }
 
@@ -7482,18 +7493,29 @@
 
       // 【いっぱいのときも消せる形にしておく理由】削除まで止めると、空ける手立てが無くなる。
       // 印の付け外しも同じ。止めるのは新しく撮ることだけ。
-      if (photoStorageFull) {
+      // いっぱい・上限のときは「選ぶ」を隠し、「撮る」の場所に理由を出す
+      const pickBtn = document.getElementById('furyoPhotoPickBtn');
+      if (photoStorageFull || n >= max) {
         btn.disabled = true;
-        btn.textContent = '容量がいっぱいです';
+        btn.textContent = photoStorageFull ? '容量がいっぱいです' : '写真は' + max + '枚までです';
+        if (pickBtn) pickBtn.style.display = 'none';
         return;
       }
+      btn.disabled = false;
+      btn.textContent = '📷 撮る';
+      if (pickBtn) { pickBtn.style.display = ''; pickBtn.disabled = false; pickBtn.textContent = '🖼 選ぶ'; }
+    }
 
-      btn.disabled = n >= max;
-      btn.textContent = n >= max ? '写真は' + max + '枚までです' : '📷 写真を撮る';
+    function setFuryoPhotoBtnsDisabled(v) {
+      const a = document.getElementById('furyoPhotoBtn');
+      const b = document.getElementById('furyoPhotoPickBtn');
+      if (a) a.disabled = v;
+      if (b) b.disabled = v;
     }
 
     // 撮影ボタン。カメラを直接開く。
-    function startFuryoPhotoCapture() {
+    // mode … 'camera'（カメラを直接開く）/ 'pick'（アルバム・ファイルから選ぶ）
+    function startFuryoPhotoCapture(mode) {
       if (photoStorageFull) {
         window.showAppAlert('容量がいっぱいのため写真は保存されません。\n\n点検の入力はこれまでどおり続けられます。');
         return;
@@ -7502,18 +7524,22 @@
         window.showAppAlert('写真は' + window.MC_PHOTO_MAX + '枚までです。入れ替えたい場合は、先に不要な写真を × で削除してください。');
         return;
       }
-      const input = document.getElementById('furyoPhotoInput');
+      const input = document.getElementById(mode === 'pick' ? 'furyoPhotoPickInput' : 'furyoPhotoInput');
       input.value = '';
       input.click();
     }
 
     // 撮ったものを読み込み、縮めてから確認の画面に渡す。
-    async function onFuryoPhotoPicked(input) {
+    // アルバムから選んだ写真も同じ流れ（縮める → 確認画面）。iPhone の HEIC は、
+    // 選んだ時点でブラウザが JPEG にして渡してくる。
+    // 【番号の順番は入れた順】撮影日時は写真の中の情報から読めることもあるが、読めない写真も
+    // 混ざる。入れた順（保存を押した時刻）の方が、印刷・ZIP の番号が予測しやすい。
+    async function onFuryoPhotoPicked(input, mode) {
       const file = input.files && input.files[0];
       input.value = '';
       if (!file) return;
-      const btn = document.getElementById('furyoPhotoBtn');
-      btn.disabled = true;
+      const btn = document.getElementById(mode === 'pick' ? 'furyoPhotoPickBtn' : 'furyoPhotoBtn');
+      setFuryoPhotoBtnsDisabled(true);
       btn.textContent = '処理中…';
       try {
         const made = await mcCompressPhoto(file, 0);
@@ -7521,6 +7547,7 @@
         // 縮め直す。縮めた後を回すと JPEG の圧縮が二重にかかり、画質が落ちる。
         made.file = file;
         made.turns = 0;
+        made.source = mode === 'pick' ? 'pick' : 'camera';
         pendingPhoto = made;
         openPhotoConfirm(made);
       } catch (e) {
@@ -7697,7 +7724,8 @@
       return mcRotateButtonsHtml('rotatePendingPhoto(-1)', 'rotatePendingPhoto(1)', busy) +
         '<button id="photoConfirmSave" onclick="submitSavePhoto()" style="width:100%;"' + (busy ? ' disabled' : '') + '>' +
           (busy ? '回しています…' : 'この写真を保存する') + '</button>' +
-        '<button onclick="retakePhoto()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;"' + (busy ? ' disabled' : '') + '>撮り直す</button>';
+        '<button onclick="retakePhoto()" style="width:100%;background:#f5f5f5;border:1px solid #ccc;color:#555;"' + (busy ? ' disabled' : '') + '>' +
+          ((pendingPhoto && pendingPhoto.source === 'pick') ? '選び直す' : '撮り直す') + '</button>';
     }
 
     // 確認画面で回す。元の画像から、合計の回数で縮め直す。
@@ -7714,11 +7742,13 @@
           made = await mcCompressPhoto(pp.file, turns);
           made.file = pp.file;
           made.turns = turns;
+          made.source = pp.source;
         } catch (e1) {
           dlog('確認画面の回転 / 元の画像から作れず、縮めた写真を回す / ' + (e1 && e1.message));
           made = await mcCompressPhoto(mcDataUrlToBlob(pp.dataUrl), (dir + 4) % 4);
           made.file = mcDataUrlToBlob(made.dataUrl);
           made.turns = 0;
+          made.source = pp.source;
         }
         if (pendingPhoto !== pp) return;   // 回している間に閉じた・撮り直した
         pendingPhoto = made;
@@ -7736,10 +7766,13 @@
     }
 
     // 「撮り直す」。保存していないので、Firestore には何も残らない。
+    // 「撮り直す」「選び直す」。保存していないので、Firestore には何も残らない。
+    // 撮ったときはカメラ、選んだときはアルバムを開き直す。
     function retakePhoto() {
+      const mode = (pendingPhoto && pendingPhoto.source === 'pick') ? 'pick' : 'camera';
       pendingPhoto = null;
       closePhotoViewModal();
-      startFuryoPhotoCapture();
+      startFuryoPhotoCapture(mode);
     }
 
     async function submitSavePhoto() {
