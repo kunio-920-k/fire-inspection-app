@@ -462,7 +462,23 @@
       enableNetwork
     } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
-    const firebaseConfig = {
+    // ===== 接続先（Firebase の設定値） =====
+    // 【Hosting から教えてもらう】Firebase Hosting に置いたアプリは、決まった場所
+    // （/__/firebase/init.json）を読むと、そのサイトにつながっている Firebase の設定値が返ってくる。
+    // これを使うので、配布先の各社は index.html を書き換えずにそのまま置けばよく、
+    // 更新も新しい index.html を置き直すだけで済む。書き換え忘れて開発元のサーバーに
+    // つながる事故も起きない。
+    // 【開発元の場所だけの例外】GitHub Pages・手元のテストには init.json が無い。
+    // DEV_HOSTS で開いたときだけ、開発用の設定値（MC_DEV_CONFIG）を使う。
+    // それ以外の場所で init.json が読めなければ、どこにもつながずに止める。
+    // ※開発元でホスト名が増えた場合（独自ドメイン、別のテスト環境など）は DEV_HOSTS に追記すること。
+    // 【DOMContentLoaded に注意】ここで待つ（await）ため、これより後ろの module のコードは
+    // DOMContentLoaded より後に走ることがある。後ろで DOMContentLoaded を待つ処理を書くときは、
+    // document.readyState を見て、すでに過ぎていればその場で動かすこと。
+    const DEV_PROJECT_ID = 'manchestar-test';
+    const DEV_HOSTS = ['kunio-920-k.github.io', 'manchestar-test.web.app', 'manchestar-test.firebaseapp.com',
+      'localhost', '127.0.0.1', ''];
+    const MC_DEV_CONFIG = {
       apiKey: "AIzaSyDSJMRrFx5FtkYjjIhV_FopeqilWa6854U",
       authDomain: "manchestar-test.firebaseapp.com",
       projectId: "manchestar-test",
@@ -471,22 +487,75 @@
       appId: "1:863412425540:web:9f7f5af93b89417132bd11"
     };
 
+    let firebaseConfig = null;
+    let firebaseConfigSource = '';
+    try {
+      const res = await fetch('/__/firebase/init.json', { cache: 'no-store' });
+      if (res.ok) {
+        const c = await res.json();
+        if (c && c.apiKey && c.projectId) {
+          firebaseConfig = {
+            apiKey: c.apiKey,
+            authDomain: c.authDomain || (c.projectId + '.firebaseapp.com'),
+            projectId: c.projectId,
+            storageBucket: c.storageBucket || '',
+            messagingSenderId: c.messagingSenderId || '',
+            appId: c.appId || ''
+          };
+          firebaseConfigSource = 'Hosting';
+        }
+      }
+    } catch (e) { /* init.json の無い場所（GitHub Pages・手元など） */ }
+    if (!firebaseConfig && DEV_HOSTS.indexOf(location.hostname) !== -1) {
+      firebaseConfig = MC_DEV_CONFIG;
+      firebaseConfigSource = '開発用';
+    }
+    if (!firebaseConfig) {
+      document.body.innerHTML =
+        '<div style="position:fixed;inset:0;background:#1a1010;color:#fff;padding:28px 22px;overflow:auto;' +
+        'font-family:system-ui,-apple-system,sans-serif;line-height:1.7;">' +
+          '<div style="max-width:520px;margin:0 auto;">' +
+            '<div style="font-size:13px;font-weight:700;letter-spacing:2px;color:#ff6b6b;margin-bottom:10px;">起動できません</div>' +
+            '<h1 style="font-size:20px;margin:0 0 18px;">接続先の Firebase が分かりません</h1>' +
+            '<p style="font-size:14px;color:#e0d8d8;margin:0 0 16px;">' +
+              'このアプリは、会社ごとに用意した Firebase の <strong>Hosting</strong> に置いて使います。' +
+              'Hosting に置かれたアプリは、つなぐ先を Hosting から自動で教えてもらいます。' +
+            '</p>' +
+            '<p style="font-size:14px;color:#e0d8d8;margin:0 0 16px;">' +
+              'パソコンでファイルを直接開いた場合や、Firebase Hosting 以外の場所に置いた場合は、' +
+              'つなぐ先が分からないため起動しません。' +
+            '</p>' +
+            '<p style="font-size:12px;color:#9a8f8f;margin:0;">設定手順は配布ページの説明をご覧ください。</p>' +
+          '</div>' +
+        '</div>';
+      throw new Error('接続先の Firebase が分からないため、起動を中止しました（Firebase Hosting に置いてください）。');
+    }
+
     // ===== 配布ページの URL =====
     // メンバーでない人の案内画面（「自分の現場を管理したいときは」）に出すリンク先。
     // 空のあいだは「配布ページ（準備中）」とだけ表示し、リンクにしない。
     const DISTRIBUTION_URL = '';
     window.DISTRIBUTION_URL = DISTRIBUTION_URL;
 
+    // ===== 新しい版の確認先 =====
+    // GitHub の配布元に置く latest.json の URL（例：https://raw.githubusercontent.com/…/latest.json）。
+    // 中身は { "build": "2026-10-01-a", "url": "https://x.com/…" }。
+    // url は知らせからつなぐ先（X の投稿や note）。アプリに書き込まずここに持たせるので、
+    // つなぐ先を変えたいときは latest.json を書き換えるだけで済む。
+    // 空のあいだは確かめに行かない。
+    const UPDATE_CHECK_URL = '';
+    window.UPDATE_CHECK_URL = UPDATE_CHECK_URL;
+
+    // ===== 利用条件の版 =====
+    // 文面（MC_TERMS_TEXT、通常の script 側）を変えたら、ここを1つ上げる。
+    // 会社の記録の版がこれより古いと、オーナーのホームに「更新しました」の帯が出る。
+    const TERMS_VERSION = 1;
+    window.TERMS_VERSION = TERMS_VERSION;
+
     // ===== 接続先の設定ミス検出 =====================================================
-    // このアプリはフォークして使う前提で配布している。各社が自分の Firebase を用意し、
-    // 上の firebaseConfig を自社のものへ差し替える必要がある。
-    // 差し替え忘れると、その会社の点検データが開発元のサーバーへ流れ込んでしまうため、
-    // 「開発用の接続先のまま、開発元以外の場所で開かれた」ときは先へ進ませない。
-    //
-    // ※開発元でホスト名が増えた場合（独自ドメイン、別のテスト環境など）は
-    //   DEV_HOSTS に追記すること。
-    const DEV_PROJECT_ID = 'manchestar-test';
-    const DEV_HOSTS = ['kunio-920-k.github.io', 'localhost', '127.0.0.1', ''];
+    // 各社のデータが開発元のサーバーへ流れ込むのを防ぐ最後の網。
+    // 接続先は上で Hosting から教えてもらう形にしたので、ふつうはここに来ない。
+    // それでも「開発用の接続先で、開発元以外の場所で開かれた」ときは先へ進ませない。
 
     if (firebaseConfig.projectId === DEV_PROJECT_ID && DEV_HOSTS.indexOf(location.hostname) === -1) {
       document.body.innerHTML =
@@ -505,9 +574,8 @@
               '<div style="font-size:13px;font-weight:700;margin-bottom:8px;">直し方</div>' +
               '<ol style="font-size:13px;color:#e0d8d8;margin:0;padding-left:20px;">' +
                 '<li style="margin-bottom:6px;">自社の Firebase プロジェクトを作る</li>' +
-                '<li style="margin-bottom:6px;"><code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">index.html</code> を開き、' +
-                  '<code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">firebaseConfig</code> を自社のものに書き換える</li>' +
-                '<li>保存して、もう一度開く</li>' +
+                '<li style="margin-bottom:6px;">その Firebase の Hosting に <code style="background:rgba(0,0,0,0.35);padding:1px 5px;border-radius:3px;">index.html</code> を置く</li>' +
+                '<li>置いた先の URL（〜.web.app）で開く</li>' +
               '</ol>' +
             '</div>' +
             '<p style="font-size:12px;color:#9a8f8f;margin:0;">' +
@@ -517,7 +585,7 @@
             '</p>' +
           '</div>' +
         '</div>';
-      throw new Error('接続先が開発元のままのため、起動を中止しました。firebaseConfig を自社のものへ差し替えてください。');
+      throw new Error('接続先が開発元のままのため、起動を中止しました。');
     }
     // ==============================================================================
 
@@ -541,7 +609,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-h';
+    const APP_BUILD = '2026-09-23-j';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -740,10 +808,13 @@
         panel.id = 'debugPanel';
         panel.title = 'タップで隠す';
         panel.addEventListener('click', () => { panel.style.display = 'none'; });
-        document.addEventListener('DOMContentLoaded', () => {
+        // 接続先を待つ（await）ぶん、ここに来たときには DOMContentLoaded が過ぎていることがある
+        const attach = () => {
           document.body.appendChild(panel);
           try { renderDebugPanel(JSON.parse(localStorage.getItem('mc_debug_logs') || '[]')); } catch (e) {}
-        });
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+        else attach();
       } catch (e) {}
     })();
     window.dlog = dlog;
@@ -753,7 +824,7 @@
         renderDebugPanel(logs);
       } catch (e) {}
     })();
-    dlog('ページ読み込み / build=' + APP_BUILD + ' / 現場ID=' + (localStorage.getItem('mc_job_id') || 'なし') + ' / URL=' + location.href);
+    dlog('ページ読み込み / build=' + APP_BUILD + ' / 接続先=' + firebaseConfig.projectId + '（' + firebaseConfigSource + '） / 現場ID=' + (localStorage.getItem('mc_job_id') || 'なし') + ' / URL=' + location.href);
 
     // ポップアップ方式でログイン（ページ遷移を伴わない）
     window.loginWithGoogle = function() {
@@ -1922,7 +1993,15 @@
           name: companyName,
           ownerUid: window.currentUser.uid,
           inviteCode: inviteCode,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          // 登録ボタンの真上に「登録すると、利用条件に同意したものとみなします」と出している。
+          // 押して登録した＝同意した、の記録。
+          termsAgreement: {
+            version: TERMS_VERSION,
+            uid: window.currentUser.uid,
+            displayName: window.currentUser.displayName || '',
+            agreedAt: serverTimestamp()
+          }
         }).catch((e) => {
           // 読んだ直後に別の人が旗を立てた場合、会社の作成がルールで弾かれる
           if (e && e.code === 'permission-denied') throw new Error(COMPANY_ALREADY_REGISTERED_MSG);
@@ -1953,6 +2032,20 @@
         companyId: companyRef.id,
         companyStatus: 'approved'
       }, { merge: true })).then(() => companyRef.id);
+    };
+
+    // 利用条件の新しい版への同意を記録する（オーナーが「更新しました」の帯を閉じたとき）。
+    // 「お知らせのあとも使い続けたら同意したものとみなす」の、お知らせを見た記録。
+    window.recordTermsAgreement = function(companyId) {
+      if (!window.currentUser) return Promise.reject(new Error('ログインが完了していません'));
+      return updateDoc(doc(db, 'companies', companyId), {
+        termsAgreement: {
+          version: TERMS_VERSION,
+          uid: window.currentUser.uid,
+          displayName: window.currentUser.displayName || '',
+          agreedAt: serverTimestamp()
+        }
+      }).then(() => dlog('利用条件 / 第' + TERMS_VERSION + '版への同意を記録'));
     };
 
     // 招待コードを使って会社への参加を申請する（承認されるまでは何の権限も持たない）
@@ -2032,7 +2125,8 @@
                   inviteCode: company.inviteCode,
                   status: 'approved',
                   isCompanyAdmin: true,
-                  isOwner: true
+                  isOwner: true,
+                  terms: company.termsAgreement || null
                 }));
               }
               if (member && member.status === 'removed') {
@@ -2066,7 +2160,8 @@
               inviteCode: company.inviteCode,
               status: member.status,
               isCompanyAdmin: !!member.isCompanyAdmin,
-              isOwner: isOwner
+              isOwner: isOwner,
+              terms: company.termsAgreement || null
             };
           });
         });
@@ -3332,6 +3427,10 @@
     </div>
     <!-- 本文（中央寄せ） -->
     <div style="max-width:420px;margin:0 auto;padding:20px 16px;">
+      <!-- 新しい版の知らせ（会社のオーナーにだけ出す。中身は checkAppUpdate が入れる） -->
+      <!-- 利用条件の更新の知らせ（会社のオーナーにだけ出す。中身は checkTermsVersion が入れる） -->
+      <div id="termsBanner" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:6px;background:rgba(90,170,230,0.15);border:1px solid #6ab4e8;color:#fff;font-size:13px;line-height:1.6;"></div>
+      <div id="appUpdateBanner" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:6px;background:rgba(255,140,66,0.15);border:1px solid #ff8c42;color:#fff;font-size:13px;line-height:1.6;"></div>
       <!-- 所属・ログイン状態（会社名／ログイン中／ダッシュボードを1枠に統合） -->
       <div style="background:#1a1e25;border:1px solid #2a3040;border-radius:6px;margin-bottom:20px;overflow:hidden;">
         <!-- 会社（タップで会社の画面） -->
@@ -3950,6 +4049,17 @@
       <div class="modal-buttons" style="margin-top:14px;">
         <button onclick="closeFuryoPrePrint()">やめる</button>
         <button id="furyoPrePrintGo" onclick="goFuryoPrePrint()" style="background:#ff8c42;color:#fff;border-color:#ff8c42;font-weight:bold;">この内容で印刷</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 利用条件の全文 -->
+  <div id="termsModal" class="modal">
+    <div class="modal-box" style="max-width:520px;">
+      <h2 id="termsModalTitle">利用条件</h2>
+      <div id="termsModalBody" style="text-align:left;font-size:13px;line-height:1.75;max-height:60vh;overflow-y:auto;padding-right:4px;"></div>
+      <div class="modal-buttons" style="margin-top:14px;">
+        <button onclick="closeTermsModal()">閉じる</button>
       </div>
     </div>
   </div>
@@ -9429,6 +9539,146 @@
       ]);
     }
 
+    // ===== 利用条件 =====
+    // 同意は軽くする方針：登録ボタンの真上に「登録すると同意したものとみなします」と出し、
+    // 押して登録した時点で同意の記録を会社に残す（チェック欄は置かない）。
+    // 文面を変えたら TERMS_VERSION（module 側）を上げる。記録の版が古い会社では、
+    // オーナーのホームに帯を出し、閉じた時点で新しい版への同意を記録する（ホームは止めない）。
+    // 記録は各社の Firebase にだけ残り、開発元には送らない。
+    const MC_TERMS_TEXT = [
+      ['1. このアプリについて', 'ManCHEStar（以下「本アプリ」）は、消防設備点検の現場作業を補助する道具として、マンチェスタープロジェクト（以下「開発元」）が無料で配布しているものです。利用するかどうかは、利用する事業者（以下「利用者」）の判断に委ねます。'],
+      ['2. 現状のままの提供', '本アプリは現状のまま提供します。不具合がないこと、利用者の目的に合うこと、今後も更新や配布が続くことは保証しません。'],
+      ['3. データの管理', '本アプリのデータ（点検の記録、サイン、写真など）は、利用者が用意した Firebase に保存され、利用者が管理します。開発元は、このデータを見ることも、消えたデータを元に戻すこともできません。必要なデータは、利用者の手で保存してください。'],
+      ['4. 無料の枠について', '本アプリは、Firebase の無料プランの範囲で動くことを想定しています。利用の量によっては、写真の保存などの機能が止まることがあります。有料プランへ切り替えるかどうかと、その費用は、利用者の判断と負担によります。'],
+      ['5. 点検の責任', '本アプリは記録を補助するものです。点検の実施、点検結果の判断、報告書の内容についての責任は、利用者にあります。'],
+      ['6. 責任の範囲', '本アプリを使ったこと、または使えなかったことで生じた損害（データの消失、不具合、機能の停止によるものを含みます）について、開発元は責任を負いません。ただし、開発元に故意または重大な過失がある場合は除きます。'],
+      ['7. 条件の変更', 'この条件は変わることがあります。変えたときは、アプリの中でお知らせします。お知らせのあとも使い続けた場合は、新しい条件に同意したものとみなします。'],
+      ['8. 同意', '本アプリで会社を登録した時点で、この条件に同意したものとみなします。']
+    ];
+
+    function openTermsModal() {
+      document.getElementById('termsModalTitle').textContent = 'ManCHEStar 利用条件（第' + window.TERMS_VERSION + '版）';
+      document.getElementById('termsModalBody').innerHTML = MC_TERMS_TEXT.map((t) =>
+        '<p style="margin:0 0 2px;font-weight:bold;">' + t[0] + '</p>' +
+        '<p style="margin:0 0 12px;">' + t[1] + '</p>').join('');
+      document.getElementById('termsModal').classList.add('active');
+    }
+    function closeTermsModal() {
+      document.getElementById('termsModal').classList.remove('active');
+    }
+
+    // 会社の画面に出す1行。例：利用条件：2026年10月1日に山田さんが同意（第1版）
+    function termsAgreementText(terms) {
+      if (!terms || !terms.version) return '利用条件：同意の記録はまだありません';
+      let when = '';
+      try {
+        const d = terms.agreedAt && terms.agreedAt.toDate ? terms.agreedAt.toDate() : null;
+        if (d) when = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日に';
+      } catch (e) { when = ''; }
+      const who = terms.displayName ? companyCardEscape(terms.displayName) + 'さんが' : '';
+      return '利用条件：' + when + who + '同意（第' + terms.version + '版）';
+    }
+
+    // オーナーのホームで、会社の記録の版が古ければ帯を出す（ホームは止めない）
+    function checkTermsVersion(status) {
+      const el = document.getElementById('termsBanner');
+      if (!el) return;
+      const v = (status.terms && Number(status.terms.version)) || 0;
+      if (v >= window.TERMS_VERSION) { el.style.display = 'none'; return; }
+      const head = v === 0 ? '利用条件を定めました' : '利用条件を更新しました';
+      el.innerHTML =
+        '<div style="display:flex;align-items:flex-start;gap:8px;">' +
+          '<div style="flex:1;">' +
+            '<b>' + head + '</b>（第' + window.TERMS_VERSION + '版）<br>' +
+            '<span style="font-size:12px;color:#ddd;">引き続き使うと、新しい条件に同意したものとみなします。</span><br>' +
+            '<a href="#" onclick="openTermsModal();return false;" style="color:#9fd0f5;">内容を見る ›</a>' +
+          '</div>' +
+          '<button type="button" onclick="dismissTermsBanner(\'' + status.companyId + '\')" title="閉じる" ' +
+            'style="flex-shrink:0;background:none;border:none;color:#ccc;font-size:18px;line-height:1;padding:0 2px;cursor:pointer;">✕</button>' +
+        '</div>';
+      el.style.display = 'block';
+    }
+
+    function dismissTermsBanner(companyId) {
+      const el = document.getElementById('termsBanner');
+      if (el) el.style.display = 'none';
+      if (!window.recordTermsAgreement) return;
+      window.recordTermsAgreement(companyId).catch((e) => {
+        // 記録できなければ、次にホームを開いたときにまた出る
+        dlog('利用条件 / 同意の記録に失敗 / ' + (e && e.message));
+      });
+    }
+
+    // ===== 新しい版の知らせ =====
+    // 配布元（GitHub）の latest.json を読み、自分の版より新しければホームに帯を出す。
+    // 置き直すのは会社のオーナーなので、オーナーにだけ出す（refreshStartScreenCompanyStatus から呼ぶ）。
+    // 詳しい中身は X で知らせる運用。帯には版番号と、latest.json の url へのリンクだけを出す。
+    // 【確かめる頻度】その端末で前回読めてから7日以上たっていれば読みに行く。
+    // 読めなかったときは記録せず、次に開いたときにまた試す。
+    // 読めた中身は端末に覚えておき、7日の間もホームを開くたびに帯を出す。
+    // 【✕】押すと、さらに新しい版が出るまで同じ知らせは出さない。
+    // 【版番号の比べ方】'2026-10-01-a' の形なので文字列の大小で比べられる。
+    // 1日に27回以上の更新（-z の次）は出さない前提。
+    // 【各社の情報は送らない】読みに行くのは公開ファイルだけ。
+    const MC_UPDATE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+    const MC_BUILD_RE = /^\d{4}-\d{2}-\d{2}-[a-z]$/;
+
+    function checkAppUpdate() {
+      const url = window.UPDATE_CHECK_URL;
+      if (!url) return;
+      let kept = null;
+      try { kept = JSON.parse(localStorage.getItem('mc_update_info') || 'null'); } catch (e) { kept = null; }
+      renderAppUpdateBanner(kept);
+      let last = 0;
+      try { last = Number(localStorage.getItem('mc_update_checked_at') || 0); } catch (e) { last = 0; }
+      if (Date.now() - last < MC_UPDATE_INTERVAL_MS) return;
+      fetch(url, { cache: 'no-store' }).then((res) => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then((info) => {
+        const build = info && typeof info.build === 'string' ? info.build.trim() : '';
+        if (!MC_BUILD_RE.test(build)) throw new Error('版番号の形が違う：' + build);
+        const link = (info && typeof info.url === 'string' && /^https:\/\//.test(info.url)) ? info.url : '';
+        const keep = { build: build, url: link };
+        try {
+          localStorage.setItem('mc_update_info', JSON.stringify(keep));
+          localStorage.setItem('mc_update_checked_at', String(Date.now()));
+        } catch (e) {}
+        dlog('新しい版の確認 / 配布元=' + build + ' / 自分=' + window.APP_BUILD);
+        renderAppUpdateBanner(keep);
+      }).catch((e) => dlog('新しい版の確認 / 読めず / ' + (e && e.message)));
+    }
+
+    function renderAppUpdateBanner(info) {
+      const el = document.getElementById('appUpdateBanner');
+      if (!el) return;
+      let dismissed = '';
+      try { dismissed = localStorage.getItem('mc_update_dismissed') || ''; } catch (e) {}
+      if (!info || !MC_BUILD_RE.test(info.build || '') || !(info.build > window.APP_BUILD) || dismissed === info.build) {
+        el.style.display = 'none';
+        return;
+      }
+      el.innerHTML =
+        '<div style="display:flex;align-items:flex-start;gap:8px;">' +
+          '<div style="flex:1;">' +
+            '<b>新しい版があります</b>（' + info.build + '）<br>' +
+            (info.url
+              ? '<a href="' + info.url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="color:#ffb27a;">詳しくは X で ›</a>'
+              : '<span style="color:#ccc;">詳しくは X でお知らせしています。</span>') +
+            '<div style="font-size:11px;color:#bbb;margin-top:2px;">いまの版：' + window.APP_BUILD + '</div>' +
+          '</div>' +
+          '<button type="button" onclick="dismissAppUpdateBanner(\'' + info.build + '\')" title="この版の知らせを閉じる" ' +
+            'style="flex-shrink:0;background:none;border:none;color:#ccc;font-size:18px;line-height:1;padding:0 2px;cursor:pointer;">✕</button>' +
+        '</div>';
+      el.style.display = 'block';
+    }
+
+    function dismissAppUpdateBanner(build) {
+      try { localStorage.setItem('mc_update_dismissed', build); } catch (e) {}
+      const el = document.getElementById('appUpdateBanner');
+      if (el) el.style.display = 'none';
+    }
+
     function refreshStartScreenCompanyStatus() {
       const card = document.getElementById('companyStatusCard');
       if (!card) return;
@@ -9439,6 +9689,8 @@
       const dashBtn = document.getElementById('startScreenDashboardWrap');
       if (dashBtn) dashBtn.style.display = 'none';
       hideStartMenuWhileLoading();
+      // オーナーにだけ出す帯は、読み直すたびに一度しまう（別の人が同じ端末でログインしたときに残らないように）
+      ['termsBanner', 'appUpdateBanner'].forEach((id) => { const b = document.getElementById(id); if (b) b.style.display = 'none'; });
       if (!window.loadMyCompanyStatus) { showStartMenu(); return; }
       withStartTimeout(window.loadMyCompanyStatus()).then((status) => {
         if (!isLatest()) return;
@@ -9494,6 +9746,9 @@
             window._startScreenDashboardCompanyName = status.companyName;
           }
           showStartMenu();
+          // 新しい版の知らせは、置き直す立場の会社のオーナーにだけ出す
+          if (status.isOwner) checkAppUpdate();
+          if (status.isOwner) checkTermsVersion(status);
           // 旗の救済。会社モーダルを開かないオーナーでも、次にホームを開いた時点で旗が立つ。
           if (status.isOwner && window.ensureCompanyFlag) {
             window.ensureCompanyFlag(status.companyId, status.companyName);
@@ -9583,6 +9838,7 @@
           '<div style="font-weight:bold;font-size:13px;margin-bottom:6px;">会社を登録する</div>' +
           '<p style="font-size:11px;color:#888;margin:0 0 8px;">その日のすべての現場を管理・監視できるようになります。実行した人が会社の【管理者】になります。</p>' +
           '<input id="newCompanyNameInput" type="text" placeholder="会社名（例：くにお消防設備）" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;margin-bottom:6px;">' +
+          '<p style="font-size:11px;color:#888;margin:2px 0 6px;">登録すると、<a href="#" onclick="openTermsModal();return false;" style="color:#246;">利用条件</a>に同意したものとみなします。</p>' +
           '<button onclick="submitRegisterCompany()" style="width:100%;">登録する</button>' +
         '</div>' +
         joinBox;
@@ -9741,6 +9997,10 @@
       if (status.isCompanyAdmin) {
         html += '<button onclick="openOfficeDashboard(\'' + status.companyId + '\', \'' + (status.companyName || '').replace(/'/g, "\\'") + '\')" style="width:100%;margin-top:6px;background:#ff8c42;color:#fff;border:none;">🏢 稼働中の現場を見る</button>';
       }
+
+      // 利用条件への同意の記録。「同意しましたよね？」を相手の画面で確かめられるように、全員に出す。
+      html += '<p style="font-size:11px;color:#888;margin:14px 0 0;">' + termsAgreementText(status.terms) +
+        '　<a href="#" onclick="openTermsModal();return false;" style="color:#246;">利用条件を見る</a></p>';
 
       html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #eee;">';
       if (status.isOwner) {
