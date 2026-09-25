@@ -609,7 +609,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-23-j';
+    const APP_BUILD = '2026-09-25-b';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -911,6 +911,156 @@
       logoutUser();
     };
 
+    // ===== 同期の作り（Session 40 で改めた） =====
+    //
+    // 【以前の作りと、起きていたこと】
+    // 点検データは data（1本の JSON）に丸ごと入れ、保存のたびに全体を書き直していた。
+    // さらに、保存してから2秒間に届いた更新は「自分の保存の反響」とみなして読み捨てていた。
+    // そのため、3台がほぼ同時に点検中にすると、最後に保存した端末の「自分の部屋だけ点検中」の
+    // 全体で上書きされ、ほかの2台の点検中が「未」に戻った（Session 40 の実機確認で発生）。
+    // 圏外の間にためた保存が、電波が戻ったときに他の人の分を丸ごと上書きすることも起きえた。
+    //
+    // 【今の作り】
+    // ・部屋の状態は live.c.{号棟ID}.{部屋番号} に、部屋ごとに書く
+    // ・予約は live.y.{号棟ID|部屋番号} に、1件ごとに書く（消したときは deleted:true を残す）
+    //   並び順は各予約の ord（小さいほど上）。↓で入れ替えたら ord を入れ替える
+    // ・書くときは、変わった部屋・変わった予約だけを setDoc の merge で書く。
+    //   merge は入れ子の中身まで合わせてくれるので、別の端末が別の部屋を同時に書いても消し合わない。
+    //   圏外でも同じ（戻ったときに、その部屋だけが書かれる）
+    // ・部屋と予約以外（物件名・号棟の構成・スケジュールなど）は今までどおり data に入れる。
+    //   変わったときだけ書く（部屋を1つ変えただけでは data を書かない）
+    // ・読むときは data の上に live を重ねる（mcMergeLive）
+    // ・届いた更新は全部取り込む。自分の保存が返ってきただけのときは、中身が手元と同じなので
+    //   描き直さない（画面側の restoreFromCloud が見分ける）
+    //
+    // 【data に部屋の状態を入れ続ける理由】live が無い古い現場と、複製・書き出しのため。
+    // 部屋の状態が変わるたびに live を書くので、data の部屋の状態が古くても、重ねれば正しくなる。
+    //
+    // 【同じ部屋を2台が同時に変えた場合】あとから書いた方が残る（部屋単位）。
+    // 点検中の占有があるので、同じ部屋を同時に触る場面はほぼ無い。
+
+    // キーの順番に左右されない文字列化（比べるため）。Firestore は地図のキーを並べ替えて返す。
+    function mcStable(v) {
+      if (v === undefined) return 'null';
+      if (v === null || typeof v !== 'object') return JSON.stringify(v);
+      if (Array.isArray(v)) return '[' + v.map(mcStable).join(',') + ']';
+      return '{' + Object.keys(v).filter((k) => v[k] !== undefined).sort()
+        .map((k) => JSON.stringify(k) + ':' + mcStable(v[k])).join(',') + '}';
+    }
+    window.mcStable = mcStable;
+
+    function mcNormCell(v) {
+      v = v || {};
+      return {
+        state: v.state || 'mi',
+        furyo: v.furyo || '',
+        times: v.times || '[]',
+        yoyakuTime: v.yoyakuTime || '',
+        yoyakuNote: v.yoyakuNote || '',
+        yoyakuDate: v.yoyakuDate || '',
+        tenkenBy: v.tenkenBy || '',
+        tenkenByName: v.tenkenByName || ''
+      };
+    }
+    window.mcNormCell = mcNormCell;
+
+    function mcNormYoyaku(v) {
+      v = v || {};
+      return {
+        time: (v.time === undefined || v.time === null) ? '' : String(v.time),
+        room: String(v.room || ''),
+        note: v.note || '',
+        date: v.date || '',
+        buildingId: v.buildingId || null,
+        ord: Number(v.ord) || 0
+      };
+    }
+    window.mcNormYoyaku = mcNormYoyaku;
+
+    function mcYoyakuKey(y) { return (y.buildingId || '') + '|' + y.room; }
+    window.mcYoyakuKey = mcYoyakuKey;
+
+    function mcSortYoyaku(list) {
+      return list.sort((a, b) => (a.ord - b.ord) || (mcYoyakuKey(a) < mcYoyakuKey(b) ? -1 : 1));
+    }
+
+    // data の上に live を重ねる（state は書き換えてよい新しいもの）
+    function mcMergeLive(state, live) {
+      if (!state) return state;
+      live = live || {};
+      const c = live.c || {};
+      (state.buildings || []).forEach((b) => {
+        const lc = c[b.id];
+        if (!lc) return;
+        // 今の立面図にある部屋だけに重ねる（号棟の作り直しで無くなった部屋を生き返らせない）
+        const valid = new Set();
+        (b.tableFloorData || []).forEach((fd) => (fd.rooms || []).forEach((r) => valid.add(String(r))));
+        b.cells = b.cells || {};
+        Object.keys(lc).forEach((room) => {
+          if (!valid.has(String(room))) return;
+          if (!lc[room] || typeof lc[room] !== 'object') return;
+          b.cells[room] = mcNormCell(lc[room]);
+        });
+      });
+      const y = live.y;
+      if (y && Object.keys(y).length) {
+        const list = [];
+        Object.keys(y).forEach((k) => {
+          const v = y[k];
+          if (!v || typeof v !== 'object' || v.deleted) return;
+          list.push(mcNormYoyaku(v));
+        });
+        state.yoyakuList = mcSortYoyaku(list);
+      } else {
+        // 予約の欄がまだ無い現場：data の並びどおりに ord を振る。どの端末でも同じ値になるので、
+        // 複数の端末が同時に移し替えても並びが崩れない。
+        (state.yoyakuList || []).forEach((y, i) => { if (typeof y.ord !== 'number') y.ord = i; });
+      }
+      return state;
+    }
+    window.mcMergeLive = mcMergeLive;
+
+    // まだ書いていない手元の変更（pending）を、届いた状態の上に重ねる。
+    // 800ミリ秒のまとめ待ちの間に他の端末の更新が届いても、自分の変更を消さないため。
+    function mcApplyDelta(state, p) {
+      if (!p) return state;
+      let out;
+      if (p.data) {
+        // 部屋と予約以外は手元（まだ書いていない変更）を採る。部屋と予約は届いた方を土台にする
+        const serverCells = {};
+        (state.buildings || []).forEach((b) => { serverCells[b.id] = b.cells; });
+        out = JSON.parse(JSON.stringify(p.data));
+        (out.buildings || []).forEach((b) => {
+          if (serverCells[b.id]) b.cells = Object.assign({}, b.cells || {}, serverCells[b.id]);
+        });
+        out.yoyakuList = state.yoyakuList || [];
+        out.currentBuildingIdx = state.currentBuildingIdx;
+      } else {
+        out = JSON.parse(JSON.stringify(state));
+      }
+      const byId = {};
+      (out.buildings || []).forEach((b) => { byId[b.id] = b; });
+      Object.keys(p.cells || {}).forEach((bid) => {
+        const b = byId[bid];
+        if (!b) return;
+        b.cells = b.cells || {};
+        Object.keys(p.cells[bid]).forEach((room) => { b.cells[room] = mcNormCell(p.cells[bid][room]); });
+      });
+      const keys = Object.keys(p.yoyaku || {});
+      if (keys.length) {
+        const map = {};
+        (out.yoyakuList || []).forEach((y) => { map[mcYoyakuKey(y)] = mcNormYoyaku(y); });
+        keys.forEach((k) => {
+          const v = p.yoyaku[k];
+          if (!v || v.deleted) delete map[k];
+          else map[k] = mcNormYoyaku(v);
+        });
+        out.yoyakuList = mcSortYoyaku(Object.keys(map).map((k) => map[k]));
+      }
+      return out;
+    }
+    window.mcApplyDelta = mcApplyDelta;
+
     // ---- 点検データのクラウド保存・読込 ----
     // 「現場（物件）ID」をキーにして保存する（親機・子機が同じ現場IDを共有することで同期される）。
     // メインスクリプト側（gatherInspectionState）が集めたデータを受け取って保存する。
@@ -945,41 +1095,104 @@
       return today ? { lastWorkedDate: today, lastWorkedMonth: today.slice(0, 7) } : {};
     }
 
-    window.saveInspectionToCloud = function (stateObj) {
-      if (!window.currentUser || !window.currentJobId) return;
+    // まだ書いていない変更。{ jobId, data（全体。部屋と予約以外が変わったときだけ）, cells, yoyaku }
+    let pendingDelta = null;
+    window.mcGetPendingDelta = function() {
+      return (pendingDelta && pendingDelta.jobId === window.currentJobId) ? pendingDelta : null;
+    };
+
+    function mcBuildPayload(p, dataObj) {
+      const payload = Object.assign({
+        updatedAt: serverTimestamp(),
+        lastEditedBy: (window.currentUser && window.currentUser.email) || ''
+      }, workedNowFields());
+      const data = dataObj || (p && p.data) || null;
+      if (data) payload.data = JSON.stringify(data);
+      const live = {};
+      if (p && Object.keys(p.cells || {}).length) live.c = p.cells;
+      if (p && Object.keys(p.yoyaku || {}).length) live.y = p.yoyaku;
+      if (Object.keys(live).length) payload.live = live;
+      return payload;
+    }
+
+    function mcDeltaSummary(p) {
+      let n = 0;
+      Object.keys((p && p.cells) || {}).forEach((b) => { n += Object.keys(p.cells[b]).length; });
+      return '部屋' + n + ' / 予約' + Object.keys((p && p.yoyaku) || {}).length + (p && p.data ? ' / 全体' : '');
+    }
+
+    // たまっている変更を今すぐ書く。書き始めた時点で pendingDelta を空にする
+    // （書いたものは Firestore の手元の控えに入り、以後に届く更新にはそれが含まれるため）。
+    function flushPendingDelta() {
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        const ref = doc(db, 'inspections', window.currentJobId);
-        window._jobOwnerReady.then(() => setDoc(ref, Object.assign({
-          data: JSON.stringify(stateObj),
-          updatedAt: serverTimestamp(),
-          lastEditedBy: window.currentUser.email || ''
-        }, workedNowFields()), { merge: true })).then(() => {
-          dlog('クラウド保存OK / job=' + window.currentJobId);
-        }).catch((e) => {
-          dlog('クラウド保存エラー / ' + e.message);
-          console.error('クラウド保存エラー:', e);
-        });
-      }, 800);
+      const p = pendingDelta;
+      pendingDelta = null;
+      if (!p) return Promise.resolve();
+      const ref = doc(db, 'inspections', p.jobId);
+      const payload = mcBuildPayload(p, null);
+      if (payload.live && payload.live.y) window._liveYoyakuOnServer = true;
+      return window._jobOwnerReady.then(() => setDoc(ref, payload, { merge: true })).then(() => {
+        dlog('クラウド保存OK / job=' + p.jobId + ' / ' + mcDeltaSummary(p));
+      }).catch((e) => {
+        dlog('クラウド保存エラー / ' + e.message);
+        console.error('クラウド保存エラー:', e);
+      });
+    }
+
+    // 画面側（syncToCloud）が見つけた変更を受け取り、800ミリ秒まとめてから書く（連打対策）。
+    // delta = { data: 全体 or null, cells: {号棟ID: {部屋: セル}}, yoyaku: {キー: 予約} }
+    window.saveInspectionDelta = function(delta) {
+      if (!window.currentUser || !window.currentJobId) return;
+      const jobId = window.currentJobId;
+      if (pendingDelta && pendingDelta.jobId !== jobId) flushPendingDelta();
+      if (!pendingDelta) pendingDelta = { jobId: jobId, data: null, cells: {}, yoyaku: {} };
+      if (delta.data) pendingDelta.data = delta.data;
+      Object.keys(delta.cells || {}).forEach((bid) => {
+        pendingDelta.cells[bid] = Object.assign(pendingDelta.cells[bid] || {}, delta.cells[bid]);
+      });
+      Object.assign(pendingDelta.yoyaku, delta.yoyaku || {});
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flushPendingDelta, 800);
+    };
+
+    // 全体をまるごと書く版（部屋の差分は画面側で見ていない場面用）。
+    // 使っていない saveSchedule のための名残。部屋と予約は書かない（重ねで守られる）。
+    window.saveInspectionToCloud = function (stateObj) {
+      window.saveInspectionDelta({ data: stateObj, cells: {}, yoyaku: {} });
     };
 
     // 即時保存版（デバウンスなし）。この後すぐwindow.appReload()する場面で、
     // 保存が終わる前にリロードされてデータが消える事故を防ぐために使う。
+    // 新しい現場の作成・スケジュールだけの保存・ファイルからの読み込みで使う。
+    // 【まとめ待ちの変更も一緒に書く】以前はまとめ待ちを取り消していたため、
+    // 直前の操作がクラウドに届かないことがあった。
     window.saveInspectionToCloudNow = function (stateObj) {
       if (!window.currentUser || !window.currentJobId) return Promise.resolve();
-      clearTimeout(saveTimer);
-      const ref = doc(db, 'inspections', window.currentJobId);
-      return window._jobOwnerReady.then(() => setDoc(ref, Object.assign({
-        data: JSON.stringify(stateObj),
-        updatedAt: serverTimestamp(),
-        lastEditedBy: window.currentUser.email || ''
-      }, workedNowFields()), { merge: true })).then(() => {
-        dlog('クラウド即時保存OK / job=' + window.currentJobId);
+      const jobId = window.currentJobId;
+      let p = null;
+      if (pendingDelta && pendingDelta.jobId === jobId) {
+        clearTimeout(saveTimer);
+        p = pendingDelta;
+        pendingDelta = null;
+      } else if (pendingDelta) {
+        flushPendingDelta();
+      }
+      const ref = doc(db, 'inspections', jobId);
+      const payload = mcBuildPayload(p, stateObj);
+      if (payload.live && payload.live.y) window._liveYoyakuOnServer = true;
+      return window._jobOwnerReady.then(() => setDoc(ref, payload, { merge: true })).then(() => {
+        dlog('クラウド即時保存OK / job=' + jobId + (p ? ' / ' + mcDeltaSummary(p) : ''));
       }).catch((e) => {
         dlog('クラウド即時保存エラー / ' + e.message);
         console.error('クラウド即時保存エラー:', e);
       });
     };
+
+    // ページを離れる前に、まとめ待ちの変更を書く（書けるところまで）
+    window.addEventListener('pagehide', () => { if (pendingDelta) flushPendingDelta(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && pendingDelta) flushPendingDelta();
+    });
 
     // スケジュールだけをクラウドに保存する。
     //
@@ -1013,7 +1226,9 @@
       return getDoc(ref).then((snap) => {
         if (snap.exists() && snap.data() && snap.data().data) {
           try {
-            return JSON.parse(snap.data().data);
+            const d = snap.data();
+            window._liveYoyakuOnServer = !!(d.live && d.live.y && Object.keys(d.live.y).length);
+            return mcMergeLive(JSON.parse(d.data), d.live);
           } catch (e) {
             dlog('クラウドデータの解析に失敗 / ' + e.message);
             return null;
@@ -1597,10 +1812,7 @@
       // restoreInspectionState → updatePropertyDisplay → ここ、と戻ってくる輪になっている。
       // 同じ値なら書かないことで、輪は必ず2周目で止まる。
       //
-      // 【重要】ここで window._lastLocalSaveAt を更新してはいけない。
-      // それをやると直後2秒間の onSnapshot が丸ごと無視され、その中で呼ばれるはずの
-      // applyCloudSigns（サイン画像の貼り直し）まで巻き添えで飛ぶ。
-      // 結果、サインが消えて「入室済」の表示だけが残る。上の1つで輪は止まるので不要。
+      // （以前あった「保存後2秒の読み捨て」は Session 40 で廃止した。輪は上の1つで止まる）
       const nameVal = name || '（物件名未設定）';
       const dateVal = dateISO || '';
       const sig = jobId + '\u0000' + nameVal + '\u0000' + dateVal;
@@ -2915,7 +3127,7 @@
         if (!snap.exists()) return null;
         const d = snap.data();
         if (!d || !d.data) return null;
-        try { return JSON.parse(d.data); }
+        try { return mcMergeLive(JSON.parse(d.data), d.live); }
         catch (e) { return null; }
       }).catch((e) => {
         // 「サーバーに拒まれた」＝持ち主の記録が無い古い現場。呼び出し側で案内を出し分ける。
@@ -3227,13 +3439,9 @@
           window.cloudRestoreDone = true;
           const jobRef = doc(db, 'inspections', window.currentJobId);
 
-          // 自分が最後に保存した時刻を記録する（自分の書き込みによるonSnapshot発火を無視するため）
-          window._lastLocalSaveAt = 0;
-          const origSave = window.saveInspectionToCloud;
-          window.saveInspectionToCloud = function(stateObj) {
-            window._lastLocalSaveAt = Date.now();
-            origSave(stateObj);
-          };
+          // 【以前はここで保存の時刻を覚え、保存後2秒の更新を読み捨てていた】
+          // 他の端末の更新まで捨ててしまい、上書きの原因になったのでやめた（Session 40）。
+          // 自分の保存が返ってきただけのときは、画面側（restoreFromCloud）が中身で見分けて描き直さない。
 
           // 手元の控え（window._signsCache）をセルに当てはめるヘルパー。
           // 今アクティブな号棟のサインだけを当てはめる（号棟をまたいだ誤反映を防ぐ）。
@@ -3301,9 +3509,6 @@
               }
             }
 
-            // 自分が保存してから2秒以内のonSnapshotは自分の書き込みの反響なので無視する
-            if (Date.now() - window._lastLocalSaveAt < 2000) return;
-
             // 開閉状態の変化を取り込む（他端末で「再開」「本日終了」が押された場合）
             const ouLive = snap.data().openUntil || null;
             window.jobOpenUntil = (ouLive && ouLive.toMillis) ? ouLive.toMillis() : 0;
@@ -3311,9 +3516,13 @@
 
             if (!snap.data().data) return;
             try {
-              const state = JSON.parse(snap.data().data);
-              if (state && window.restoreInspectionState) {
-                window.restoreInspectionState(state);
+              const d = snap.data();
+              window._liveYoyakuOnServer = !!(d.live && d.live.y && Object.keys(d.live.y).length);
+              let state = mcMergeLive(JSON.parse(d.data), d.live);
+              // まだ書いていない手元の変更を重ねる（消さないため）
+              state = mcApplyDelta(state, window.mcGetPendingDelta());
+              if (state && window.restoreFromCloud) {
+                window.restoreFromCloud(state);
                 applyCloudSigns();
               }
             } catch (e) {
@@ -3323,8 +3532,8 @@
 
           // 初回読み込み（サイン画像含む）
           window.loadInspectionFromCloud().then((state) => {
-            if (state && window.restoreInspectionState) {
-              window.restoreInspectionState(state);
+            if (state && window.restoreFromCloud) {
+              window.restoreFromCloud(mcApplyDelta(state, window.mcGetPendingDelta()));
             } else {
               // クラウドにまだ何も保存されていない（新規作成直後、オートセーブ前に閉じた等）
               // → 何も表示されないまま止まってしまうので、一括設定画面を表示しておく
@@ -4204,17 +4413,19 @@
 
   <div id="qrModal" class="modal">
     <div class="modal-box">
-      <h2>子機を招待</h2>
-      <p style="font-size:13px;color:#666;">このQRコードを子機のカメラ（読み取りアプリ）で読み取ってもらうと、同じ現場のデータに参加できます。子機側もGoogleでのログインが必要です。</p>
+      <h2 id="qrModeTitle">子機を招待</h2>
+      <p id="qrModeDesc" style="font-size:13px;color:#666;"></p>
       <p id="qrOpenStatus" style="font-size:13px;font-weight:bold;color:#1565c0;margin:8px 0 0;"></p>
       <div id="qrCodeArea" style="display:flex;justify-content:center;margin:14px 0;"></div>
       <p id="qrLinkText" style="font-size:11px;color:#888;word-break:break-all;"></p>
+      <p id="qrModeNote" style="display:none;font-size:12px;color:#444;background:#fff8e1;border:1px solid #f0d890;border-radius:6px;padding:8px 10px;text-align:left;"></p>
       <div class="modal-buttons">
         <button onclick="copyQrLink()" style="background:#eef5ff;">リンクをコピー</button>
         <button onclick="closeQrModal()" style="background:#eee;">閉じる</button>
       </div>
-      <div style="margin-top:16px;padding-top:14px;border-top:1px solid #ddd;">
-        <p style="font-size:13px;color:#666;">iPhoneでQRがうまく開けない場合は、上の「リンクをコピー」を押して、メールやLINEなどで相手に送ってください。相手はそのリンクをメール（またはLINE）側から開いてください。</p>
+      <div id="qrModeSwitchWrap" style="margin-top:16px;padding-top:14px;border-top:1px solid #ddd;">
+        <p id="qrModeSwitchText" style="font-size:13px;color:#666;"></p>
+        <button id="qrModeToggleBtn" onclick="toggleQrMode()" style="width:100%;"></button>
       </div>
     </div>
   </div>
@@ -5087,20 +5298,86 @@
         await window.openJobForToday();
         if (window.updateOpenJobBtn) window.updateOpenJobBtn();
       }
-      const url = location.origin + location.pathname + '?join=' + window.currentJobId;
-      const area = document.getElementById('qrCodeArea');
-      area.innerHTML = '';
-      new QRCode(area, { text: url, width: 200, height: 200 });
-      document.getElementById('qrLinkText').textContent = url;
+      window._qrJoinUrl = location.origin + location.pathname + '?join=' + window.currentJobId;
+      renderQrMode('link');
       const st = document.getElementById('qrOpenStatus');
       if (st) st.textContent = '受付中：本日23:59まで';
       document.getElementById('qrModal').classList.add('active');
     }
+    // ---- 子機招待の2つの形 ----
+    // link … 参加リンクのQR（今までの形）
+    // mail … 親機のアドレス宛てのメールの下書きのQR。子機が読み取ってそのまま送り、
+    //         親機が「返信」すると、引用された本文の参加リンクが子機に届く。
+    //         iPhone で QR から開くとうまく入れないときに、メールアプリからリンクを開く道を作るため。
+    //         どちらも相手のアドレスを手で打たずに済む（端末の種類を問わない）。
+    // 【QR は1つずつ】2つ並べると、カメラが意図しない方を読み取ることがあるので、切り替えにする。
+    // 【下書きは短く】日本語は1文字9バイトに膨らみ、QR が細かくなって読み取りにくくなる。
+    //         相手への説明は下書きに入れず、この画面に出す（読み取るときに画面を見ているので）。
+    let qrMode = 'link';
+
+    function qrOwnerEmail() {
+      return (window.currentUser && window.currentUser.email) || '';
+    }
+
+    function renderQrMode(mode) {
+      const url = window._qrJoinUrl || '';
+      const email = qrOwnerEmail();
+      if (mode === 'mail' && !email) mode = 'link';
+      qrMode = mode;
+      const area = document.getElementById('qrCodeArea');
+      area.innerHTML = '';
+      const desc = document.getElementById('qrModeDesc');
+      const linkText = document.getElementById('qrLinkText');
+      const note = document.getElementById('qrModeNote');
+      const switchText = document.getElementById('qrModeSwitchText');
+      const toggle = document.getElementById('qrModeToggleBtn');
+      const switchWrap = document.getElementById('qrModeSwitchWrap');
+      if (mode === 'mail') {
+        const mailto = 'mailto:' + email +
+          '?subject=' + encodeURIComponent('ManCHEStar参加希望') +
+          '&body=' + encodeURIComponent('参加リンク\n' + url);
+        new QRCode(area, { text: mailto, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L });
+        document.getElementById('qrModeTitle').textContent = '子機を招待（メールで受け取る）';
+        desc.textContent = 'このQRを相手のカメラで読み取ってもらい、開いたメールをそのまま送信してもらってください。' +
+          '届いたメールに「返信」して送れば、参加リンクが相手に届きます（何も打たなくて大丈夫です）。';
+        linkText.textContent = '宛先：' + email;
+        note.innerHTML = '<b>相手の方へ</b><br>返信が届いたら、メールの中のリンクから開いてください。' +
+          'リンクが見えないときは、メールの下の「•••」を押してください。<br>' +
+          '<span style="color:#888;">受付は本日23:59までです。</span>';
+        note.style.display = 'block';
+        switchText.textContent = '';
+        toggle.textContent = '← 参加リンクのQRに戻す';
+        switchWrap.style.display = 'block';
+      } else {
+        new QRCode(area, { text: url, width: 200, height: 200 });
+        document.getElementById('qrModeTitle').textContent = '子機を招待';
+        desc.textContent = 'このQRコードを子機のカメラ（読み取りアプリ）で読み取ってもらうと、同じ現場のデータに参加できます。子機側もGoogleでのログインが必要です。';
+        linkText.textContent = url;
+        note.style.display = 'none';
+        if (email) {
+          switchText.textContent = 'iPhoneでQRがうまく開けない場合は、メールで受け取る形に切り替えてください。相手のアドレスを打たずに済みます（あなたのアドレスが相手に表示されます）。';
+          toggle.textContent = '📧 メールで受け取る形に切り替える';
+          switchWrap.style.display = 'block';
+        } else {
+          // アドレスの無いログイン（テストモードなど）では切り替えを出さない
+          switchText.textContent = 'iPhoneでQRがうまく開けない場合は、上の「リンクをコピー」を押して、メールやLINEなどで相手に送ってください。';
+          toggle.style.display = 'none';
+          switchWrap.style.display = 'block';
+          return;
+        }
+      }
+      toggle.style.display = '';
+    }
+
+    function toggleQrMode() {
+      renderQrMode(qrMode === 'mail' ? 'link' : 'mail');
+    }
+
     function closeQrModal() {
       document.getElementById('qrModal').classList.remove('active');
     }
     function copyQrLink() {
-      const url = document.getElementById('qrLinkText').textContent;
+      const url = window._qrJoinUrl || '';
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(() => {
           window.showAppAlert('リンクをコピーしました');
@@ -5994,10 +6271,122 @@
       };
     }
 
+    // ===== 同期：変わったところだけを書く（Session 40） =====
+    // 仕組みの全体は module 側の「同期の作り」を参照。
+    // syncBase … 最後にクラウドとそろえた状態（gatherInspectionState の形）。
+    //   syncToCloud はこれと今の状態を比べ、変わった部屋・予約・それ以外を見つけて書く。
+    //   クラウドから取り込んだら（restoreFromCloud）、取り込んだあとの画面の状態に置き直す。
+    let syncBase = null;
+    // 最後に取り込んだクラウドの状態（同じものが届いたら描き直さないため）
+    let lastAppliedCloudKey = '';
+
+    function mcClone(o) { return JSON.parse(JSON.stringify(o)); }
+
+    // 部屋と予約を除いた部分（物件名・号棟の構成・スケジュールなど）。
+    // currentBuildingIdx は「どの号棟を見ているか」で端末ごとの話なので比べない。
+    function syncRestOf(s) {
+      return {
+        property: s.property,
+        buildings: (s.buildings || []).map((b) => Object.assign({}, b, { cells: undefined })),
+        notePatterns: s.notePatterns,
+        schedule: s.schedule,
+        newYoyakuNoticeRoles: s.newYoyakuNoticeRoles
+      };
+    }
+
+    // 比べるための形。部屋の空欄の埋め方や、予約の並び（ord）をそろえてから文字列にする。
+    function syncCanonical(s) {
+      const norm = {};
+      (s.buildings || []).forEach((b) => {
+        const cells = {};
+        Object.keys(b.cells || {}).forEach((room) => { cells[room] = window.mcNormCell(b.cells[room]); });
+        norm[b.id] = cells;
+      });
+      const y = (s.yoyakuList || []).map(window.mcNormYoyaku)
+        .sort((a, b) => (a.ord - b.ord) || (window.mcYoyakuKey(a) < window.mcYoyakuKey(b) ? -1 : 1));
+      return window.mcStable({ rest: syncRestOf(s), cells: norm, yoyaku: y });
+    }
+
+    // 予約に並び順（ord）が無ければ付ける。新しく足した予約は末尾に来るよう、今までの最大より大きくする。
+    function ensureYoyakuOrd() {
+      let max = 0;
+      yoyakuList.forEach((y) => { if (typeof y.ord === 'number' && y.ord > max) max = y.ord; });
+      yoyakuList.forEach((y) => {
+        if (typeof y.ord !== 'number') {
+          max = Math.max(max + 1, Date.now());
+          y.ord = max;
+        }
+      });
+    }
+
+    // 前の状態（base）と今の状態（cur）を比べて、書くべき変更を作る
+    function computeSyncDelta(base, cur) {
+      const d = { data: null, cells: {}, yoyaku: {}, n: 0 };
+      if (!base) { d.data = cur; d.n++; return d; }   // まだクラウドとそろえていない → 全体を書く
+      if (window.mcStable(syncRestOf(cur)) !== window.mcStable(syncRestOf(base))) { d.data = cur; d.n++; }
+
+      const baseCells = {};
+      (base.buildings || []).forEach((b) => { baseCells[b.id] = b.cells || {}; });
+      (cur.buildings || []).forEach((b) => {
+        const bc = baseCells[b.id] || {};
+        Object.keys(b.cells || {}).forEach((room) => {
+          const now = window.mcNormCell(b.cells[room]);
+          if (window.mcStable(now) === window.mcStable(bc[room] ? window.mcNormCell(bc[room]) : null)) return;
+          (d.cells[b.id] = d.cells[b.id] || {})[room] = now;
+          d.n++;
+        });
+      });
+
+      const bm = {};
+      (base.yoyakuList || []).forEach((y) => { bm[window.mcYoyakuKey(y)] = window.mcNormYoyaku(y); });
+      const cm = {};
+      (cur.yoyakuList || []).forEach((y) => { cm[window.mcYoyakuKey(y)] = window.mcNormYoyaku(y); });
+      const changed = {};
+      Object.keys(cm).forEach((k) => {
+        if (window.mcStable(cm[k]) !== window.mcStable(bm[k] || null)) changed[k] = Object.assign({ deleted: false }, cm[k]);
+      });
+      Object.keys(bm).forEach((k) => {
+        if (!cm[k]) changed[k] = Object.assign({}, bm[k], { deleted: true });
+      });
+      if (Object.keys(changed).length) {
+        // 【最初の1回は全部書く】クラウドにまだ予約の欄（live.y）が無い現場では、data の予約一覧が
+        // 使われている。欄ができた時点でそちらだけを見るようになるので、今ある予約を全部移す。
+        if (!window._liveYoyakuOnServer) {
+          Object.keys(cm).forEach((k) => { if (!changed[k]) changed[k] = Object.assign({ deleted: false }, cm[k]); });
+        }
+        d.yoyaku = changed;
+        d.n += Object.keys(changed).length;
+      }
+      return d;
+    }
+
     // 状態が変わるたびにこれを呼ぶ。ログインしていなければ何もしない。
     function syncToCloud() {
-      if (window.saveInspectionToCloud) window.saveInspectionToCloud(gatherInspectionState());
+      if (!window.saveInspectionDelta || !window.currentUser || !window.currentJobId) return;
+      ensureYoyakuOrd();
+      const cur = mcClone(gatherInspectionState());
+      const d = computeSyncDelta(syncBase, cur);
+      syncBase = cur;
+      if (!d.n) return;
+      window.saveInspectionDelta({ data: d.data ? cur : null, cells: d.cells, yoyaku: d.yoyaku });
     }
+
+    // クラウドから届いた状態を取り込む（module 側の onSnapshot と初回読み込みから呼ぶ）。
+    // 手元と同じなら描き直さない（自分の保存が返ってきただけのとき）。
+    window.restoreFromCloud = function (state) {
+      if (!state) return false;
+      const key = syncCanonical(state);
+      if (key === lastAppliedCloudKey) return false;
+      if (syncBase && key === syncCanonical(syncBase)) {
+        lastAppliedCloudKey = key;
+        return false;
+      }
+      window.restoreInspectionState(state);
+      lastAppliedCloudKey = key;
+      syncBase = mcClone(gatherInspectionState());
+      return true;
+    };
+
 
     // ---- 物件データのダウンロード／アップロード ----
     // サイン画像・不良写真は容量の都合上もともとクラウド同期対象に含めていないため、
@@ -6779,11 +7168,19 @@
       const room = tenkenCell.dataset.room;
       const cell = getLiveCell(room);
       if (!cell) return;
-      const released = cell.dataset.state !== 'tenkenchuu' ||
-        (cell.dataset.tenkenBy && cell.dataset.tenkenBy !== mcMyUid());
+      const takenByOther = cell.dataset.state === 'tenkenchuu' &&
+        cell.dataset.tenkenBy && cell.dataset.tenkenBy !== mcMyUid();
+      const released = cell.dataset.state !== 'tenkenchuu' || takenByOther;
       if (!released) return;
       closeTenkenModal();
-      window.showAppAlert(room + '号室の点検中が、管理者によって解除されました。');
+      // 【2通りを言い分ける】同じ部屋をほぼ同時に2人が点検中にすると、あとから書いた方が残る。
+      // それを「管理者が解除した」と出すと事実と違うので、別の文言にする。
+      if (takenByOther) {
+        window.showAppAlert(room + '号室は、ほぼ同時に ' + (cell.dataset.tenkenByName || '他の作業員') +
+          ' さんが点検中にしました。\n\nどちらが入るか、声をかけ合って決めてください。');
+      } else {
+        window.showAppAlert(room + '号室の点検中が、管理者によって解除されました。');
+      }
     }
 
     let pressType = null;
@@ -8416,9 +8813,14 @@
       const role = window.myRole || 'worker';
       if (role === 'worker') { window.showAppAlert('この操作はサブ管理者以上のみ行えます。'); return; }
       if (idxA == null || idxB == null || !yoyakuList[idxA] || !yoyakuList[idxB]) return;
+      // 並び順は各予約の ord で持つ（クラウドには1件ずつ書くため）。入れ替えたら ord も入れ替える
+      ensureYoyakuOrd();
+      const ordA = yoyakuList[idxA].ord, ordB = yoyakuList[idxB].ord;
       const tmp = yoyakuList[idxA];
       yoyakuList[idxA] = yoyakuList[idxB];
       yoyakuList[idxB] = tmp;
+      yoyakuList[idxA].ord = ordA;
+      yoyakuList[idxB].ord = ordB;
       renderYoyakuTable();
       syncToCloud();
     }
