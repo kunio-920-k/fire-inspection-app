@@ -609,7 +609,7 @@
     // ===== ビルド識別 =====
     // 「直したはずなのに変わらない」場合に、古いファイルが読まれているのか
     // 処理が通っていないのかを切り分けるための印。修正するたびに更新する。
-    const APP_BUILD = '2026-09-25-b';
+    const APP_BUILD = '2026-09-28-a';
     window.APP_BUILD = APP_BUILD;
 
     // ===== アプリが意図した再読み込み =====
@@ -10978,17 +10978,75 @@
       else printRyomenzu(target);
     }
 
-    // 号棟1つ分の立面図テーブルHTMLを、buildings配列のデータ（保存済みの状態）から組み立てる
-    // ※画面表示中のDOMは見ない。事前にsnapshotCurrentBuilding()で最新化しておくこと。
-    function buildRyomenzuTableHtml(b, signs) {
+    // ===== 立面図の印刷の大きさ（Session 40） =====
+    // 【画面と同じ縦横比にする】以前は紙の幅（A4横257mm）を列数で割ってセルの幅を決め、高さは固定だった。
+    // 5列の建物だとセル1つが幅51mm×高さ7mmの横長になり、画面の立面図と見た目がまるで違った。
+    // 画面のセルは 幅80：号室の段35：状態の段55 なので、印刷でもこの比率を保つ。
+    //
+    // 【用紙】消防設備点検結果報告書がA4縦で、管理会社は縦のリングファイルに綴じることが多い。
+    // ・A4縦を基本にする
+    // ・1枚に収めるとセルが小さくなりすぎる（幅18mm未満）なら、階を分けて2枚目以降に続ける
+    // ・1階あたりの部屋数が多く、縦ではセルの幅が18mmを取れないときは横にする（横でも枚数が増えてよい）
+    // ・まとめて印刷する号棟に1つでも横が要るものがあれば、全部を横にそろえる
+    //   （号棟ごとに向きを変える書き方は、効かないブラウザがあるため）
+    const RYO_NUM = 35 / 80;            // 号室の段の高さ（幅に対する比）
+    const RYO_CELL = 55 / 80;           // 状態の段の高さ（幅に対する比）
+    const RYO_FLOOR = RYO_NUM + RYO_CELL;
+    const RYO_W_MIN = 18;               // これより細いとサインが読みにくい（mm）
+    const RYO_W_MAX = 32;               // 部屋の少ない建物でセルが大きくなりすぎないように（mm）
+    const RYO_MARGIN = 8;               // 用紙の余白（mm）
+    const RYO_HEAD = 14;                // 見出し2行ぶん（mm）
+    const RYO_FIT = 0.97;               // 罫線や端数のための余裕
+    const RYO_PAGE = { portrait: { w: 210, h: 297 }, landscape: { w: 297, h: 210 } };
+
+    function ryomenzuShape(b) {
       const tableFloorData = b.tableFloorData || [];
-      let allSuffixes = new Set();
-      for (const fd of tableFloorData) for (const room of fd.rooms) allSuffixes.add(parseInt(room) % 100);
-      const tableSuffixes = Array.from(allSuffixes).sort((a, c) => a - c);
+      const set = new Set();
+      for (const fd of tableFloorData) for (const room of fd.rooms) set.add(parseInt(room) % 100);
+      return { suffixes: Array.from(set).sort((a, c) => a - c), floors: tableFloorData.length || 1 };
+    }
+
+    // 縦が使えるか（1階の部屋を幅18mm以上で並べられるか）
+    function ryomenzuFitsPortrait(cols) {
+      return (RYO_PAGE.portrait.w - RYO_MARGIN * 2) * RYO_FIT / cols >= RYO_W_MIN;
+    }
+
+    // 向きが決まったあとの、セルの幅と1枚あたりの階数
+    function ryomenzuLayout(cols, floors, orient) {
+      const pg = RYO_PAGE[orient];
+      const aw = (pg.w - RYO_MARGIN * 2) * RYO_FIT;
+      const ah = (pg.h - RYO_MARGIN * 2 - RYO_HEAD) * RYO_FIT;
+      const wBase = Math.min(RYO_W_MAX, aw / cols);            // 幅から決まる上限
+      const wOne = Math.min(wBase, ah / (floors * RYO_FLOOR));  // 1枚に収めるときの幅
+      if (wOne >= Math.min(RYO_W_MIN, wBase)) return { w: wOne, rowsPerPage: floors, pages: 1 };
+      // 1枚では細くなりすぎる → 最低の幅で1枚に入る階数ずつに分け、枚数をそろえてから幅を広げ直す
+      const wLow = Math.min(RYO_W_MIN, wBase);
+      const fit = Math.max(1, Math.floor(ah / (wLow * RYO_FLOOR)));
+      const pages = Math.ceil(floors / fit);
+      const rowsPerPage = Math.ceil(floors / pages);
+      return { w: Math.min(wBase, ah / (rowsPerPage * RYO_FLOOR)), rowsPerPage, pages };
+    }
+
+    function ryomenzuOrientFor(bs) {
+      return bs.every((b) => ryomenzuFitsPortrait(ryomenzuShape(b).suffixes.length || 1)) ? 'portrait' : 'landscape';
+    }
+
+    // 号棟1つ分の立面図を、用紙ごとのテーブルHTMLの配列で返す（buildings配列の保存済みの状態から）
+    // ※画面表示中のDOMは見ない。事前にsnapshotCurrentBuilding()で最新化しておくこと。
+    function buildRyomenzuTableHtml(b, signs, orient) {
+      const tableFloorData = b.tableFloorData || [];
+      const shape = ryomenzuShape(b);
+      const tableSuffixes = shape.suffixes;
       const cellData = b.cells || {};
       const roomNumberData = b.rooms || {};
       const colCount = tableSuffixes.length || 1;
-      const colW = Math.floor(257 / colCount);
+      const lay = ryomenzuLayout(colCount, shape.floors, orient || 'portrait');
+      const w = lay.w.toFixed(2);
+      const hNum = (lay.w * RYO_NUM).toFixed(2);
+      const hCell = (lay.w * RYO_CELL).toFixed(2);
+      // 文字の大きさもセルに合わせる（大きくなりすぎないよう上限を置く）
+      const fNum = Math.min(lay.w * RYO_NUM * 0.45, 4.2).toFixed(2);
+      const fCell = Math.min(lay.w * RYO_CELL * 0.22, 3.4).toFixed(2);
 
       let counts = { nyushitsu: 0, total: 0 };
       Object.keys(cellData).forEach((room) => {
@@ -10998,49 +11056,56 @@
         if (d.state === 'nyushitsu') counts.nyushitsu++;
       });
 
-      let tableHtml = '<table style="table-layout:fixed;width:100%;">';
-      for (const fd of tableFloorData) {
-        let roomMap = {};
-        for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
+      const tdNum = 'width:' + w + 'mm;height:' + hNum + 'mm;font-size:' + fNum + 'mm;';
+      const tdCell = 'width:' + w + 'mm;height:' + hCell + 'mm;font-size:' + fCell + 'mm;';
+      const pages = [];
+      for (let start = 0; start < tableFloorData.length; start += lay.rowsPerPage) {
+        let tableHtml = '<table style="width:' + (lay.w * colCount).toFixed(2) + 'mm;">';
+        for (const fd of tableFloorData.slice(start, start + lay.rowsPerPage)) {
+          let roomMap = {};
+          for (const room of fd.rooms) roomMap[parseInt(room) % 100] = room;
 
-        tableHtml += '<tr>';
-        for (const suffix of tableSuffixes) {
-          if (roomMap[suffix]) {
-            const rn = roomNumberData[roomMap[suffix]] || { label: roomMap[suffix] };
-            tableHtml += '<td class="room-number" style="width:' + colW + 'mm;">' + (rn.label || roomMap[suffix]) + '</td>';
-          } else {
-            tableHtml += '<td class="empty-number" style="width:' + colW + 'mm;"></td>';
+          tableHtml += '<tr>';
+          for (const suffix of tableSuffixes) {
+            if (roomMap[suffix]) {
+              const rn = roomNumberData[roomMap[suffix]] || { label: roomMap[suffix] };
+              tableHtml += '<td class="room-number" style="' + tdNum + '">' + (rn.label || roomMap[suffix]) + '</td>';
+            } else {
+              tableHtml += '<td class="empty-number" style="' + tdNum + '"></td>';
+            }
           }
-        }
-        tableHtml += '</tr>';
+          tableHtml += '</tr>';
 
-        tableHtml += '<tr>';
-        for (const suffix of tableSuffixes) {
-          if (!roomMap[suffix]) { tableHtml += '<td class="empty-state" style="width:' + colW + 'mm;"></td>'; continue; }
-          const room = roomMap[suffix];
-          const d = cellData[room] || { state: 'mi', furyo: '', yoyakuTime: '' };
-          const sign = (signs && signs[room]) || '';
-          let cls = 'cell';
-          if (d.state === 'kushitsu') cls += ' kushitsu';
-          if (d.state === 'yoyaku' && d.yoyakuTime) cls += ' yoyaku';
-          let inner = '';
-          if (d.state === 'nyushitsu' && sign === 'NO_SIGN_NEEDED') {
-            inner = '<span style="font-size:9px;color:#888;">入室済</span>';
-          } else if (d.state === 'nyushitsu' && sign) {
-            inner = '<img class="sign-img" src="' + sign + '">';
-          } else if (d.state === 'nyushitsu') {
-            inner = '<span style="font-size:9px;color:#888;">入室済</span>';
-          } else if (d.state === 'kushitsu') {
-            inner = '空室';
-          } else if (d.state === 'yoyaku' && d.yoyakuTime) {
-            inner = '<span class="yoyaku-time">' + d.yoyakuTime + '</span>予約';
+          tableHtml += '<tr>';
+          for (const suffix of tableSuffixes) {
+            if (!roomMap[suffix]) { tableHtml += '<td class="empty-state" style="' + tdCell + '"></td>'; continue; }
+            const room = roomMap[suffix];
+            const d = cellData[room] || { state: 'mi', furyo: '', yoyakuTime: '' };
+            const sign = (signs && signs[room]) || '';
+            let cls = 'cell';
+            if (d.state === 'kushitsu') cls += ' kushitsu';
+            if (d.state === 'yoyaku' && d.yoyakuTime) cls += ' yoyaku';
+            let inner = '';
+            if (d.state === 'nyushitsu' && sign === 'NO_SIGN_NEEDED') {
+              inner = '<span class="st">入室済</span>';
+            } else if (d.state === 'nyushitsu' && sign) {
+              inner = '<img class="sign-img" src="' + sign + '" style="height:' + (lay.w * RYO_CELL * 0.8).toFixed(2) + 'mm;">';
+            } else if (d.state === 'nyushitsu') {
+              inner = '<span class="st">入室済</span>';
+            } else if (d.state === 'kushitsu') {
+              inner = '空室';
+            } else if (d.state === 'yoyaku' && d.yoyakuTime) {
+              inner = '<span class="yoyaku-time">' + d.yoyakuTime + '</span>予約';
+            }
+            tableHtml += '<td class="' + cls + '" style="' + tdCell + '">' + inner + '</td>';
           }
-          tableHtml += '<td class="' + cls + '" style="width:' + colW + 'mm;">' + inner + '</td>';
+          tableHtml += '</tr>';
         }
-        tableHtml += '</tr>';
+        tableHtml += '</table>';
+        pages.push(tableHtml);
       }
-      tableHtml += '</table>';
-      return { tableHtml, counts };
+      if (!pages.length) pages.push('<table></table>');
+      return { pages, counts };
     }
 
     // target: 号棟のindex（数値） または 'all'（全号棟まとめて） または undefined（1号棟のみの現場）
@@ -11067,21 +11132,27 @@
       const loadSigns = window.loadSignsFromCloud ? window.loadSignsFromCloud() : Promise.resolve({ __legacy__: {} });
       loadSigns.then((signsByBuilding) => {
         const legacy = signsByBuilding.__legacy__ || {};
+        const orient = ryomenzuOrientFor(targets.map((idx) => buildings[idx]).filter(Boolean));
         let sections = '';
-        targets.forEach((idx, i) => {
+        let first = true;
+        targets.forEach((idx) => {
           const b = buildings[idx];
           if (!b) return;
           const signs = Object.assign({}, legacy, signsByBuilding[b.id] || {});
-          const { tableHtml, counts } = buildRyomenzuTableHtml(b, signs);
+          const { pages, counts } = buildRyomenzuTableHtml(b, signs, orient);
           const label = b.name ? b.name : ('号棟' + (idx + 1));
-          sections += '<div class="building-section"' + (i > 0 ? ' style="page-break-before:always;"' : '') + '>' +
-            '<h2>' + prop.name + (buildings.length > 1 ? '　【' + label + '】' : '') + '　消防設備点検立面図</h2>' +
-            '<div class="info">' +
-              '<span>作業日：' + prop.date + '　担当：' + prop.staff + '</span>' +
-              '<span>' + printedAt + '　入室数：' + counts.nyushitsu + '／' + counts.total + '</span>' +
-            '</div>' +
-            tableHtml +
-            '</div>';
+          pages.forEach((tableHtml, pi) => {
+            sections += '<div class="building-section"' + (first ? '' : ' style="page-break-before:always;"') + '>' +
+              '<h2>' + prop.name + (buildings.length > 1 ? '　【' + label + '】' : '') + '　消防設備点検立面図' +
+                (pages.length > 1 ? '（' + (pi + 1) + '／' + pages.length + '）' : '') + '</h2>' +
+              '<div class="info">' +
+                '<span>作業日：' + prop.date + '　担当：' + prop.staff + '</span>' +
+                '<span>' + printedAt + '　入室数：' + counts.nyushitsu + '／' + counts.total + '</span>' +
+              '</div>' +
+              tableHtml +
+              '</div>';
+            first = false;
+          });
         });
 
         win.document.open();
@@ -11090,21 +11161,23 @@
 <meta charset="UTF-8">
 <title>立面図</title>
 <style>
-  body { font-family: sans-serif; padding: 10mm; font-size: 11px; }
+  @page { size: A4 ${orient}; margin: ${RYO_MARGIN}mm; }
+  body { font-family: sans-serif; margin: 0; padding: 0; font-size: 11px; }
   h2 { font-size: 13px; margin: 0 0 3px; }
   .info { font-size: 10px; margin-bottom: 6px; display: flex; justify-content: space-between; }
-  table { border-collapse: collapse; width: 100%; }
-  td { border: 1px solid #333; text-align: center; font-size: 9px; overflow: hidden; }
-  td.room-number { background: #f5f5f5; font-weight: bold; height: 16px; vertical-align: middle; }
-  td.empty-number { background: #eee; height: 16px; }
-  td.empty-state { background: #eee; height: 26px; }
-  td.cell { background: white; height: 26px; vertical-align: middle; }
+  table { border-collapse: collapse; table-layout: fixed; margin: 0 auto; }
+  td { border: 1px solid #333; text-align: center; overflow: hidden; padding: 0; box-sizing: border-box; }
+  td.room-number { background: #f5f5f5; font-weight: bold; vertical-align: middle; }
+  td.empty-number { background: #eee; }
+  td.empty-state { background: #eee; }
+  td.cell { background: white; vertical-align: middle; }
   td.cell.kushitsu { background: white; color: #333; }
   td.cell.yoyaku { background: #ffb347; }
-  .sign-img { width: 70%; height: 18px; object-fit: contain; display: block; margin: 0 auto; }
-  .yoyaku-time { font-size: 8px; display: block; }
-  .building-section { margin-bottom: 10px; }
-  @media print { body { padding: 5mm; } }
+  .sign-img { width: 92%; object-fit: contain; display: block; margin: 0 auto; }
+  .st { color: #888; }
+  .yoyaku-time { font-size: 0.85em; display: block; }
+  .building-section { margin-bottom: 0; }
+  @media screen { body { padding: 10mm; } }
 </style>
 </head><body>
 ${sections}
